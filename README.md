@@ -38,6 +38,10 @@ Think of it like a well-run office:
 
 No terminal. No logs to read. No dashboards to build.
 
+<div align="center">
+<img src="Docs/assets/Agent-Hierarchy-Diagram.png" alt="Agent Hierarchy: Nexus-Prime → 6 Domain Orchestrators → Task Agents" width="80%"/>
+</div>
+
 ---
 
 ## Agent Modules
@@ -76,6 +80,10 @@ When an agent encounters a task it has no tool for, it writes and tests a Python
 | Semantic memory | Vertex AI Memory Bank | Indefinite, versioned |
 | Procedural knowledge | Google Drive (Markdown) | Version-controlled |
 
+<div align="center">
+<img src="Docs/assets/Layer-Memory-Stack.png" alt="5-Layer Memory Stack" width="70%"/>
+</div>
+
 ### Hybrid LLM Strategy
 | Tier | Model | Used for |
 |------|-------|---------|
@@ -85,8 +93,16 @@ When an agent encounters a task it has no tool for, it writes and tests a Python
 
 All model references in code are aliases from `settings.yaml`. To upgrade to a new Gemini release, update one line in that file — no code changes needed.
 
+<div align="center">
+<img src="Docs/assets/LLM-Routing-Decision-Tree.png" alt="LLM Routing Decision Tree" width="70%"/>
+</div>
+
 ### Event-Driven Approval Queue
 Proposals to the `Agent_Approvals` Sheet tab trigger a Pub/Sub event the instant the owner changes the status cell. No polling, no lost messages on restart, no blocking the agent's work queue while it waits.
+
+<div align="center">
+<img src="Docs/assets/Approval-%20Gate.png" alt="Approval Gate Flow" width="80%"/>
+</div>
 
 ### Multi-Project Support
 A single deployment can manage multiple business units or client accounts. Each project gets its own Sheet workbook, Drive folder, and topic namespace. Data never crosses project boundaries.
@@ -118,6 +134,10 @@ A single deployment can manage multiple business units or client accounts. Each 
 ```
 
 **Infrastructure:** Cloud Run (scale-to-zero) · Cloud Pub/Sub · Secret Manager · BigQuery · Vertex AI · Cloud Scheduler · Google Apps Script
+
+<div align="center">
+<img src="Docs/assets/Pub-Sub-Message-Flow.png" alt="Pub/Sub Message Flow" width="85%"/>
+</div>
 
 ---
 
@@ -271,6 +291,10 @@ If an agent hits a problem it cannot self-resolve — and its Write-Test-Refine 
 | **Phase 4** | Full validation, exit criteria, cost verification | Spec complete |
 | **Phase 5** | CEO dashboard (Grafana + Cloud Run), optional Vertex Agent Engine | Future |
 
+<div align="center">
+<img src="Docs/assets/Phase-Roadmap-Timeline.png" alt="Phase Roadmap Timeline" width="90%"/>
+</div>
+
 ---
 
 ## Cost Estimate
@@ -284,6 +308,10 @@ If an agent hits a problem it cannot self-resolve — and its Write-Test-Refine 
 | Vertex AI Memory Bank | ~$0.90 |
 | Everything else (Pub/Sub, Scheduler, Logging, BigQuery) | Free tier |
 | **Total** | **≈ $1.50/month** |
+
+<div align="center">
+<img src="Docs/assets/Monthly-Cost-Breakdown.png" alt="Monthly Cost Breakdown" width="75%"/>
+</div>
 
 ---
 
