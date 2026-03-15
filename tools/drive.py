@@ -13,16 +13,15 @@ Spec: GAOS-Tools-Spec.md §5
 from __future__ import annotations
 
 import io
-import json
 import time
 from typing import Any
 
+import google.auth
 from googleapiclient.discovery import build  # type: ignore[import-untyped]
 from googleapiclient.errors import HttpError  # type: ignore[import-untyped]
 from googleapiclient.http import MediaIoBaseUpload  # type: ignore[import-untyped]
 
 from config import get_settings
-from tools.secrets import get_secret
 
 # ── Error types ──────────────────────────────────────────────────────────────
 
@@ -51,21 +50,9 @@ class DrivePermissionError(Exception):
 
 
 def _build_service(project_id: str) -> Any:
-    """Return an authenticated Drive v3 service resource."""
-    settings = get_settings()
-    sa_json = get_secret("GDRIVE_SERVICE_ACCOUNT", settings.GCP_PROJECT_ID)
-    try:
-        sa_info = json.loads(sa_json)
-    except json.JSONDecodeError as exc:
-        raise DriveReadError(
-            "GDRIVE_SERVICE_ACCOUNT secret is not valid JSON."
-        ) from exc
-    from google.oauth2.service_account import Credentials
-    # drive scope is required for a service account accessing shared folders.
-    # For service accounts this bypasses the OAuth consent screen restriction.
-    creds = Credentials.from_service_account_info(
-        sa_info,
-        scopes=["https://www.googleapis.com/auth/drive"],
+    """Return an authenticated Drive v3 service resource via ADC."""
+    creds, _ = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/drive"]
     )
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 

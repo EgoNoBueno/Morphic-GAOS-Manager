@@ -59,22 +59,38 @@ All local development runs use ADC — **no service account key file on disk**. 
 # Verify the variable is not set — remove it if it is
 $env:GOOGLE_APPLICATION_CREDENTIALS   # should return nothing
 
-# Step 1: Create an OAuth 2.0 Desktop Client ID in YOUR GCP project
-# Go to: console.cloud.google.com/apis/credentials → Create Credentials → OAuth client ID
-# Application type: Desktop app
+# Step 1: Configure OAuth Consent Screen in YOUR GCP project
+# Go to: console.cloud.google.com → APIs & Services → OAuth consent screen
+# User type: External → Create
+# App name: morphic-g-aos  (use this exact name)
+# Support email: your GCP account email → Save and Continue
+# Skip Scopes step → add yourself as a Test User → Back to Dashboard
+
+# Step 2: Create an OAuth 2.0 Desktop Client ID
+# APIs & Services → Credentials → + Create Credentials → OAuth client ID
+# Application type: Desktop app  |  Name: morphic-gaos-desktop
 # Download the JSON file and save as oauth-client.json (gitignored)
 
-# Step 2: Log in with your Desktop client and request the Sheets + Drive scopes
+# Step 3: Log in with your Desktop client and request the required scopes
+# Do NOT use --no-browser — Desktop clients require a redirect_uri which only
+# the browser flow provides. Without it Google returns: Error 400 invalid_request.
 # The DEFAULT gcloud client ID BLOCKS the spreadsheets scope — you MUST use your own.
-gcloud auth application-default login `
-  --client-id-file=oauth-client.json `
-  --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive.file,https://www.googleapis.com/auth/cloud-platform"
+gcloud auth application-default login --client-id-file=oauth-client.json --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive.file,https://www.googleapis.com/auth/cloud-platform"
 
-# Verify ADC is working
-gcloud auth application-default print-access-token
+# Step 4: Set the quota project (gcloud login drops this field every time)
+# The credentials file is at:
+#   Windows: %APPDATA%\gcloud\application_default_credentials.json
+#   Linux/Mac: ~/.config/gcloud/application_default_credentials.json
+# Add "quota_project_id": "morphic-gaos-prod" to the JSON, or run:
+gcloud auth application-default set-quota-project morphic-gaos-prod
+
+# Step 5: Verify ADC is working
+python -c "import google.auth; from google.auth.transport.requests import Request; creds, proj = google.auth.default(scopes=['https://www.googleapis.com/auth/spreadsheets']); creds.refresh(Request()); print('ADC OK — project:', proj)"
 ```
 
-> **What this does:** All Google Cloud libraries (`google-auth`, `gspread`, `google-genai`, `google-cloud-pubsub`) automatically pick up the credential written to `~/.config/gcloud/application_default_credentials.json`. You do not need a service account key file locally. Service account keys are only used by Cloud Run at runtime (loaded from Secret Manager — see §3).
+> **Note:** Every time you re-run `gcloud auth application-default login`, it overwrites the credentials file and drops `quota_project_id`. Re-run Step 4 after any re-login.
+
+> **What this does:** All Google Cloud libraries (`google-auth`, `gspread`, `google-genai`, `google-cloud-pubsub`) automatically pick up the credential written to `~/.config/gcloud/application_default_credentials.json`. You do not need a service account key file locally. On Cloud Run, the attached service account identity provides credentials automatically — see §2.3.
 
 ### 0.5 Local Ollama Setup
 
@@ -193,19 +209,12 @@ gcloud projects add-iam-policy-binding $PROJECT \
   --role="roles/sheets.editor"
 ```
 
-### 2.3 Generate and Download Service Account Keys
+### 2.3 Service Account Identity
 
-```bash
-# Create keys directory (gitignored)
-mkdir -p config/keys
+No JSON key files are needed. Service account identity is supplied at runtime:
 
-for sa in nexus-prime ledger beacon pursuit foreman steward scout apps-script; do
-  gcloud iam service-accounts keys create "config/keys/${sa}-sa.json" \
-    --iam-account="${sa}-sa@${PROJECT}.iam.gserviceaccount.com"
-done
-```
-
-> **Warning:** These JSON files are highly sensitive. They are excluded from git by `.gitignore`. Never commit them. Upload them to Secret Manager in the next step and then delete the local copies.
+- **Local development:** `gcloud auth application-default login` (see §0.4) provides ADC credentials. The tool layer calls `google.auth.default()` which picks these up automatically.
+- **Cloud Run (Phase 3):** Each Cloud Run service is deployed with `--service-account=<agent>-sa@${PROJECT}.iam.gserviceaccount.com`. The GCE metadata server provides credentials — no key file required.
 
 **Verification:** `gcloud iam service-accounts list` — 8 service accounts listed.
 
@@ -230,23 +239,6 @@ gcloud secrets create GEMINI_API_KEY --project=$PROJECT
 echo -n "<your-gemini-api-key>" | \
   gcloud secrets versions add GEMINI_API_KEY --data-file=- --project=$PROJECT
 
-# Service account JSON keys (upload file content as secret value)
-gcloud secrets create GSHEETS_SERVICE_ACCOUNT --project=$PROJECT
-gcloud secrets versions add GSHEETS_SERVICE_ACCOUNT \
-  --data-file=config/keys/apps-script-sa.json --project=$PROJECT
-
-gcloud secrets create PUBSUB_SERVICE_ACCOUNT --project=$PROJECT
-gcloud secrets versions add PUBSUB_SERVICE_ACCOUNT \
-  --data-file=config/keys/nexus-prime-sa.json --project=$PROJECT
-
-gcloud secrets create BIGQUERY_SERVICE_ACCOUNT --project=$PROJECT
-gcloud secrets versions add BIGQUERY_SERVICE_ACCOUNT \
-  --data-file=config/keys/nexus-prime-sa.json --project=$PROJECT
-
-gcloud secrets create VERTEX_SERVICE_ACCOUNT --project=$PROJECT
-gcloud secrets versions add VERTEX_SERVICE_ACCOUNT \
-  --data-file=config/keys/nexus-prime-sa.json --project=$PROJECT
-
 # Ollama host (local machine LAN IP or loopback)
 gcloud secrets create OLLAMA_HOST --project=$PROJECT
 echo -n "http://localhost:11434" | \
@@ -259,7 +251,7 @@ python -c "import secrets; print(secrets.token_hex(32))" | \
    python -c "import secrets; print(secrets.token_hex(32))" | \
    gcloud secrets versions add WEBHOOK_HMAC_SECRET --data-file=- --project=$PROJECT)
 
-# WEBHOOK_URL — add after Apps Script is deployed in Section 5
+# WEBHOOK_URL — add after Apps Script is deployed in Section 4
 # gcloud secrets create WEBHOOK_URL --project=$PROJECT
 # echo -n "<apps-script-web-app-url>" | \
 #   gcloud secrets versions add WEBHOOK_URL --data-file=- --project=$PROJECT
@@ -277,30 +269,6 @@ for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
     --role="roles/secretmanager.secretAccessor" --project=$PROJECT
 done
 
-# GSHEETS_SERVICE_ACCOUNT — all agents need Sheet access
-for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
-  gcloud secrets add-iam-policy-binding GSHEETS_SERVICE_ACCOUNT \
-    --member="serviceAccount:${agent}-sa@${PROJECT}.iam.gserviceaccount.com" \
-    --role="roles/secretmanager.secretAccessor" --project=$PROJECT
-done
-
-# PUBSUB_SERVICE_ACCOUNT — all agents publish/subscribe
-for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
-  gcloud secrets add-iam-policy-binding PUBSUB_SERVICE_ACCOUNT \
-    --member="serviceAccount:${agent}-sa@${PROJECT}.iam.gserviceaccount.com" \
-    --role="roles/secretmanager.secretAccessor" --project=$PROJECT
-done
-
-# BIGQUERY_SERVICE_ACCOUNT — nexus-prime and archive job only
-gcloud secrets add-iam-policy-binding BIGQUERY_SERVICE_ACCOUNT \
-  --member="serviceAccount:nexus-prime-sa@${PROJECT}.iam.gserviceaccount.com" \
-  --role="roles/secretmanager.secretAccessor" --project=$PROJECT
-
-# VERTEX_SERVICE_ACCOUNT — nexus-prime only (evolution sandbox, Memory Bank writes)
-gcloud secrets add-iam-policy-binding VERTEX_SERVICE_ACCOUNT \
-  --member="serviceAccount:nexus-prime-sa@${PROJECT}.iam.gserviceaccount.com" \
-  --role="roles/secretmanager.secretAccessor" --project=$PROJECT
-
 # OLLAMA_HOST — all agents (fallback routing)
 for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
   gcloud secrets add-iam-policy-binding OLLAMA_HOST \
@@ -314,28 +282,52 @@ gcloud secrets add-iam-policy-binding WEBHOOK_HMAC_SECRET \
   --role="roles/secretmanager.secretAccessor" --project=$PROJECT
 ```
 
-### 3.3 Delete local key files
-
-```bash
-Remove-Item config/keys/*.json -Force
-```
-
-**Verification:** `gcloud secrets list --project=$PROJECT` — 7 secrets listed (WEBHOOK_URL will be added after Apps Script deploy).
+**Verification:** `gcloud secrets list --project=$PROJECT` — 3 secrets listed (WEBHOOK_URL will be added after Apps Script deploy).
 
 ---
 
 ## 4. Google Sheets Workbook
 
-### 4.1 Create the Master Workbook
+### 4.1 Run the Workspace Setup Script
 
-1. Open [Google Sheets](https://sheets.google.com) and create a new blank spreadsheet.
-2. Name it **`Morphic-G AOS — Control Plane`**.
-3. Copy the Spreadsheet ID from the URL: `https://docs.google.com/spreadsheets/d/<SPREADSHEET_ID>/edit`
-4. Save this ID — it goes into `settings.yaml` as `SHEET_ID`.
+Sections 4 and 6 are fully automated. A single script creates the Drive folder
+structure, the spreadsheet (all 14 tabs + headers), the Knowledge/ subfolders,
+and shares everything with all service accounts.
 
-### 4.2 Create All Required Tabs
+```powershell
+# Prerequisites: ADC configured (§0.4), .venv activated
+python scripts/setup_workspace.py
+```
 
-Create tabs in this order (right-click tab bar → Insert sheet):
+The script creates this structure in Google Drive:
+
+```
+Morphic-G AOS/                       ← project root folder
+├── Morphic-G AOS — Control Plane    ← spreadsheet (14 tabs + headers)
+└── Knowledge/                       ← §6 knowledge folder
+    ├── workflows/
+    ├── procedures/
+    ├── policies/
+    └── archive/
+```
+
+When it finishes it prints the IDs needed for `config/settings.yaml`:
+
+```
+============================================================
+SUCCESS — add these to config/settings.yaml:
+============================================================
+  sheet.workbook_id:                <spreadsheet-id>
+  projects.default.sheet_id:        <spreadsheet-id>
+  projects.default.drive_folder_id: <knowledge-folder-id>
+============================================================
+```
+
+Copy those values into `config/settings.yaml` (created from the template — see §0.3).
+
+### 4.2 Tab Reference
+
+The script creates all 14 tabs with headers. For reference:
 
 | Tab Name | Owner | Purpose |
 |----------|-------|---------|
@@ -354,31 +346,12 @@ Create tabs in this order (right-click tab bar → Insert sheet):
 | `Pending_Knowledge` | Nexus-Prime | Observation buffer (Layer 3 memory) |
 | `Memory Repository Size` | Nexus-Prime | Memory Bank usage tracking |
 
-### 4.3 Add Header Rows
+### 4.3 Add Your Owner Row to Authorized Approvers
 
-Add these header rows to tabs that agents write to. Row 1 is always the header.
+The script creates the tab and header row. Add your owner row manually in row 2:
 
-**`Agent_Approvals` headers (row 1, columns A–M):**
 ```
-ID | Agent ID | Issue | Trigger Reason | Stopping Constraint | Iterations Run | Total Cost USD | Proposed Code | Status | Timestamp | Approved By | Approver Tier | code_sha256
-```
-
-**`Authorized Approvers` headers (row 1, columns A–F):**
-```
-email | name | tier | active | added_date | notes
-```
-Then add your own row in row 2:
-```
-your@email.com | Your Name | 5 | TRUE | 2026-03-14 | Owner
-```
-
-**`Project Registry` headers (row 1, columns A–I):**
-```
-project_id | project_name | status | sheet_workbook_id | drive_folder_id | budget_ceiling_usd | owner_email | created_date | notes
-```
-Add the first project row immediately (this workbook itself — `project_id` = `default`):
-```
-default | Default Project | Active | <this-spreadsheet-id> | <drive-folder-id — fill in after §6> | 5.00 | your@email.com | 2026-03-14 |
+your@email.com | Your Name | 5 | TRUE | <today> | Owner
 ```
 
 ### 4.4 Deploy Apps Script
@@ -544,20 +517,22 @@ gcloud pubsub subscriptions create scout.sub.foreman \
 
 ## 6. Google Drive — Knowledge/ Folder
 
-### 6.1 Create Folder Structure
+### 6.1 Folder Structure
 
-1. In Google Drive, create a top-level folder: **`Morphic-G AOS — Knowledge`**
-2. Inside it, create these subfolders:
+The `scripts/setup_workspace.py` script (run in §4.1) already created the full
+folder tree and shared it with all service accounts. No manual steps needed here.
 
 ```
-Knowledge/
-├── workflows/         # Multi-step process documents
-├── procedures/        # Step-by-step instructions for specific tasks
-├── policies/          # Rules agents must follow
-└── archive/           # Old versions of updated documents
+Morphic-G AOS/              ← root folder (shared: all 7 SAs — writer)
+└── Knowledge/              ← drive_folder_id in settings.yaml
+    ├── workflows/           # Multi-step process documents
+    ├── procedures/          # Step-by-step instructions for specific tasks
+    ├── policies/            # Rules agents must follow
+    └── archive/             # Old versions of updated documents
 ```
 
-3. Copy the folder ID from the URL of the root `Knowledge/` folder and add it to the `default` row in the `Project Registry` tab (column E).
+The Knowledge/ folder ID was printed by the setup script and is already in
+`config/settings.yaml` under `projects.default.drive_folder_id`.
 
 ### 6.2 Create Seed Knowledge Files
 
@@ -577,14 +552,13 @@ Create these placeholder files now — agents will reference them from day one. 
 **`workflows/order_fulfillment.md`** — deal-to-delivery sequence  
 **`workflows/weekly_reporting.md`** — weekly summary generation process  
 
-### 6.3 Share with Service Accounts
+### 6.3 Service Account Access
 
-Grant the appropriate service accounts access to the `Knowledge/` folder:
+Already handled by `scripts/setup_workspace.py` — all 7 SAs were granted writer
+access to the root `Morphic-G AOS/` folder, which the Knowledge/ subfolder inherits.
 
-- **Nexus-Prime SA** (`nexus-prime-sa@...`): Editor (can write post-approval)
-- **All orchestrator SAs** (`ledger-sa@...`, `beacon-sa@...`, etc.): Viewer (read-only)
-
-In Google Drive: right-click `Knowledge/` folder → Share → add each service account email.
+To verify: open the `Morphic-G AOS` folder in Drive → right-click → Share → confirm
+all SA emails appear with Editor access.
 
 ---
 
@@ -790,7 +764,7 @@ for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
     --min-instances 0 \
     --max-instances 5 \
     --no-allow-unauthenticated \
-    --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest,GSHEETS_SERVICE_ACCOUNT=GSHEETS_SERVICE_ACCOUNT:latest,PUBSUB_SERVICE_ACCOUNT=PUBSUB_SERVICE_ACCOUNT:latest,OLLAMA_HOST=OLLAMA_HOST:latest"
+    --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest,OLLAMA_HOST=OLLAMA_HOST:latest"
 done
 ```
 

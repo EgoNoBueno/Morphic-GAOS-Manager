@@ -150,7 +150,7 @@ Any import not on the allowlist is an automatic **Gate 1 failure** until the all
 ### 5.6 Scope of Access
 
 - [ ] The skill requests only the GCP API scopes it strictly requires
-- [ ] If the skill requests `https://www.googleapis.com/auth/drive` (full Drive access), confirm this is necessary and add a comment explaining why a narrower scope (`drive.file`, `drive.readonly`) cannot be used
+- [ ] If the skill requests full Drive access (scope: `googleapis.com/auth/drive`), confirm this is necessary and add a comment explaining why a narrower scope (`drive.file`, `drive.readonly`) cannot be used
 
 ### 5.7 Gate 2 Sign-Off
 

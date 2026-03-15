@@ -16,16 +16,15 @@ Spec: GAOS-Tools-Spec.md §3
 """
 from __future__ import annotations
 
-import json
 import threading
 import time
 from typing import Any
 
+import google.auth
 import gspread
 import gspread.exceptions
 
 from config import get_settings
-from tools.secrets import get_secret
 
 
 # ── Error types ────────────────────────────────────────────────────────────
@@ -162,9 +161,12 @@ def _col_index(ws: gspread.Worksheet, header: str) -> int:
 
 def init_sheets_client(project_id: str) -> None:
     """
-    Authenticate gspread with the GSHEETS_SERVICE_ACCOUNT secret and open the
-    workbook for this project. Must be called before any other function in
-    this module.
+    Authenticate gspread via Application Default Credentials (ADC) and open
+    the workbook for this project. Must be called before any other function
+    in this module.
+
+    Locally, ADC is provided by `gcloud auth application-default login`.
+    On Cloud Run, ADC is the attached service account identity.
 
     Args:
         project_id: The AOS project namespace (matches a key in settings.yaml
@@ -173,7 +175,6 @@ def init_sheets_client(project_id: str) -> None:
     Raises:
         WorkbookNotFoundError: No sheet_id configured for this project_id,
                                or the spreadsheet is inaccessible.
-        SecretNotFoundError:   Propagated from get_secret().
     """
     global _client, _spreadsheet
 
@@ -185,16 +186,18 @@ def init_sheets_client(project_id: str) -> None:
             "Add it under 'projects.<project_id>.sheet_id' in config/settings.yaml."
         )
 
-    sa_json = get_secret("GSHEETS_SERVICE_ACCOUNT", settings.GCP_PROJECT_ID)
-    sa_info = json.loads(sa_json)
-    _client = gspread.service_account_from_dict(sa_info)
+    creds, _ = google.auth.default(scopes=[
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.file",
+    ])
+    _client = gspread.Client(auth=creds)
 
     try:
         _spreadsheet = _client.open_by_key(project.sheet_id)
     except gspread.exceptions.SpreadsheetNotFound:
         raise WorkbookNotFoundError(
-            f"Spreadsheet '{project.sheet_id}' not found or the service account "
-            "does not have access. Share the workbook with the service account email."
+            f"Spreadsheet '{project.sheet_id}' not found or inaccessible. "
+            "Ensure the ADC identity has been granted access to the workbook."
         )
 
 
