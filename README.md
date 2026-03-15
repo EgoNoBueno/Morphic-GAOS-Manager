@@ -1,0 +1,292 @@
+<div align="center">
+
+<img src="Docs/assets/morphicg-banner.png" alt="Morphic-G AOS Banner" width="100%"/>
+
+# Morphic-G AOS
+### The Intelligent Workforce for Small Business
+
+**A self-evolving team of AI agents** that runs your accounting, marketing, sales, operations, admin, and research — autonomously — on Google's cloud ecosystem, for roughly **$1.50/month**.
+
+[![Spec Status](https://img.shields.io/badge/specs-complete-brightgreen)](#documentation)
+[![Cloud](https://img.shields.io/badge/platform-Google%20Cloud-4285F4?logo=googlecloud&logoColor=white)](#setup)
+[![Models](https://img.shields.io/badge/LLM-Gemini%20%2B%20Ollama-orange)](#hybrid-llm-strategy)
+[![License](https://img.shields.io/badge/license-MIT-blue)](#)
+
+</div>
+
+---
+
+## The Problem
+
+Running a small business means context-switching between a dozen domains — invoices, ad campaigns, leads, inventory, HR, and research — all day, every day. Existing AI tools help with one task at a time. They don't remember what happened last week, they can't coordinate across departments, and they always send everything back to you.
+
+**Morphic-G AOS is different.** It is not a chatbot. It is a coordinated team of specialized agents that handle the routine work, communicate with each other, learn from patterns over time, and surface decisions to the human owner *only when a human is genuinely needed.*
+
+---
+
+## How It Works
+
+Think of it like a well-run office:
+
+- **Nexus-Prime** is the general manager — it watches the whole business, routes work to the right department, and is the only entity authorized to deploy changes to the system.
+- **Six domain orchestrators** (Ledger, Beacon, Pursuit, Foreman, Steward, Scout) are the department heads. Each owns a slice of the business and reports status to a shared Google Sheet.
+- **Task agents** (Tier 3) are the specialists — they do one job (parse an invoice, score a lead, check a shipment) and hand the result back to their orchestrator.
+- **You** interact through a Google Sheet. When an agent needs a real decision — committing a payment, deploying new code, sending an outbound email — it writes a proposal to the `Agent_Approvals` tab and waits. You click **Approved** or **Rejected** and the agent picks up where it left off.
+
+No terminal. No logs to read. No dashboards to build.
+
+---
+
+## Agent Modules
+
+| Agent | Domain | What it handles |
+|-------|--------|----------------|
+| **Ledger** | Accounting | Invoice matching, bank reconciliation, P&L tracking, accounts payable |
+| **Beacon** | Marketing | Campaign performance, ad spend optimization, lead generation, website metrics |
+| **Pursuit** | Sales | CRM pipeline, lead scoring, quote generation, deal-to-close tracking |
+| **Foreman** | Operations | Inventory management, vendor SLAs, shipping & receiving, order fulfillment |
+| **Steward** | Admin | Compliance, onboarding, document filing, HR-adjacent tasks |
+| **Scout** | Research | Competitive intelligence, market analysis, product research, pricing data |
+| **Nexus-Prime** | System | Orchestration, approvals, conflict resolution, self-evolution oversight |
+
+### Cross-Domain Workflows
+
+Agents collaborate across departments through defined policies. Examples:
+
+- **Lead-to-Revenue:** Beacon qualifies a lead → Pursuit closes it → Ledger invoices → Foreman ships.
+- **Purchase Reconciliation:** Foreman receives goods → Ledger matches the vendor invoice.
+- **Market-to-Campaign:** Scout surfaces a competitor move → Beacon adjusts ad strategy.
+
+---
+
+## Key Capabilities
+
+### Self-Evolution (Human-Gated)
+When an agent encounters a task it has no tool for, it writes and tests a Python solution in the Vertex AI sandbox (max 5 iterations, 15 min, $0.50 cost cap), then submits the code for human approval. The code is **SHA-256 pinned at submission**, scanned against a blocklist, and checked against a module allowlist before it ever touches production. No agent can deploy its own code unilaterally.
+
+### Layered Memory
+| Layer | Where | Lifetime |
+|-------|-------|---------|
+| Working memory | LangGraph state | One task |
+| Episodic memory | BigQuery | 7–30 days |
+| Observation buffer | Google Sheets | 14 days |
+| Semantic memory | Vertex AI Memory Bank | Indefinite, versioned |
+| Procedural knowledge | Google Drive (Markdown) | Version-controlled |
+
+### Hybrid LLM Strategy
+| Tier | Model | Used for |
+|------|-------|---------|
+| `LOCAL_MODEL` | Ollama / llama3.1 (free, local) | Formatting, summarizing, routine logging |
+| `FAST_MODEL` | Gemini Flash | Moderate reasoning, routing, lookups |
+| `DEEP_MODEL` | Gemini Pro | Approval gate proposals, conflict arbitration, code evolution |
+
+All model references in code are aliases from `settings.yaml`. To upgrade to a new Gemini release, update one line in that file — no code changes needed.
+
+### Event-Driven Approval Queue
+Proposals to the `Agent_Approvals` Sheet tab trigger a Pub/Sub event the instant the owner changes the status cell. No polling, no lost messages on restart, no blocking the agent's work queue while it waits.
+
+### Multi-Project Support
+A single deployment can manage multiple business units or client accounts. Each project gets its own Sheet workbook, Drive folder, and topic namespace. Data never crosses project boundaries.
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Human Owner                                  │
+│              Google Sheet (Approval Queue)                      │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ onChange trigger (Apps Script)
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    Nexus-Prime (Tier 1)                         │
+│          Approval Gate · Conflict Resolution · Evolution        │
+└──────┬──────────┬──────────┬──────────┬──────────┬─────────────┘
+       │          │          │          │          │
+  Cloud Pub/Sub (A2AMessage envelope — all communication)
+       │          │          │          │          │
+  ┌────▼──┐  ┌───▼───┐  ┌───▼──┐  ┌───▼────┐  ┌──▼────┐  ┌──────┐
+  │Ledger │  │Beacon │  │Pursuit│  │Foreman │  │Steward│  │Scout │
+  │(Acct) │  │(Mktg) │  │(Sales)│  │(Ops)  │  │(Admin)│  │(Res) │
+  └───────┘  └───────┘  └───────┘  └────────┘  └───────┘  └──────┘
+       │                                │
+  Google Sheets · BigQuery · Vertex AI Memory Bank · Google Drive
+```
+
+**Infrastructure:** Cloud Run (scale-to-zero) · Cloud Pub/Sub · Secret Manager · BigQuery · Vertex AI · Cloud Scheduler · Google Apps Script
+
+---
+
+## Setup
+
+> Full step-by-step instructions are in [`Docs/GAOS-Deploy-Spec.md`](Docs/GAOS-Deploy-Spec.md). This is a summary.
+
+### Prerequisites
+
+- Google account with GCP billing enabled
+- `gcloud` CLI, `uv`, `git`, `gh`, and `ollama` installed locally
+- Python 3.11+
+
+### 1. Clone and install dependencies
+
+```powershell
+git clone https://github.com/EgoNoBueno/Morphic-GAOS-Manager.git
+cd Morphic-GAOS-Manager
+uv venv
+uv pip install google-cloud-secret-manager google-cloud-pubsub gspread pydantic \
+               google-adk langgraph google-cloud-bigquery google-cloud-logging \
+               google-cloud-aiplatform "google-genai>=1.0.0"
+```
+
+> **SDK note:** Use `google-genai>=1.0.0` — not `google-generativeai`. The older package is EOL and returns 404 on all current Gemini models.
+
+### 2. Set up Application Default Credentials
+
+```powershell
+# Create an OAuth Desktop Client ID in YOUR GCP project at:
+# console.cloud.google.com/apis/credentials → Create Credentials → OAuth client ID
+# Save the downloaded JSON as oauth-client.json
+
+gcloud auth application-default login `
+  --client-id-file=oauth-client.json `
+  --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive.file,https://www.googleapis.com/auth/cloud-platform"
+```
+
+> **Important:** Do not set `GOOGLE_APPLICATION_CREDENTIALS`. If it exists in your environment (even pointing at a missing file), `google-auth` silently bypasses ADC. Also note: the default gcloud client ID **blocks** the `spreadsheets` scope — you must use your own OAuth Desktop client.
+
+> **API key source:** Get your `GEMINI_API_KEY` from `console.cloud.google.com/apis/credentials` inside your GCP project — **not** from `aistudio.google.com`. AI Studio keys live in Google's shared project and are not covered by your billing account, causing `429 RESOURCE_EXHAUSTED` errors even with credits available.
+
+### 3. GCP Project Setup
+
+```bash
+gcloud projects create morphic-gaos-prod --name="Morphic GAOS"
+gcloud config set project morphic-gaos-prod
+
+gcloud services enable sheets.googleapis.com drive.googleapis.com \
+  pubsub.googleapis.com secretmanager.googleapis.com run.googleapis.com \
+  cloudscheduler.googleapis.com bigquery.googleapis.com logging.googleapis.com \
+  aiplatform.googleapis.com cloudresourcemanager.googleapis.com
+```
+
+### 4. Configure `settings.yaml`
+
+```yaml
+gcp:
+  project_id: "morphic-gaos-prod"
+  region: "us-central1"
+sheet:
+  workbook_id: "<your-spreadsheet-id>"
+models:
+  LOCAL_MODEL: "ollama/llama3.1"
+  FAST_MODEL:  "gemini-2.0-flash"
+  DEEP_MODEL:  "gemini-2.0-pro"
+  LOCAL_MODEL_FALLBACK: "gemini-2.0-flash"
+  LOCAL_MODEL_TIMEOUT_SECONDS: 2
+```
+
+### 5. Provision remaining infrastructure
+
+Follow [`Docs/GAOS-Deploy-Spec.md`](Docs/GAOS-Deploy-Spec.md) for:
+- Service accounts + IAM (one per agent, least-privilege)
+- Secret Manager population
+- Google Sheets workbook + Apps Script + approval triggers
+- Cloud Pub/Sub topics and subscriptions
+- BigQuery tables with TTL partitioning
+- Google Drive `Knowledge/` folder and seed files
+- Cloud Run deploy + Cloud Scheduler jobs
+
+---
+
+## Usage — How the Owner Interacts
+
+### Daily workflow (no action required most days)
+
+Agents run continuously on Cloud Run, processing events as they arrive. The owner's primary interface is the Google Sheet:
+
+| Tab | What you see |
+|-----|-------------|
+| `Agent_Approvals` | Proposals waiting for your approval |
+| `Logs` | A plain-English log of what every agent did |
+| `Error Logs` | Weekly evolution summaries and escalations |
+| `Accounting` | Live financial data maintained by Ledger |
+| `Sales by Product` | CRM pipeline maintained by Pursuit |
+| `Marketing` | Campaign and ad data maintained by Beacon |
+| *(+ 9 more tabs)* | One per business domain |
+
+### Handling an Approval Request
+
+When an agent needs a decision, a row appears in `Agent_Approvals` with:
+- **What it wants to do** and why
+- **The proposed code** (if it's a self-evolution task)
+- **Priority level** (1–5) and the response deadline
+
+To approve: change the `Status` cell to `Approved`.  
+To reject: change it to `Rejected`.  
+To request changes: change it to `Needs Revision` and add a note in the Comments column.
+
+An Apps Script `onChange` trigger fires instantly and notifies the agent. You do not need to open a terminal or restart anything.
+
+### Proposal priority levels
+
+| Priority | Meaning | Auto-reject after |
+|----------|---------|------------------|
+| P1 | Routine optimization | 72 hours |
+| P2 | Process improvement | 48 hours |
+| P3 | Operational alert | 24 hours |
+| P4 | System integrity concern | 8 hours |
+| P5 | Critical — owner co-signature required | 2 hours |
+
+### Escalations
+
+If an agent hits a problem it cannot self-resolve — and its Write-Test-Refine loop exhausts its constraints — it writes an `ESCALATE` message to Nexus-Prime, which parks the task and writes a row to `Agent_Approvals` with full context. The task resumes from where it stopped once you respond.
+
+---
+
+## Documentation
+
+| Document | Purpose |
+|----------|---------|
+| [`Docs/GAOS-Manager-Spec.md`](Docs/GAOS-Manager-Spec.md) | Master blueprint — architecture, all design decisions, roadmap |
+| [`Docs/GAOS-Agent-Spec.md`](Docs/GAOS-Agent-Spec.md) | Engineering construction requirements for every agent |
+| [`Docs/GAOS-Memory-Spec.md`](Docs/GAOS-Memory-Spec.md) | Five-layer memory architecture |
+| [`Docs/GAOS-Tools-Spec.md`](Docs/GAOS-Tools-Spec.md) | Shared tool module API reference (`tools/`) |
+| [`Docs/GAOS-Deploy-Spec.md`](Docs/GAOS-Deploy-Spec.md) | Step-by-step infrastructure provisioning guide |
+| [`Docs/GAOS-Nexus-Prime-Spec.md`](Docs/GAOS-Nexus-Prime-Spec.md) | Nexus-Prime construction spec (LangGraph graph, all 10 nodes) |
+| [`Docs/Morphic-GAOS-Manager-Summary.md`](Docs/Morphic-GAOS-Manager-Summary.md) | Plain-English summary + 34-term glossary |
+| [`Docs/agents/`](Docs/agents/) | Identity files for all 6 domain orchestrators |
+
+---
+
+## Development Roadmap
+
+| Phase | Focus | Status |
+|-------|-------|--------|
+| **Phase 1** | Sheets connectivity, approval gate wiring, local subscriber | Spec complete |
+| **Phase 2** | Ollama observability, weekly summarization job | Spec complete |
+| **Phase 3** | Gemini integration, full approval loop end-to-end | Spec complete |
+| **Phase 4** | Full validation, exit criteria, cost verification | Spec complete |
+| **Phase 5** | CEO dashboard (Grafana + Cloud Run), optional Vertex Agent Engine | Future |
+
+---
+
+## Cost Estimate
+
+| Service | Monthly cost |
+|---------|-------------|
+| Ollama (local machine) | $0.00 |
+| Cloud Run (scale-to-zero) | ~$0.01 |
+| Gemini Flash (`FAST_MODEL`) | ~$0.07 |
+| Gemini Pro (`DEEP_MODEL`) | ~$0.50 |
+| Vertex AI Memory Bank | ~$0.90 |
+| Everything else (Pub/Sub, Scheduler, Logging, BigQuery) | Free tier |
+| **Total** | **≈ $1.50/month** |
+
+---
+
+<div align="center">
+
+*Built entirely on Google's cloud ecosystem.*  
+*Specs complete. Ready to build.*
+
+</div>
