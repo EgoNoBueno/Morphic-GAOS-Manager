@@ -22,7 +22,6 @@ from google.cloud import pubsub_v1
 from config import get_settings
 from models import A2AMessage
 
-
 # ── Error types ────────────────────────────────────────────────────────────
 
 
@@ -81,6 +80,8 @@ def publish(topic_name: str, message: A2AMessage, project_id: str) -> str:
         PubSubPublishError:  Unrecoverable publish error.
     """
     settings = get_settings()
+    # Always use centralised GCP project from settings (project_id param
+    # is the AOS namespace, not the GCP project).
     gcp_project = settings.GCP_PROJECT_ID
     topic = _topic_path(topic_name, gcp_project)
 
@@ -90,11 +91,11 @@ def publish(topic_name: str, message: A2AMessage, project_id: str) -> str:
     try:
         future = publisher.publish(topic, data=payload)
         return future.result()
-    except NotFound:
+    except NotFound as exc:
         raise TopicNotFoundError(
             f"Topic '{topic}' does not exist. Call ensure_topic_exists() during "
             "the agent boot sequence (step 5)."
-        )
+        ) from exc
     except Exception as exc:
         raise PubSubPublishError(
             f"Failed to publish message to '{topic}': {exc}"
@@ -114,6 +115,7 @@ def ensure_topic_exists(topic_name: str, project_id: str) -> None:
         PubSubAdminError: Cannot create topic (permissions or quota error).
     """
     settings = get_settings()
+    # Always use centralised GCP project from settings.
     gcp_project = settings.GCP_PROJECT_ID
     topic = _topic_path(topic_name, gcp_project)
 

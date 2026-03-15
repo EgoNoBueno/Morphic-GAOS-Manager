@@ -56,16 +56,18 @@ def query_episodic(
     """
     from google.cloud import bigquery  # deferred — not needed at import time
 
-    client = bigquery.Client()
-    sql = f"""
+    settings = get_settings()
+    gcp_project = settings.GCP_PROJECT_ID
+    client = bigquery.Client(project=gcp_project)
+    sql = """
         SELECT task_id, status, result_summary, error_fingerprint,
                total_cost_usd, timestamp
-        FROM `{project_id}.aos_logs.task_outcomes`
+        FROM `{gcp_project}.aos_logs.task_outcomes`
         WHERE agent_id = @agent_id
           AND task_type = @task_type
         ORDER BY timestamp DESC
         LIMIT @limit
-    """
+    """.replace("{gcp_project}", gcp_project)
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter("agent_id", "STRING", agent_id),
@@ -159,7 +161,7 @@ def load_domain_memory(agent_id: str, project_id: str) -> dict[str, list[dict[st
         raise MemoryBankError(f"load_domain_memory failed: {exc}") from exc
 
 
-def write_approved_memory(entry: "MemoryEntry", project_id: str) -> str:
+def write_approved_memory(entry: MemoryEntry, project_id: str) -> str:
     """
     Write a newly approved memory entry to the Vertex AI Memory Bank.
     Called by Nexus-Prime only after approval.

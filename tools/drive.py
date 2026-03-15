@@ -13,17 +13,16 @@ Spec: GAOS-Tools-Spec.md §5
 from __future__ import annotations
 
 import io
+import json
 import time
 from typing import Any
 
 from googleapiclient.discovery import build  # type: ignore[import-untyped]
 from googleapiclient.errors import HttpError  # type: ignore[import-untyped]
 from googleapiclient.http import MediaIoBaseUpload  # type: ignore[import-untyped]
-import json
 
 from config import get_settings
 from tools.secrets import get_secret
-
 
 # ── Error types ──────────────────────────────────────────────────────────────
 
@@ -55,7 +54,12 @@ def _build_service(project_id: str) -> Any:
     """Return an authenticated Drive v3 service resource."""
     settings = get_settings()
     sa_json = get_secret("GDRIVE_SERVICE_ACCOUNT", settings.GCP_PROJECT_ID)
-    sa_info = json.loads(sa_json)
+    try:
+        sa_info = json.loads(sa_json)
+    except json.JSONDecodeError as exc:
+        raise DriveReadError(
+            "GDRIVE_SERVICE_ACCOUNT secret is not valid JSON."
+        ) from exc
     from google.oauth2.service_account import Credentials
     # drive scope is required for a service account accessing shared folders.
     # For service accounts this bypasses the OAuth consent screen restriction.
@@ -83,9 +87,11 @@ def _resolve_path(service: Any, root_folder_id: str, path: str) -> str | None:
     the Drive file/folder ID of the final component, or None if not found.
     """
     parts = [p for p in path.strip("/").split("/") if p]
+    if any(p == ".." for p in parts):
+        return None
     current_id = root_folder_id
     for part in parts:
-        escaped = part.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = part.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
         query = (
             f"'{current_id}' in parents "
             f"and name = '{escaped}' "
@@ -107,7 +113,7 @@ def _ensure_folder_path(service: Any, root_folder_id: str, path: str) -> str:
     parts = [p for p in path.strip("/").split("/") if p]
     current_id = root_folder_id
     for part in parts:
-        escaped = part.replace("\\", "\\\\").replace("'", "\\'")
+        escaped = part.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
         query = (
             f"'{current_id}' in parents "
             f"and name = '{escaped}' "
@@ -129,7 +135,12 @@ def _ensure_folder_path(service: Any, root_folder_id: str, path: str) -> str:
     return current_id
 
 
-def _retry_drive(fn: Any, *args: Any, **kwargs: Any) -> Any:
+def _retry_drive(
+    fn: Any,
+    *args: Any,
+    error_cls: type[Exception] = DriveReadError,
+    **kwargs: Any,
+) -> Any:
     """Retry on Drive 429/5xx up to 3 times with exponential backoff."""
     last_exc: Exception | None = None
     for attempt in range(3):
@@ -145,8 +156,8 @@ def _retry_drive(fn: Any, *args: Any, **kwargs: Any) -> Any:
                 raise DrivePermissionError(
                     f"Service account lacks Drive permissions: {exc}"
                 ) from exc
-            raise DriveReadError(f"Drive API error {code}: {exc}") from exc
-    raise DriveReadError(
+            raise error_cls(f"Drive API error {code}: {exc}") from exc
+    raise error_cls(
         f"Drive API still failing after 3 retries: {last_exc}"
     ) from last_exc
 
@@ -175,13 +186,10 @@ def read_file(file_path: str, project_id: str) -> str:
         raise KnowledgeFileNotFoundError(
             f"File not found in Knowledge/: {file_path}"
         )
-    try:
-        content = _retry_drive(
-            service.files().get_media(fileId=file_id).execute
-        )
-        return content.decode("utf-8") if isinstance(content, bytes) else content
-    except HttpError as exc:
-        raise DriveReadError(f"Failed to read '{file_path}': {exc}") from exc
+    content = _retry_drive(
+        service.files().get_media(fileId=file_id).execute
+    )
+    return content.decode("utf-8") if isinstance(content, bytes) else content
 
 
 def write_file(file_path: str, content: str, project_id: str) -> str:
@@ -218,27 +226,26 @@ def write_file(file_path: str, content: str, project_id: str) -> str:
 
     # Check if file already exists under parent_id
     existing_id = _resolve_path(service, parent_id, file_name)
-    try:
-        if existing_id:
-            result = _retry_drive(
-                service.files().update(
-                    fileId=existing_id,
-                    media_body=media,
-                    fields="id",
-                ).execute
-            )
-        else:
-            file_meta = {"name": file_name, "parents": [parent_id]}
-            result = _retry_drive(
-                service.files().create(
-                    body=file_meta,
-                    media_body=media,
-                    fields="id",
-                ).execute
-            )
-        return result["id"]
-    except HttpError as exc:
-        raise DriveWriteError(f"Failed to write '{file_path}': {exc}") from exc
+    if existing_id:
+        result = _retry_drive(
+            service.files().update(
+                fileId=existing_id,
+                media_body=media,
+                fields="id",
+            ).execute,
+            error_cls=DriveWriteError,
+        )
+    else:
+        file_meta = {"name": file_name, "parents": [parent_id]}
+        result = _retry_drive(
+            service.files().create(
+                body=file_meta,
+                media_body=media,
+                fields="id",
+            ).execute,
+            error_cls=DriveWriteError,
+        )
+    return result["id"]
 
 
 def copy_file(source_path: str, dest_path: str, project_id: str) -> str:
@@ -271,19 +278,15 @@ def copy_file(source_path: str, dest_path: str, project_id: str) -> str:
         else root
     )
 
-    try:
-        result = _retry_drive(
-            service.files().copy(
-                fileId=source_id,
-                body={"name": dest_name, "parents": [dest_parent_id]},
-                fields="id",
-            ).execute
-        )
-        return result["id"]
-    except HttpError as exc:
-        raise DriveWriteError(
-            f"Failed to copy '{source_path}' → '{dest_path}': {exc}"
-        ) from exc
+    result = _retry_drive(
+        service.files().copy(
+            fileId=source_id,
+            body={"name": dest_name, "parents": [dest_parent_id]},
+            fields="id",
+        ).execute,
+        error_cls=DriveWriteError,
+    )
+    return result["id"]
 
 
 def list_folder(folder_path: str, project_id: str) -> list[str]:

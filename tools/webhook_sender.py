@@ -11,14 +11,16 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
-from datetime import datetime, timezone
+import time
+from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 import httpx
 
 from config import get_settings
 from tools.secrets import get_secret
-
 
 # ── Error types ─────────────────────────────────────────────────────────────
 
@@ -29,6 +31,10 @@ class WebhookDeliveryError(Exception):
 
 class WebhookTimeoutError(Exception):
     """Request timed out after 10 seconds."""
+
+
+class WebhookURLError(Exception):
+    """Webhook URL is invalid or points to a private/internal address."""
 
 
 # ── Constants ────────────────────────────────────────────────────────────────
@@ -61,7 +67,8 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
 
     Raises:
         WebhookDeliveryError: Non-2xx response after retry exhaustion.
-        WebhookTimeoutError:  Request timed out (10-second limit).
+        WebhookTimeoutError:  Request timed out after all retries.
+        WebhookURLError:      URL is not HTTPS or resolves to a private IP.
         SecretNotFoundError:  WEBHOOK_HMAC_SECRET or WEBHOOK_URL not found.
     """
     settings = get_settings()
@@ -69,6 +76,21 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
 
     webhook_url = get_secret("WEBHOOK_URL", gcp_project)
     hmac_secret = get_secret("WEBHOOK_HMAC_SECRET", gcp_project)
+
+    # Validate webhook URL: must be HTTPS and not a private/internal address
+    parsed = urlparse(webhook_url)
+    if parsed.scheme != "https":
+        raise WebhookURLError(
+            f"Webhook URL must use HTTPS, got '{parsed.scheme}'."
+        )
+    try:
+        addr = ipaddress.ip_address(parsed.hostname or "")
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            raise WebhookURLError(
+                f"Webhook URL must not point to a private/internal address: {parsed.hostname}"
+            )
+    except ValueError:
+        pass  # hostname is a domain name — DNS resolution is deferred to httpx
 
     # Augment payload with code_sha256 before signing if code is present
     payload = dict(payload)  # shallow copy — don't mutate the caller's dict
@@ -89,7 +111,7 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
         "Content-Type": "application/json",
         "X-AOS-Signature": signature,
         "X-AOS-Project-ID": project_id,
-        "X-AOS-Timestamp": datetime.now(timezone.utc).isoformat(),
+        "X-AOS-Timestamp": datetime.now(UTC).isoformat(),
     }
 
     last_exc: Exception | None = None
@@ -109,13 +131,17 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
             if resp.status_code < 500:
                 # 4xx errors are not transient — raise immediately
                 raise last_exc
+            # 5xx — back off and retry
+            time.sleep(2 ** attempt)
         except httpx.TimeoutException as exc:
-            raise WebhookTimeoutError(
+            last_exc = WebhookTimeoutError(
                 f"Webhook request timed out after {_TIMEOUT_SECONDS}s."
-            ) from exc
-        except WebhookDeliveryError:
+            )
+            last_exc.__cause__ = exc
+            time.sleep(2 ** attempt)
+        except (WebhookDeliveryError, WebhookTimeoutError):
             raise
 
-    raise WebhookDeliveryError(
-        f"Webhook still failing after {_MAX_RETRIES} retries: {last_exc}"
-    ) from last_exc
+    raise (last_exc or WebhookDeliveryError(
+        f"Webhook still failing after {_MAX_RETRIES} retries."
+    ))
