@@ -19,7 +19,6 @@ from typing import Any
 from googleapiclient.discovery import build  # type: ignore[import-untyped]
 from googleapiclient.errors import HttpError  # type: ignore[import-untyped]
 from googleapiclient.http import MediaIoBaseUpload  # type: ignore[import-untyped]
-import google.auth
 import json
 
 from config import get_settings
@@ -58,6 +57,8 @@ def _build_service(project_id: str) -> Any:
     sa_json = get_secret("GDRIVE_SERVICE_ACCOUNT", settings.GCP_PROJECT_ID)
     sa_info = json.loads(sa_json)
     from google.oauth2.service_account import Credentials
+    # drive scope is required for a service account accessing shared folders.
+    # For service accounts this bypasses the OAuth consent screen restriction.
     creds = Credentials.from_service_account_info(
         sa_info,
         scopes=["https://www.googleapis.com/auth/drive"],
@@ -84,9 +85,10 @@ def _resolve_path(service: Any, root_folder_id: str, path: str) -> str | None:
     parts = [p for p in path.strip("/").split("/") if p]
     current_id = root_folder_id
     for part in parts:
+        escaped = part.replace("\\", "\\\\").replace("'", "\\'")
         query = (
             f"'{current_id}' in parents "
-            f"and name = '{part}' "
+            f"and name = '{escaped}' "
             f"and trashed = false"
         )
         resp = service.files().list(q=query, fields="files(id, name)").execute()
@@ -105,9 +107,10 @@ def _ensure_folder_path(service: Any, root_folder_id: str, path: str) -> str:
     parts = [p for p in path.strip("/").split("/") if p]
     current_id = root_folder_id
     for part in parts:
+        escaped = part.replace("\\", "\\\\").replace("'", "\\'")
         query = (
             f"'{current_id}' in parents "
-            f"and name = '{part}' "
+            f"and name = '{escaped}' "
             f"and mimeType = 'application/vnd.google-apps.folder' "
             f"and trashed = false"
         )
@@ -314,12 +317,19 @@ def list_folder(folder_path: str, project_id: str) -> list[str]:
 def _collect_files(service: Any, folder_id: str, prefix: str, out: list[str]) -> None:
     """Recursively collect relative file paths under folder_id."""
     query = f"'{folder_id}' in parents and trashed = false"
-    resp = service.files().list(
-        q=query, fields="files(id, name, mimeType)"
-    ).execute()
-    for item in resp.get("files", []):
-        rel = f"{prefix}/{item['name']}" if prefix else item["name"]
-        if item["mimeType"] == "application/vnd.google-apps.folder":
-            _collect_files(service, item["id"], rel, out)
-        else:
-            out.append(rel)
+    page_token: str | None = None
+    while True:
+        resp = service.files().list(
+            q=query,
+            fields="nextPageToken, files(id, name, mimeType)",
+            pageToken=page_token,
+        ).execute()
+        for item in resp.get("files", []):
+            rel = f"{prefix}/{item['name']}" if prefix else item["name"]
+            if item["mimeType"] == "application/vnd.google-apps.folder":
+                _collect_files(service, item["id"], rel, out)
+            else:
+                out.append(rel)
+        page_token = resp.get("nextPageToken")
+        if not page_token:
+            break
