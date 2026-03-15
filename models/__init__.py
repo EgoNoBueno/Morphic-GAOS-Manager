@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -19,13 +19,18 @@ from pydantic import BaseModel, Field
 
 
 class MessageType(str, Enum):
-    STATUS_UPDATE = "STATUS_UPDATE"   # Routine heartbeat / objective update
-    TASK_HANDOFF = "TASK_HANDOFF"     # Pass work to another orchestrator
-    DATA_REQUEST = "DATA_REQUEST"     # Request a data payload (awaits DATA_RESPONSE)
-    DATA_RESPONSE = "DATA_RESPONSE"   # Reply to a DATA_REQUEST
-    ALERT = "ALERT"                   # Anomaly or error needing manager awareness
-    ESCALATION = "ESCALATION"         # Requires human decision via Approval Gate
-    BROADCAST = "BROADCAST"           # Nexus-Prime → All: system-wide directive
+    STATUS_UPDATE     = "STATUS_UPDATE"    # Routine heartbeat / objective update
+    TASK_HANDOFF      = "TASK_HANDOFF"     # Pass work to another orchestrator
+    TASK_COMPLETE     = "TASK_COMPLETE"    # Task finished; no further action needed
+    DATA_REQUEST      = "DATA_REQUEST"     # Request a data payload (awaits DATA_RESPONSE)
+    DATA_RESPONSE     = "DATA_RESPONSE"    # Reply to a DATA_REQUEST
+    ALERT             = "ALERT"            # Anomaly or error needing manager awareness
+    ESCALATION        = "ESCALATION"       # Requires human decision via Approval Gate
+    EVOLUTION_REQUEST = "EVOLUTION_REQUEST" # Code evolution cycle requested
+    APPROVAL_RESULT   = "APPROVAL_RESULT"  # Human responded to a proposal
+    KNOWLEDGE_CANDIDATE = "KNOWLEDGE_CANDIDATE"  # New observation for knowledge review
+    NEW_PROJECT       = "NEW_PROJECT"      # Project Registry change detected
+    BROADCAST         = "BROADCAST"        # Nexus-Prime → All: system-wide directive
 
 
 # ── A2AMessage ─────────────────────────────────────────────────────────────
@@ -39,9 +44,10 @@ class A2AMessage(BaseModel):
 
     message_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     correlation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    project_id: str                          # Must match a row in Project Registry
-    source_agent: str                        # e.g. "beacon"
-    target_agent: str                        # e.g. "pursuit" | "nexus-prime" | "broadcast"
+    task_id: str | None = None                   # Links all messages for one task
+    project_id: str                              # Must match a row in Project Registry
+    source_agent: str                            # e.g. "beacon"
+    target_agent: str                            # e.g. "pursuit" | "nexus-prime" | "broadcast"
     message_type: MessageType
     priority: int = Field(ge=1, le=5)        # 1 (low) → 5 (critical)
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -104,3 +110,92 @@ class ApprovalProposal(BaseModel):
             "Approver Tier": self.approver_tier,
             "code_sha256": self.code_sha256,
         }
+
+
+# ── AgentInput / AgentOutput ────────────────────────────────────────────────────────
+
+class AgentInput(BaseModel):
+    """
+    Standard input envelope for all agents.
+    Defined in GAOS-Agent-Spec.md §2.2.
+    """
+
+    task_id: str                # UUID — links all log entries for one task
+    project_id: str             # Project namespace — never omit
+    instruction: str            # Natural language task description
+    context: dict[str, Any] = Field(default_factory=dict)  # Structured task context
+
+
+class AgentOutput(BaseModel):
+    """
+    Standard output envelope for all agents.
+    Defined in GAOS-Agent-Spec.md §2.2.
+    """
+
+    task_id: str
+    project_id: str
+    agent_id: str               # Matches Agent.name
+    status: Literal["success", "escalated", "failed"]
+    result: dict[str, Any] = Field(default_factory=dict)  # Task-specific output
+    cost_usd: float = 0.0       # Accumulated model cost for this task
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+
+
+# ── MemoryEntry ───────────────────────────────────────────────────────────────────
+
+
+class MemoryEntry(BaseModel):
+    """
+    A single approved knowledge entry in the Vertex AI Memory Bank.
+    Defined in GAOS-Memory-Spec.md §6.
+    """
+
+    memory_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    project_id: str
+    agent_id: str               # Domain owner (e.g., "ledger", "beacon")
+    knowledge_type: str         # "fact" | "pattern" | "rule" | "preference"
+    domain: str                 # Business domain (aligns with orchestrator names)
+    content: str                # The knowledge, as a clear declarative statement
+    evidence: list[str] = Field(default_factory=list)  # task_ids that supported approval
+    confidence: float = 0.0
+    approved_by: str = ""
+    approved_at: datetime | None = None
+    version: int = 1            # Starts at 1; increments on each approved update
+    supersedes: str | None = None  # memory_id of the entry this replaces
+    active: bool = True
+    tags: list[str] = Field(default_factory=list)
+
+
+# ── KnowledgeProposal ────────────────────────────────────────────────────────────────
+
+
+class KnowledgeProposal(BaseModel):
+    """
+    Proposal written to Agent_Approvals for a knowledge change.
+    Defined in GAOS-Memory-Spec.md §9.
+    """
+
+    proposal_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    knowledge_id: str           # Links to Pending_Knowledge row
+    project_id: str
+    agent_id: str
+    knowledge_type: str
+    domain: str
+    priority: int = Field(ge=1, le=5)
+
+    # For new memory entries
+    proposed_content: str = ""
+
+    # For updates to existing entries (both required for update proposals)
+    existing_memory_id: str | None = None
+    existing_content: str | None = None
+
+    # For procedural document updates
+    drive_file_path: str | None = None
+    proposed_diff: str | None = None
+
+    evidence: list[str] = Field(default_factory=list)
+    confidence: float = 0.0
+    observation_count: int = 0

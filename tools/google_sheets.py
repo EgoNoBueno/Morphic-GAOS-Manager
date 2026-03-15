@@ -241,12 +241,15 @@ def batch_append_rows(
     if not _bucket.consume():
         raise RateLimitError("Token bucket exhausted — too many write requests.")
 
-    range_notation = _range(tab, f"A{ws.row_count + 1}")
+    # Use the tab name as the range so values_append inserts after the last
+    # populated row (INSERT_ROWS mode). Do NOT append a row number — ws.row_count
+    # returns the pre-allocated grid size, not the count of populated rows.
+    range_notation = _range(tab)
     try:
         _retry(
             _spreadsheet.values_append,
             range_notation,
-            {"valueInputOption": "USER_ENTERED"},
+            {"valueInputOption": "USER_ENTERED", "insertDataOption": "INSERT_ROWS"},
             {"values": values},
         )
     except gspread.exceptions.APIError as exc:
@@ -289,23 +292,40 @@ def read_range(tab: str, a1_range: str, project_id: str) -> list[list[Any]]:
 
 
 def update_row(
-    tab: str, row_index: int, updates: dict[str, Any], project_id: str
+    tab: str, row_index: int | str, updates: dict[str, Any], project_id: str
 ) -> None:
     """
     Update specific columns in an existing row.
-    `row_index` is the 1-based sheet row number (row 1 = header).
+
+    `row_index` can be:
+    - **int**: 1-based sheet row number (row 1 = header).
+    - **str**: A value to look up in the first column (ID) of the tab.
+      The function finds the row where col A equals this string.
+
     `updates` is a dict of {column_header: new_value}.
 
     Raises:
         TabNotFoundError, RowNotFoundError, RateLimitError, SheetsWriteError.
     """
     ws = _get_worksheet(tab)
-    row_count = ws.row_count
-    if row_index < 1 or row_index > row_count:
-        raise RowNotFoundError(
-            f"Row {row_index} is out of range for tab '{tab}' "
-            f"(1–{row_count})."
-        )
+
+    if isinstance(row_index, str):
+        # Resolve string ID to sheet row number via gspread cell lookup.
+        # gspread 6.x returns None (not an exception) when nothing matches.
+        cell = _retry(ws.find, row_index, in_column=1)
+        if cell is None:
+            raise RowNotFoundError(
+                f"No row with ID='{row_index}' in tab '{tab}'."
+            )
+        actual_row = cell.row
+    else:
+        row_count = ws.row_count
+        if row_index < 1 or row_index > row_count:
+            raise RowNotFoundError(
+                f"Row {row_index} is out of range for tab '{tab}' "
+                f"(1–{row_count})."
+            )
+        actual_row = row_index
 
     headers = _retry(ws.row_values, 1)
     cells_to_update = []
@@ -316,7 +336,7 @@ def update_row(
             )
         col_idx = headers.index(col_header) + 1
         cells_to_update.append(
-            gspread.Cell(row=row_index, col=col_idx, value=str(value))
+            gspread.Cell(row=actual_row, col=col_idx, value=str(value))
         )
 
     if not cells_to_update:

@@ -25,6 +25,18 @@ models:
   LOCAL_MODEL_FALLBACK: "gemini-2.0-flash"
   LOCAL_MODEL_TIMEOUT_SECONDS: 2
 
+# Pub/Sub topic names that Nexus-Prime monitors and validates at boot.
+# Add all agent event topics here so boot can verify all topics exist.
+pubsub:
+  all_topics:
+    - "agent.nexus-prime.events"
+    - "agent.ledger.events"
+    - "agent.beacon.events"
+    - "agent.pursuit.events"
+    - "agent.foreman.events"
+    - "agent.steward.events"
+    - "agent.scout.events"
+
 # Vertex AI Memory Bank corpus resource names (populated after §12 of Deploy spec)
 memory_bank:
   corpora:

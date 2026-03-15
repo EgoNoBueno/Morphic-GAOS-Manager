@@ -173,7 +173,7 @@ def route(state: NexusPrimeWorkingMemory) -> str:
     routing_table = {
         "STATUS_UPDATE":    "record",          # Log and store; no action
         "TASK_COMPLETE":    "record",          # Log and store; no action
-        "ESCALATE":         "diagnose",         # Tier 2 needs help
+        "ESCALATION":      "diagnose",         # Tier 2 needs help
         "EVOLUTION_REQUEST": "diagnose",        # Code evolution cycle requested
         "APPROVAL_RESULT":  "route_approval",   # Human responded to a proposal
         "KNOWLEDGE_CANDIDATE": "knowledge_review",  # New observation to evaluate
@@ -199,7 +199,7 @@ Runs when an orchestrator has escalated or requested evolution. Uses `DEEP_MODEL
 
 ```python
 def diagnose(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
-    from tools.google_sheets import find_row
+    from tools.google_sheets import find_rows
     from tools.memory import query_memory_bank
 
     msg = state["incoming_message"]
@@ -208,13 +208,13 @@ def diagnose(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     # Search Memory Bank for matching past failures
     similar = query_memory_bank(
         query=error_fp,
-        corpus=f"gaos-{msg.agent_id.replace('-', '_')}",
+        corpus=f"gaos-{msg.source_agent.replace('-', '_')}",
         project_id=state["project_id"],
         top_k=3
     )
 
     # Also check Error Logs sheet for recent occurrences 
-    recent_errors = find_rows("Error Logs", {"error_fingerprint": error_fp}, state["project_id"])
+    recent_errors = find_rows("Error Logs", "error_fingerprint", error_fp, state["project_id"])
 
     # Determine next action using DEEP_MODEL
     analysis_prompt = _build_diagnosis_prompt(msg, similar, recent_errors)
@@ -224,7 +224,7 @@ def diagnose(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     
     if decision.suggests_code_change:
         state["evolution_triggered"] = True
-        state["candidate_agent_id"] = msg.agent_id
+        state["candidate_agent_id"] = msg.source_agent
     
     return state
 ```
@@ -274,12 +274,7 @@ def propose_gate(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     state["candidate_sha256"] = sha256
 
     # Notify via webhook — HMAC signed
-    post_to_webhook(
-        url=get_secret("WEBHOOK_URL", settings.gcp.project_id),
-        payload=row,
-        hmac_secret=get_secret("WEBHOOK_HMAC_SECRET", settings.gcp.project_id),
-        code_sha256=sha256
-    )
+    post_to_webhook(row, state["project_id"])
 
     return state
 ```
@@ -336,7 +331,7 @@ def promote(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     proposal_id = msg.payload["proposal_id"]
 
     # Find the proposal row
-    row = find_row("Agent_Approvals", {"ID": proposal_id}, state["project_id"])
+    row = find_row("Agent_Approvals", "ID", proposal_id, state["project_id"])
     if row is None:
         raise ValueError(f"promote: proposal {proposal_id} not found in Agent_Approvals")
 
@@ -404,8 +399,8 @@ def notify_agents(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         return state
 
     broadcast = A2AMessage(
-        sender_id="nexus-prime",
-        recipient_id="broadcast",
+        source_agent="nexus-prime",
+        target_agent="broadcast",
         project_id=state["project_id"],
         task_id=state["task_id"],
         message_type="BROADCAST",
@@ -437,8 +432,8 @@ def conflict_resolve(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         resolution = call_model(prompt, model=settings.models.DEEP_MODEL)
 
         broadcast = A2AMessage(
-            sender_id="nexus-prime",
-            recipient_id="broadcast",
+            source_agent="nexus-prime",
+            target_agent="broadcast",
             project_id=state["project_id"],
             task_id=state["task_id"],
             message_type="BROADCAST",
@@ -502,8 +497,8 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
     # Publish heartbeat
     heartbeat = A2AMessage(
-        sender_id="nexus-prime",
-        recipient_id="broadcast",
+        source_agent="nexus-prime",
+        target_agent="broadcast",
         project_id=state["project_id"],
         task_id=state["task_id"],
         message_type="STATUS_UPDATE",
@@ -696,7 +691,7 @@ def _detect_conflict(state: NexusPrimeWorkingMemory, new_msg: A2AMessage) -> boo
     for agent_id, cached_msg in recent_agent_states.items():
         if (cached_msg.payload.get("entity_key") == entity_key and
                 cached_msg.payload.get("value") != new_msg.payload.get("value") and
-                agent_id != new_msg.sender_id):
+                agent_id != new_msg.source_agent):
             state["conflict_queue"].append({
                 "entity_key": entity_key,
                 "message_a": cached_msg,

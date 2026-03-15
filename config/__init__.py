@@ -41,6 +41,10 @@ class MemoryBankConfig(BaseModel):
     corpora: dict[str, str] = Field(default_factory=dict)
 
 
+class PubSubConfig(BaseModel):
+    all_topics: list[str] = Field(default_factory=list)
+
+
 class ProjectConfig(BaseModel):
     sheet_id: str = ""
     drive_folder_id: str = ""
@@ -51,6 +55,7 @@ class Settings(BaseModel):
     sheet: SheetConfig
     models: ModelAliases
     memory_bank: MemoryBankConfig = Field(default_factory=MemoryBankConfig)
+    pubsub: PubSubConfig = Field(default_factory=PubSubConfig)
     projects: dict[str, ProjectConfig] = Field(default_factory=dict)
 
     @property

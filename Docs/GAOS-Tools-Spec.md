@@ -144,12 +144,18 @@ def read_range(tab: str, a1_range: str, project_id: str) -> list[list]:
         TabNotFoundError, RateLimitError, SheetsReadError.
     """
 
-def update_row(tab: str, row_index: int, updates: dict,
+def update_row(tab: str, row_index: int | str, updates: dict,
                project_id: str) -> None:
     """
-    Update specific columns in an existing row. `row_index` is the
-    1-based sheet row number (row 1 = header). `updates` is a dict of
-    {column_header: new_value} — only named columns are written.
+    Update specific columns in an existing row.
+
+    `row_index` can be:
+    - **int**: 1-based sheet row number (row 1 = header).
+    - **str**: A value to look up in the first column (``ID``) of the tab.
+      Useful when the caller knows the UUID primary key but not the row number.
+
+    `updates` is a dict of {column_header: new_value} — only named columns
+    are written.
 
     Raises:
         TabNotFoundError, RowNotFoundError, RateLimitError, SheetsWriteError.
@@ -504,6 +510,27 @@ def query_episodic(agent_id: str, project_id: str,
                    task_type: str, limit: int = 5) -> list[dict]:
     """Full implementation in GAOS-Memory-Spec.md §4."""
 
+# Semantic search across a Memory Bank corpus
+def query_memory_bank(query: str, corpus: str, project_id: str,
+                      top_k: int = 5,
+                      similarity_threshold: float = 0.80) -> list[dict]:
+    """
+    Perform a semantic similarity search against a Vertex AI Memory Bank corpus.
+
+    Args:
+        query:                The text query (e.g., an error fingerprint).
+        corpus:               Corpus ID (e.g., "gaos-ledger").
+        project_id:           GCP project that owns the Memory Bank.
+        top_k:                Maximum number of results to return.
+        similarity_threshold: Minimum similarity score [0.0–1.0] to include.
+
+    Returns:
+        List of matching memory dicts (content, memory_id, similarity, tags).
+
+    Raises:
+        MemoryBankError: Unrecoverable Vertex AI API error.
+    """
+
 # Layer 3 — Observation Buffer
 def flush_observations(observations: list[dict],
                         project_id: str) -> None:
@@ -521,6 +548,9 @@ def write_approved_memory(entry: "MemoryEntry",
     Raises:
         UnauthorizedMemoryWrite: Caller is not Nexus-Prime's service account.
     """
+
+class MemoryBankError(Exception):
+    """Unrecoverable Vertex AI Memory Bank API error."""
 ```
 
 ### Restrictions

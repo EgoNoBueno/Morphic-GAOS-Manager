@@ -8,12 +8,15 @@ import pytest
 import tools.google_sheets as sheets_mod
 from tools.google_sheets import (
     RateLimitError,
+    RowNotFoundError,
     SheetsReadError,
     SheetsWriteError,
     TabNotFoundError,
     WorkbookNotFoundError,
+    _TokenBucket,
     _quote_tab,
     _range,
+    _retry,
     append_row,
     batch_append_rows,
     find_row,
@@ -233,9 +236,178 @@ class TestProjectIdPropagation:
     """U2: project_id must appear in every downstream tool call."""
 
     def test_get_all_records_uses_project_id(self):
-        # get_all_records() calls get_all_records(tab, project_id) —
-        # if project_id were dropped the call would still work here,
-        # but we verify the signature accepts it without error.
         ws = _make_ws("Logs", ["col"])
         sheets_mod._spreadsheet = _make_spreadsheet({"Logs": ws})
         get_all_records("Logs", "my-custom-project")  # must not raise
+
+
+# ── update_row ────────────────────────────────────────────────────────────
+
+
+class TestUpdateRow:
+    def _setup(self, headers, rows=None):
+        ws = _make_ws("Approvals", headers, rows or [])
+        ws.row_count = 100
+        sheets_mod._spreadsheet = _make_spreadsheet({"Approvals": ws})
+        return ws
+
+    def test_update_by_int_row_index(self):
+        ws = self._setup(["ID", "Status", "Notes"])
+        update_row("Approvals", 2, {"Status": "Approved"}, "default")
+        ws.update_cells.assert_called_once()
+
+    def test_update_by_string_id_lookup(self):
+        ws = self._setup(["ID", "Status"])
+        cell_mock = MagicMock()
+        cell_mock.row = 3
+        ws.find.return_value = cell_mock
+        update_row("Approvals", "uuid-abc", {"Status": "Deployed"}, "default")
+        ws.find.assert_called_once_with("uuid-abc", in_column=1)
+        ws.update_cells.assert_called_once()
+
+    def test_update_string_id_not_found_raises(self):
+        ws = self._setup(["ID", "Status"])
+        ws.find.return_value = None  # gspread 6.x returns None, not an exception
+        with pytest.raises(RowNotFoundError, match="uuid-missing"):
+            update_row("Approvals", "uuid-missing", {"Status": "x"}, "default")
+
+    def test_update_int_row_out_of_range_raises(self):
+        ws = self._setup(["ID", "Status"])
+        ws.row_count = 5
+        with pytest.raises(RowNotFoundError, match="999"):
+            update_row("Approvals", 999, {"Status": "x"}, "default")
+
+    def test_update_unknown_column_raises(self):
+        ws = self._setup(["ID", "Status"])
+        with pytest.raises(SheetsWriteError, match="NonExistent"):
+            update_row("Approvals", 2, {"NonExistent": "x"}, "default")
+
+    def test_raises_tab_not_found(self):
+        sheets_mod._spreadsheet = _make_spreadsheet({})
+        with pytest.raises(TabNotFoundError):
+            update_row("Missing", 2, {"col": "val"}, "default")
+
+
+# ── read_range ────────────────────────────────────────────────────────────
+
+
+class TestReadRange:
+    def test_returns_nested_list(self):
+        ws = _make_ws("Sheet1", ["A", "B"])
+        ss = _make_spreadsheet({"Sheet1": ws})
+        ss.values_get.return_value = {"values": [["h1", "h2"], ["v1", "v2"]]}
+        sheets_mod._spreadsheet = ss
+        result = read_range("Sheet1", "A1:B2", "default")
+        assert result == [["h1", "h2"], ["v1", "v2"]]
+
+    def test_returns_empty_list_when_no_values(self):
+        ws = _make_ws("Sheet1", ["A"])
+        ss = _make_spreadsheet({"Sheet1": ws})
+        ss.values_get.return_value = {}
+        sheets_mod._spreadsheet = ss
+        result = read_range("Sheet1", "A1:A10", "default")
+        assert result == []
+
+    def test_quotes_tab_name_in_range(self):
+        ws = _make_ws("My Sheet", ["A"])
+        ss = _make_spreadsheet({"My Sheet": ws})
+        ss.values_get.return_value = {"values": []}
+        sheets_mod._spreadsheet = ss
+        read_range("My Sheet", "A1:A5", "default")
+        call_args = ss.values_get.call_args[0][0]
+        assert call_args == "'My Sheet'!A1:A5"
+
+    def test_raises_tab_not_found(self):
+        sheets_mod._spreadsheet = _make_spreadsheet({})
+        with pytest.raises(TabNotFoundError):
+            read_range("Missing", "A1:A5", "default")
+
+
+# ── _retry helper ─────────────────────────────────────────────────────────
+
+
+class TestRetry:
+    def test_returns_on_first_success(self):
+        fn = MagicMock(return_value="ok")
+        assert _retry(fn, "arg1") == "ok"
+        assert fn.call_count == 1
+
+    def test_retries_on_429(self):
+        api_exc = gspread.exceptions.APIError(MagicMock())
+        api_exc.response = MagicMock()
+        api_exc.response.status_code = 429
+        fn = MagicMock(side_effect=[api_exc, api_exc, "success"])
+        assert _retry(fn) == "success"
+        assert fn.call_count == 3
+
+    def test_retries_on_500(self):
+        api_exc = gspread.exceptions.APIError(MagicMock())
+        api_exc.response = MagicMock()
+        api_exc.response.status_code = 500
+        fn = MagicMock(side_effect=[api_exc, "ok"])
+        assert _retry(fn) == "ok"
+
+    def test_raises_rate_limit_after_3_retries(self):
+        api_exc = gspread.exceptions.APIError(MagicMock())
+        api_exc.response = MagicMock()
+        api_exc.response.status_code = 429
+        fn = MagicMock(side_effect=[api_exc, api_exc, api_exc])
+        with pytest.raises(RateLimitError, match="3 retries"):
+            _retry(fn)
+
+    def test_non_retryable_error_raises_immediately(self):
+        api_exc = gspread.exceptions.APIError(MagicMock())
+        api_exc.response = MagicMock()
+        api_exc.response.status_code = 403
+        fn = MagicMock(side_effect=api_exc)
+        with pytest.raises(gspread.exceptions.APIError):
+            _retry(fn)
+        assert fn.call_count == 1
+
+
+# ── _TokenBucket ──────────────────────────────────────────────────────────
+
+
+class TestTokenBucket:
+    def test_initial_consume_succeeds(self):
+        bucket = _TokenBucket(rate=5.0, capacity=10.0)
+        assert bucket.consume(timeout=0.1) is True
+
+    def test_capacity_is_respected(self):
+        bucket = _TokenBucket(rate=0.0, capacity=2.0)  # no refill
+        assert bucket.consume(timeout=0.0) is True
+        assert bucket.consume(timeout=0.0) is True
+        assert bucket.consume(timeout=0.0) is False  # exhausted
+
+    def test_bucket_refills_over_time(self):
+        import time as time_mod
+        bucket = _TokenBucket(rate=1000.0, capacity=1.0)  # fast refill
+        bucket.consume(timeout=0.0)  # drain
+        time_mod.sleep(0.015)  # allow refill at 1000 tokens/sec
+        assert bucket.consume(timeout=0.0) is True
+
+
+# ── batch_append_rows uses INSERT_ROWS mode ───────────────────────────────
+
+
+class TestBatchAppendRowsInsertMode:
+    def test_calls_values_append_with_insert_data_option(self):
+        ws = _make_ws("Logs", ["timestamp", "message"])
+        ss = _make_spreadsheet({"Logs": ws})
+        sheets_mod._spreadsheet = ss
+        batch_append_rows(
+            "Logs",
+            [{"timestamp": "2026-01-01", "message": "hi"}],
+            "default",
+        )
+        params = ss.values_append.call_args[0][1]
+        assert params.get("insertDataOption") == "INSERT_ROWS"
+
+    def test_range_does_not_contain_row_number(self):
+        ws = _make_ws("Logs", ["timestamp"])
+        ss = _make_spreadsheet({"Logs": ws})
+        sheets_mod._spreadsheet = ss
+        batch_append_rows("Logs", [{"timestamp": "x"}], "default")
+        range_arg = ss.values_append.call_args[0][0]
+        # Should be just "'Logs'" — no !A123 appended
+        assert "!" not in range_arg
