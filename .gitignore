@@ -1,0 +1,56 @@
+# Environment & secrets — never commit
+.env
+*.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# uv
+.uv/
+uv.lock
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Credentials & keys
+*.json
+!config/project_template/sheet_template.json
+service_account*.json
+*_credentials.json
+*_key.json
+
+# Local test artifacts
+PENDING_REPAIRS/
+ACTIVE_SKILLS/
+SKILLS_LOG.md
+*.log
+
+# Jupyter
+.ipynb_checkpoints/
