@@ -65,7 +65,7 @@ HEADERS: dict[str, list[str]] = {
     "Agent_Approvals": [
         "ID", "Agent ID", "Issue", "Trigger Reason", "Stopping Constraint",
         "Iterations Run", "Total Cost USD", "Proposed Code", "Status",
-        "Timestamp", "Approved By", "Approver Tier", "code_sha256",
+        "Timestamp", "Approved By", "Approver Tier", "code_sha256", "Priority",
     ],
     "Authorized Approvers": [
         "email", "name", "tier", "active", "added_date", "notes",

@@ -235,9 +235,19 @@ PROJECT=morphic-gaos-prod
 #    AI Studio keys live in Google's shared project and are not covered by your
 #    GCP billing account. Using a Studio key causes 429 RESOURCE_EXHAUSTED
 #    errors with "limit: 0" even when billing is enabled and credits are available.
+#
+# ⚠️  Before creating the key, enable the Generative Language API in the SAME
+#    project the key will be created in:
+#    gcloud services enable generativelanguage.googleapis.com --project=$PROJECT
+#
+# ⚠️  Do NOT paste the key value into the terminal or this chat — it will be
+#    logged. Instead, save it to a temp file in VS Code, then run:
+#      gcloud secrets versions add GEMINI_API_KEY --data-file=tmp_key.txt --project=$PROJECT
+#      Remove-Item tmp_key.txt   # (PowerShell) or: rm tmp_key.txt
 gcloud secrets create GEMINI_API_KEY --project=$PROJECT
-echo -n "<your-gemini-api-key>" | \
-  gcloud secrets versions add GEMINI_API_KEY --data-file=- --project=$PROJECT
+# Save key to tmp_key.txt in VS Code editor, then:
+# gcloud secrets versions add GEMINI_API_KEY --data-file=tmp_key.txt --project=$PROJECT
+# Remove-Item tmp_key.txt
 
 # Ollama host (local machine LAN IP or loopback)
 gcloud secrets create OLLAMA_HOST --project=$PROJECT
