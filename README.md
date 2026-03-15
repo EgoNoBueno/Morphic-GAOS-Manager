@@ -1,6 +1,7 @@
 <div align="center">
 
-<img src="Docs/assets/morphicg-banner.png" alt="Morphic-G AOS Banner" width="100%"/>
+<!-- Banner: save the project graphic as Docs/assets/morphicg-banner.png and uncomment the line below -->
+<!-- <img src="Docs/assets/morphicg-banner.png" alt="Morphic-G AOS Banner" width="100%"/> -->
 
 # Morphic-G AOS
 ### The Intelligent Workforce for Small Business
