@@ -1,0 +1,37 @@
+# Morphic-G AOS — Configuration Template
+# Copy this file to config/settings.yaml and fill in your values.
+# settings.yaml is gitignored — never commit a file with real values.
+
+gcp:
+  project_id: "morphic-gaos-prod"      # Your GCP project ID
+  region: "us-central1"
+
+# Default single-project workbook (used when project_id = "default")
+sheet:
+  workbook_id: "<your-spreadsheet-id>"
+
+# Per-project registry (multi-project support)
+# Each key matches an AOS project_id used in A2AMessage.project_id
+projects:
+  default:
+    sheet_id: "<your-spreadsheet-id>"          # Same as sheet.workbook_id for single-project
+    drive_folder_id: "<your-drive-folder-id>"  # Knowledge/ folder ID
+
+# LLM model aliases — update this line to upgrade models, no code changes needed
+models:
+  LOCAL_MODEL: "ollama/llama3.1"          # Free, local — formatting, summaries, logging
+  FAST_MODEL: "gemini-2.0-flash"          # Moderate reasoning, routing, lookups
+  DEEP_MODEL: "gemini-2.0-pro"            # Approval proposals, conflict resolution, evolution
+  LOCAL_MODEL_FALLBACK: "gemini-2.0-flash"
+  LOCAL_MODEL_TIMEOUT_SECONDS: 2
+
+# Vertex AI Memory Bank corpus resource names (populated after §12 of Deploy spec)
+memory_bank:
+  corpora:
+    global: ""
+    accounting: ""
+    marketing: ""
+    sales: ""
+    operations: ""
+    admin: ""
+    research: ""

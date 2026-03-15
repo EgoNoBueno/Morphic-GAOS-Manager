@@ -39,15 +39,23 @@ uv.lock
 Thumbs.db
 desktop.ini
 
-# Credentials & keys
+# Credentials & keys (NEVER commit)
+oauth-client.json
+config/keys/
 *.json
-!config/project_template/sheet_template.json
+!pyproject.json
 service_account*.json
 *_credentials.json
 *_key.json
 
-# Local test artifacts
+# Test & lint artefacts
 PENDING_REPAIRS/
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+.ruff_cache/
+.mypy_cache/
 ACTIVE_SKILLS/
 SKILLS_LOG.md
 *.log
