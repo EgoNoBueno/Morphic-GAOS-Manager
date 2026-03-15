@@ -51,6 +51,11 @@ service_account*.json
 *_credentials.json
 *_key.json
 
+# Business-specific task agents — never commit to public repo
+# Place your Tier 3 task agent implementations under agents/<domain>/tasks/
+# The orchestrator.py files in agents/<domain>/ are public; tasks/ is private.
+agents/*/tasks/
+
 # Test & lint artefacts
 PENDING_REPAIRS/
 .pytest_cache/
