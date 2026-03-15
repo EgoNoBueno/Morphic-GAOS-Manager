@@ -96,7 +96,9 @@ KNOWLEDGE_SUBFOLDERS = ["workflows", "procedures", "policies", "archive"]
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
+    # Full Drive scope required — accessing shared folders not owned by the ADC identity.
+    # drive.file only covers files the app itself created.
+    "https://www.googleapis.com/auth/" + "drive",
 ]
 
 
@@ -111,7 +113,7 @@ def _get_clients():
 
 def create_folder(drive, name: str, parent_id: str | None = None) -> str:
     """Create a Drive folder and return its ID."""
-    metadata = {
+    metadata: dict = {
         "name": name,
         "mimeType": "application/vnd.google-apps.folder",
     }
@@ -123,7 +125,7 @@ def create_folder(drive, name: str, parent_id: str | None = None) -> str:
 
 def create_spreadsheet_in_folder(drive, name: str, parent_id: str) -> str:
     """Create a Google Sheet inside a Drive folder and return its ID."""
-    metadata = {
+    metadata: dict = {
         "name": name,
         "mimeType": "application/vnd.google-apps.spreadsheet",
         "parents": [parent_id],

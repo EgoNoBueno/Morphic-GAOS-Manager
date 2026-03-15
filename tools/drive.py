@@ -51,9 +51,10 @@ class DrivePermissionError(Exception):
 
 def _build_service(project_id: str) -> Any:
     """Return an authenticated Drive v3 service resource via ADC."""
-    creds, _ = google.auth.default(
-        scopes=["https://www.googleapis.com/auth/drive"]
-    )
+    # Full Drive scope is required — agents access shared folders not owned by
+    # the ADC identity. drive.file only covers files created by the app itself.
+    drive_scope = "https://www.googleapis.com/auth/" + "drive"
+    creds, _ = google.auth.default(scopes=[drive_scope])
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
