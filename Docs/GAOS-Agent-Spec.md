@@ -4,6 +4,8 @@
 
 > This document defines the mandatory construction requirements every agent in the system must satisfy before it is considered complete and deployable. It is the counterpart to the master specification (`GAOS-Manager-Spec.md`) and is referenced from Section 1.3 of that document.
 >
+> **Importing external agents or tools?** Before applying this checklist, the skill must first pass all required gates in `GAOS-Skill-Compliance-Spec.md`. That document defines the security, supply chain, and integration review process for code sourced outside this repository. The §7 checklists below are the *final* step — not the first.
+>
 > **Identity files** (per-agent persona, goal, guardrails) follow the template in `GAOS-Manager-Spec.md` §18.2 and live in `Docs/agents/<name>.md`. This document covers the *engineering* requirements — how an agent is built, wired, and tested.
 
 ---
@@ -397,3 +399,4 @@ Any agent that autonomously writes Python (Write-Test-Refine loop) must demonstr
 | Cost estimates | `GAOS-Manager-Spec.md` §9.4 |
 | Data retention + BigQuery archive | `GAOS-Manager-Spec.md` §9.5 |
 | Multi-project namespace (`project_id`) | `GAOS-Manager-Spec.md` §2 (Project Registry) |
+| Importing external skills — review process | `GAOS-Skill-Compliance-Spec.md` |
