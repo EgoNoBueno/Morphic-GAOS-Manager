@@ -195,6 +195,26 @@ class WorkbookNotFoundError(Exception):
     """Spreadsheet ID not found or inaccessible."""
 ```
 
+### Tab Name Quoting Rule
+
+The Sheets API rejects range strings that contain unquoted tab names with spaces (e.g., `Sales by Product!A2:D` returns 400 "Unable to parse range"). All tab names that contain spaces **must** be wrapped in single quotes inside the range string.
+
+**Rule:** Store every tab name constant with the single quotes embedded:
+```python
+# Correct — single quotes are part of the string value
+SALES_TAB   = "'Sales by Product'"
+AD_TAB      = "'Ad Response/Spend/Recommendations'"
+SHIPPING_TAB = "'Shipping and Receiving'"
+
+# Then build range strings normally:
+range_str = f"{SALES_TAB}!A2:D"   # → 'Sales by Product'!A2:D  ✓
+
+# Wrong — the API will 400 on this
+range_str = f"Sales by Product!A2:D"  # ✗
+```
+
+`google_sheets.py` must apply this quoting to the `tab` parameter internally for every function that builds a range string. Single-word tab names (e.g., `Accounting`, `Logs`) do not require quoting but quoting them is harmless.
+
 ### Rate Limit Compliance
 
 All write calls are tracked against a module-level token bucket (300 req/min). If the bucket is empty, the call blocks up to 5 seconds before retrying. Agents that need to make many writes must use `batch_append_rows()` — a batch write counts as **1 request** regardless of row count.

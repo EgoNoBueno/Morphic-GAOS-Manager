@@ -45,10 +45,38 @@ cd Morphic-GAOS-Manager
 uv venv
 uv pip install google-cloud-secret-manager google-cloud-pubsub gspread pydantic \
                google-adk langgraph google-cloud-bigquery google-cloud-logging \
-               google-cloud-aiplatform
+               google-cloud-aiplatform \
+               "google-genai>=1.0.0"
 ```
 
-### 0.4 Local Ollama Setup
+> **SDK note:** Use `google-genai>=1.0.0` (`google.genai.Client()` API) — **not** `google-generativeai`. The `google-generativeai` package is EOL: it imports with a `FutureWarning` and the `v1beta` endpoint it targets no longer serves models like `gemini-1.5-pro`, returning 404. The `google-genai` package is the official successor and is what `google-adk` expects.
+
+### 0.4 Application Default Credentials (ADC) Setup
+
+All local development runs use ADC — **no service account key file on disk**. `GOOGLE_APPLICATION_CREDENTIALS` must NOT be set in your environment or `.env` file. If that variable exists (even pointing at a missing file), `google-auth` skips ADC entirely and fails silently.
+
+```powershell
+# Verify the variable is not set — remove it if it is
+$env:GOOGLE_APPLICATION_CREDENTIALS   # should return nothing
+
+# Step 1: Create an OAuth 2.0 Desktop Client ID in YOUR GCP project
+# Go to: console.cloud.google.com/apis/credentials → Create Credentials → OAuth client ID
+# Application type: Desktop app
+# Download the JSON file and save as oauth-client.json (gitignored)
+
+# Step 2: Log in with your Desktop client and request the Sheets + Drive scopes
+# The DEFAULT gcloud client ID BLOCKS the spreadsheets scope — you MUST use your own.
+gcloud auth application-default login `
+  --client-id-file=oauth-client.json `
+  --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive.file,https://www.googleapis.com/auth/cloud-platform"
+
+# Verify ADC is working
+gcloud auth application-default print-access-token
+```
+
+> **What this does:** All Google Cloud libraries (`google-auth`, `gspread`, `google-genai`, `google-cloud-pubsub`) automatically pick up the credential written to `~/.config/gcloud/application_default_credentials.json`. You do not need a service account key file locally. Service account keys are only used by Cloud Run at runtime (loaded from Secret Manager — see §3).
+
+### 0.5 Local Ollama Setup
 
 ```powershell
 # Pull the recommended model (16GB RAM minimum; for GPU use mistral)
@@ -193,6 +221,11 @@ Populate all secrets before any agent code runs. The agent boot sequence calls `
 PROJECT=morphic-gaos-prod
 
 # API credentials
+# ⚠️  IMPORTANT: Get this key from console.cloud.google.com/apis/credentials
+#    inside YOUR GCP project — NOT from aistudio.google.com.
+#    AI Studio keys live in Google's shared project and are not covered by your
+#    GCP billing account. Using a Studio key causes 429 RESOURCE_EXHAUSTED
+#    errors with "limit: 0" even when billing is enabled and credits are available.
 gcloud secrets create GEMINI_API_KEY --project=$PROJECT
 echo -n "<your-gemini-api-key>" | \
   gcloud secrets versions add GEMINI_API_KEY --data-file=- --project=$PROJECT
