@@ -13,6 +13,8 @@
 [![Models](https://img.shields.io/badge/LLM-Gemini%20%2B%20Ollama-orange)](#hybrid-llm-strategy)
 [![License](https://img.shields.io/badge/license-MIT-blue)](#)
 
+### 📋 [New here? Start with the Project Summary →](Docs/Morphic-GAOS-Manager-Summary.md)
+
 </div>
 
 ---
