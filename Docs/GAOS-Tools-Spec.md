@@ -86,14 +86,17 @@ All Sheets operations. Uses `gspread` with a service account credential loaded f
 ```python
 def init_sheets_client(project_id: str) -> None:
     """
-    Authenticate gspread with the GSHEETS_SERVICE_ACCOUNT secret and
+    Authenticate gspread via Application Default Credentials (ADC) and
     open the workbook for this project. Must be called before any other
     function in this module.
 
+    On Cloud Run, ADC resolves to the attached service account identity.
+    Locally, ADC is provided by `gcloud auth application-default login`.
+
     Raises:
-        SecretNotFoundError: Propagated from get_secret().
         WorkbookNotFoundError: Spreadsheet ID for project_id is not in
-                              settings.yaml under projects.<project_id>.sheet_id.
+                              settings.yaml under projects.<project_id>.sheet_id,
+                              or the spreadsheet is inaccessible.
     """
 ```
 
@@ -406,8 +409,8 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
       4. Adds X-AOS-Project-ID and X-AOS-Timestamp headers.
       5. POSTs to WEBHOOK_URL with Content-Type: application/json.
 
-    If payload contains a `code` field, computes SHA-256 of the code
-    value and adds it as `code_sha256` to the payload before signing.
+    If payload contains a `Proposed Code` or `code` field, computes SHA-256
+    of that value and adds it as `code_sha256` to the payload before signing.
     This value is written to col M of Agent_Approvals by the Apps Script.
 
     Raises:
@@ -421,10 +424,13 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
 
 ```python
 class WebhookDeliveryError(Exception):
-    """Non-2xx HTTP response from the Apps Script endpoint."""
+    """Non-2xx HTTP response from the Apps Script endpoint after retries."""
 
 class WebhookTimeoutError(Exception):
     """Request timed out after 10 seconds."""
+
+class WebhookURLError(Exception):
+    """Webhook URL is invalid or resolves to a private/internal address."""
 ```
 
 ### Security Notes
@@ -444,13 +450,15 @@ Loads and validates the Project Registry tab. Called during agent boot sequence 
 from pydantic import BaseModel
 
 class ProjectRecord(BaseModel):
-    project_id: str          # Unique slug (e.g., "acme", "northstar")
-    display_name: str        # Human-readable name
-    status: str              # "Active" | "Paused" | "Archived"
-    sheet_id: str            # Google Sheets workbook ID for this project
-    drive_folder_id: str     # Knowledge/ root Drive folder ID
-    pubsub_prefix: str       # Topic prefix (usually matches project_id)
-    created_at: str          # ISO 8601 timestamp
+    project_id: str                # Unique slug (e.g., "acme", "northstar")
+    project_name: str              # Human-readable display name
+    status: str                    # "Active" | "Pending" | "Paused" | "Archived"
+    sheet_workbook_id: str         # Google Sheets workbook ID for this project
+    drive_folder_id: str           # Knowledge/ root Drive folder ID
+    budget_ceiling_usd: str = ""  # Monthly LLM spend ceiling (blank = no limit)
+    owner_email: str = ""         # Google account to notify on escalations
+    created_date: str = ""        # ISO 8601 date the project was registered
+    notes: str = ""               # Free-text context for Nexus-Prime
 
 def load_project_registry(project_id: str) -> list[ProjectRecord]:
     """
@@ -561,10 +569,69 @@ class MemoryBankError(Exception):
 | `flush_observations` | ✅ | ✅ | ✗ (returns observations in AgentOutput; orchestrator flushes) |
 | `load_domain_memory` | ✅ | ✅ | ✗ |
 | `write_approved_memory` | ✅ (Nexus-Prime only) | ✗ | ✗ |
+| `query_memory_bank` | ✅ (Nexus-Prime only) | ✗ | ✗ |
 
 ---
 
-## 9. Tool Usage Rules Summary
+## 9. `tools/bigquery.py`
+
+BigQuery writer for cold-storage logging and analytics. All log writes from agents go through this module — no agent may call the BigQuery SDK directly.
+
+```python
+def insert_row(table_ref: str, row: dict, project_id: str = "") -> None:
+    """
+    Stream one row into a BigQuery table.
+
+    Args:
+        table_ref:  Unqualified ``dataset.table``
+                    (e.g., "aos_logs.task_outcomes") or fully qualified
+                    ``project.dataset.table``.
+        row:        Dict keyed by column name. Values must be JSON-serialisable.
+        project_id: Unused — present for API symmetry with other tools.
+                    The GCP project is always read from settings.GCP_PROJECT_ID.
+
+    Raises:
+        BigQueryInsertError: API call failed after 3 retries.
+        BigQueryRowError:    BigQuery rejected the row (schema mismatch or
+                             invalid value).
+    """
+```
+
+### Error Types
+
+```python
+class BigQueryInsertError(Exception):
+    """Streaming insert failed after retry exhaustion."""
+
+class BigQueryRowError(Exception):
+    """BigQuery rejected one or more rows (schema mismatch or invalid value)."""
+```
+
+### Usage Pattern
+
+```python
+# Standard task outcome log — used by every agent after task completion
+from tools.bigquery import insert_row
+
+insert_row("aos_logs.task_outcomes", {
+    "task_id":        task_id,
+    "project_id":     project_id,
+    "agent_id":       "ledger",
+    "task_type":      "invoice_matching",
+    "status":         "success",
+    "result_summary": "Matched 12 invoices",
+    "total_cost_usd": 0.004,
+    "timestamp":      datetime.now(UTC).isoformat(),
+})
+```
+
+### Table Reference
+
+All standard tables live in the `aos_logs` dataset provisioned in `GAOS-Deploy-Spec.md §7`. Always use the short `dataset.table` form — the GCP project is injected automatically from `settings.GCP_PROJECT_ID`.
+
+---
+
+## 10. Tool Usage Rules Summary
 
 | Rule | Detail |
 |------|--------|
@@ -577,7 +644,7 @@ class MemoryBankError(Exception):
 
 ---
 
-## 10. Reference Index
+## 11. Reference Index
 
 | Topic | Location |
 |-------|----------|
