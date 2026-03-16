@@ -293,38 +293,63 @@ Start-Service OllamaService
 ## 6. Recommended Project Structure
 
 ```
-AOS-Manager/
-├── agents/
-│   ├── tier1/
-│   │   └── nexus_prime.py        # Root AOS Manager (DEEP_MODEL)
-│   ├── tier2/                    # Domain Orchestrators (human-monitored)
-│   │   ├── ledger.py             # Accounting Agent
-│   │   ├── beacon.py             # Marketing Agent
-│   │   ├── pursuit.py            # Sales Agent
-│   │   ├── foreman.py            # Operations Agent
-│   │   ├── steward.py            # Admin & HR Agent
-│   │   └── scout.py              # Research Agent
-│   └── tier3/                    # Task Agents (orchestrator-supervised only)
-│       ├── invoice_parser.py
-│       ├── ad_spend_monitor.py
-│       └── ...                   # (one module per task agent)
-├── tools/                        # Functions the agents can call
+Morphic-GAOS-Manager/
+├── agents/                       # One package per agent
+│   ├── nexus_prime/
+│   │   ├── __init__.py
+│   │   └── orchestrator.py       # Root AOS Manager (Tier 1 — DEEP_MODEL)
+│   ├── ledger/
+│   │   ├── __init__.py
+│   │   ├── orchestrator.py       # Accounting Agent (Tier 2)
+│   │   └── tasks/                # Tier 3 task runners (one module per task)
+│   ├── beacon/
+│   │   ├── orchestrator.py       # Marketing Agent (Tier 2)
+│   │   └── tasks/
+│   ├── pursuit/
+│   │   ├── orchestrator.py       # Sales Agent (Tier 2)
+│   │   └── tasks/
+│   ├── foreman/
+│   │   ├── orchestrator.py       # Operations Agent (Tier 2)
+│   │   └── tasks/
+│   ├── steward/
+│   │   ├── orchestrator.py       # Admin & HR Agent (Tier 2)
+│   │   └── tasks/
+│   └── scout/
+│       ├── orchestrator.py       # Research Agent (Tier 2)
+│       └── tasks/
+├── tools/                        # Shared tool modules all agents import
 │   ├── google_sheets.py          # Read/Write logic for Dashboard
-│   ├── project_registry.py       # Load/watch Project Registry tab; resolve project namespaces
-│   ├── terminal.py               # Executes local commands
-│   └── search.py                 # Web search capability
+│   ├── project_registry.py       # Load/watch Project Registry tab
+│   ├── pubsub.py                 # Publish A2A messages
+│   ├── secrets.py                # get_secret() wrapper for Secret Manager
+│   ├── bigquery.py               # Cold log writes and archive queries
+│   ├── drive.py                  # Knowledge/ folder read/write
+│   ├── memory.py                 # Vertex AI RAG corpus read/write
+│   └── webhook_sender.py         # HMAC-signed Approval Gate proposals
+├── models/                       # Pydantic schemas (A2AMessage, MemoryEntry, etc.)
 ├── config/
-│   ├── settings.yaml             # API keys, Sheet IDs & model aliases (single source of truth)
-│   ├── project_template/         # Cloned when a new project is registered
-│   │   ├── sheet_template.json   # Column/tab structure for new project workbooks
-│   │   └── drive_structure.md    # Required Drive folder layout per project
-│   └── instructions/             # System prompts per agent
-│       ├── nexus_prime.md
-│       ├── ledger.md
-│       ├── beacon.md
-│       └── ...
-├── .env                          # Local dev ONLY — never committed, never deployed to cloud
-└── main.py                       # The Orchestrator loop
+│   ├── settings.yaml             # Model aliases, GCP IDs, topic list (committed)
+│   └── settings.yaml.template    # Blank starter template
+├── Docs/
+│   ├── agents/                   # Per-agent identity files (system prompt headers)
+│   │   ├── nexus-prime.md
+│   │   ├── ledger.md, beacon.md, pursuit.md …
+│   └── *.md                      # Spec and architecture docs
+├── apps_script/                  # Apps Script source (.gs files deployed via API)
+│   ├── doPost.gs
+│   ├── onChangeApproval.gs
+│   ├── helpers.gs
+│   ├── setup_protection.gs
+│   └── syncSkillsToVertex.gs
+├── scripts/                      # One-time setup and seeding scripts
+│   ├── setup_workspace.py
+│   ├── setup_apps_script.py
+│   ├── _create_corpora.py
+│   └── _seed_knowledge.py
+├── tests/
+├── main.py                       # FastAPI entry point — AGENT_NAME env var selects orchestrator
+├── Dockerfile
+└── pyproject.toml
 ```
 
 ---
@@ -465,9 +490,9 @@ Unbounded log accumulation wastes storage, slows the Sheet, and eventually costs
 | `local_fallback` / Ollama health events | 30 days | 6 months | Reliability trending |
 | Cloud Logging entries | N/A | 7 days (set in Log Explorer) | Google default is 30 days; reduce to save free tier quota |
 
-#### Nightly Archive Job (`tools/archive_job.gs` — Apps Script)
+#### Nightly Archive Job (Cloud Scheduler → Nexus-Prime `/archive` endpoint)
 
-A time-based Apps Script trigger runs at **2:00 AM daily**:
+A **Cloud Scheduler job** (`nightly-archive`, `0 2 * * *`) POSTs to the Nexus-Prime Cloud Run service at **2:00 AM daily**. The `/archive` handler in the Nexus-Prime orchestrator performs all steps:
 
 1. **Summarize:** `LOCAL_MODEL` (Ollama / fallback Flash) generates one weekly aggregate row per log type (e.g., "Week of 2026-W12: 847 observability entries, top agent: beacon, 3 evolution tasks, $0.34 spent") and writes it to the Cold tier in BigQuery.
 2. **Archive:** Rows older than their Sheet retention threshold are moved to BigQuery.
@@ -478,8 +503,8 @@ A time-based Apps Script trigger runs at **2:00 AM daily**:
 #### BigQuery TTL Configuration (set once at table creation)
 
 ```sql
--- Example: set partition expiry on the observability_log table
-ALTER TABLE `project.aos_logs.observability_log`
+-- Example: set partition expiry on the task_outcomes table (30-day retention)
+ALTER TABLE `morphic-gaos-prod.aos_logs.task_outcomes`
 SET OPTIONS (partition_expiration_days = 30);
 ```
 
@@ -498,6 +523,8 @@ All communication between Tier 2 orchestrators and Nexus-Prime travels through *
 ### 10.1 Pub/Sub Topic Topology
 
 Each orchestrator owns a single outbound topic. Nexus-Prime subscribes to all of them. Orchestrators subscribe to each other **only where a cross-domain workflow requires it** (see Section 10.3).
+
+> **Topic naming convention:** GCP Pub/Sub topic names cannot contain `/`. In all GCP resources and code, use `.` as the separator (e.g. `agent.nexus-prime.events`). The `/` notation in the table below is a human-readable display convention only.
 
 | Topic | Owner | Subscribers |
 |-------|-------|-------------|
@@ -1271,18 +1298,15 @@ Storing API keys in `.env` files is acceptable **only during local development**
 | Secret Name | Value | Used By |
 |-------------|-------|---------|
 | `GEMINI_API_KEY` | Gemini API key | All agents using `FAST_MODEL` / `DEEP_MODEL` |
-| `GSHEETS_SERVICE_ACCOUNT` | JSON key for Sheets service account | `tools/google_sheets.py` |
-| `PUBSUB_SERVICE_ACCOUNT` | JSON key for Pub/Sub service account | A2A messaging layer |
-| `BIGQUERY_SERVICE_ACCOUNT` | JSON key for BigQuery service account | Archive job, Grafana |
-| `VERTEX_SERVICE_ACCOUNT` | JSON key for Vertex AI service account | Sandbox, Agent Engine, Memory Bank |
-| `OLLAMA_HOST` | Local Ollama endpoint URL | `LOCAL_MODEL` routing |
+| `OLLAMA_HOST` | Local Ollama endpoint URL (e.g. `http://localhost:11434`) | `LOCAL_MODEL` routing |
+| `WEBHOOK_HMAC_SECRET` | Random 32-byte hex string | Nexus-Prime (`webhook_sender.py`) + Apps Script (`doPost`) |
+| `WEBHOOK_URL` | Apps Script Web App URL | Nexus-Prime (`webhook_sender.py`) |
 
-#### Environment Rules
-
+> **No JSON key files in Secret Manager.** All Google service access (Sheets, Pub/Sub, BigQuery, Drive, Vertex AI) is handled via service account identity — each Cloud Run service runs as its own SA and calls `google.auth.default()`. Service account JSON keys are not created, stored, or injected anywhere in this system. See `GAOS-Deploy-Spec.md §2`.
 | Environment | Secret Source | `.env` allowed? |
 |-------------|--------------|----------------|
 | Local dev (your machine) | `.env` file — never committed to Git | Yes, `.env` in `.gitignore` |
-| Cloud Run / Vertex AI | Google Secret Manager — injected as env vars at runtime | No |
+| Cloud Run | Google Secret Manager — fetched at boot via `get_secret()` using service account identity; **not** injected as env vars | No |
 | Apps Script | `PropertiesService.getScriptProperties()` — Google's built-in secret store for Apps Script | No |
 | CI/CD pipeline | Secret Manager accessed via Workload Identity Federation | No |
 
@@ -1308,12 +1332,13 @@ gemini_key = get_secret("GEMINI_API_KEY", settings.GCP_PROJECT_ID)
 ```javascript
 // Store once via Script Editor > Project Settings > Script Properties
 const props = PropertiesService.getScriptProperties();
-const sheetsKey = props.getProperty('GSHEETS_SERVICE_ACCOUNT');
+const hmacSecret = props.getProperty('WEBHOOK_HMAC_SECRET');
+const webhookUrl  = props.getProperty('WEBHOOK_URL');
 ```
 
 #### IAM Rule for Secret Access
 
-Each agent's service account is granted `roles/secretmanager.secretAccessor` **only for the specific secrets it needs** — not blanket access to all secrets in the project. Nexus-Prime's service account cannot read Vertex credentials; the Vertex agent cannot read the Sheets service account. Least-privilege enforced at the secret level.
+Each agent's service account is granted `roles/secretmanager.secretAccessor` **only for the specific secrets it needs** — not blanket access to all secrets in the project. For example, only Nexus-Prime's SA can read `WEBHOOK_HMAC_SECRET`; all agents can read `GEMINI_API_KEY` and `OLLAMA_HOST`. Least-privilege enforced at the secret level.
 
 #### Secret Rotation Policy
 
@@ -1547,23 +1572,23 @@ Phase 4 is complete when **all** of the following are true:
 
 | Component | Google Service | Status |
 |-----------|---------------|--------|
-| Logic/Reasoning | Gemini 3 + Google ADK | [ ] |
+| Logic/Reasoning | Gemini 2 + Google ADK | [x] |
 | Code Execution | Vertex AI Sandbox | [ ] |
-| Messaging | Cloud Pub/Sub | [ ] |
-| Proactive Trigger | Cloud Scheduler | [ ] |
-| Human Interface | Google Sheets + Apps Script | [ ] |
-| Memory | Vertex AI Memory Bank | [ ] |
-| Runtime (Phase 1–4) | Cloud Run (scale-to-zero, event-driven) | [ ] |
+| Messaging | Cloud Pub/Sub | [x] |
+| Proactive Trigger | Cloud Scheduler | [x] |
+| Human Interface | Google Sheets + Apps Script | [x] |
+| Memory | Vertex AI Memory Bank | [x] |
+| Runtime (Phase 1–4) | Cloud Run (scale-to-zero, event-driven) | [x] |
 | Runtime (Phase 5+) | Vertex AI Agent Engine *(deferred — see §9.4)* | [ ] |
-| Knowledge Base | Google Drive | [ ] |
+| Knowledge Base | Google Drive | [x] |
 | Skills Library | Agent Garden / MCP Tools | [ ] |
-| **Nexus-Prime (Tier 1)** | Google ADK Root Agent | [ ] |
-| **Ledger — Accounting Agent (Tier 2)** | Google ADK + Sheets | [ ] |
-| **Beacon — Marketing Agent (Tier 2)** | Google ADK + Sheets | [ ] |
-| **Pursuit — Sales Agent (Tier 2)** | Google ADK + CRM tools | [ ] |
-| **Foreman — Operations Agent (Tier 2)** | Google ADK + Sheets | [ ] |
-| **Steward — Admin Agent (Tier 2)** | Google ADK + Calendar | [ ] |
-| **Scout — Research Agent (Tier 2)** | Google ADK + Search | [ ] |
+| **Nexus-Prime (Tier 1)** | Google ADK Root Agent | [x] |
+| **Ledger — Accounting Agent (Tier 2)** | Google ADK + Sheets | [x] |
+| **Beacon — Marketing Agent (Tier 2)** | Google ADK + Sheets | [x] |
+| **Pursuit — Sales Agent (Tier 2)** | Google ADK + CRM tools | [x] |
+| **Foreman — Operations Agent (Tier 2)** | Google ADK + Sheets | [x] |
+| **Steward — Admin Agent (Tier 2)** | Google ADK + Calendar | [x] |
+| **Scout — Research Agent (Tier 2)** | Google ADK + Search | [x] |
 
 ---
 
