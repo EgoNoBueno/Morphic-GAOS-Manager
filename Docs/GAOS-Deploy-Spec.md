@@ -261,10 +261,8 @@ python -c "import secrets; print(secrets.token_hex(32))" | \
    python -c "import secrets; print(secrets.token_hex(32))" | \
    gcloud secrets versions add WEBHOOK_HMAC_SECRET --data-file=- --project=$PROJECT)
 
-# WEBHOOK_URL — add after Apps Script is deployed in Section 4
-# gcloud secrets create WEBHOOK_URL --project=$PROJECT
-# echo -n "<apps-script-web-app-url>" | \
-#   gcloud secrets versions add WEBHOOK_URL --data-file=- --project=$PROJECT
+# WEBHOOK_URL — created automatically by scripts/setup_apps_script.py Phase 1
+# No manual step needed here; the script creates the secret and stores the URL.
 ```
 
 ### 3.2 Grant Per-Secret Access (Least-Privilege)
@@ -292,7 +290,7 @@ gcloud secrets add-iam-policy-binding WEBHOOK_HMAC_SECRET \
   --role="roles/secretmanager.secretAccessor" --project=$PROJECT
 ```
 
-**Verification:** `gcloud secrets list --project=$PROJECT` — 3 secrets listed (WEBHOOK_URL will be added after Apps Script deploy).
+**Verification:** `gcloud secrets list --project=$PROJECT` — 4 secrets listed (WEBHOOK_URL added by setup_apps_script.py Phase 1).
 
 ---
 
@@ -576,92 +574,67 @@ all SA emails appear with Editor access.
 
 ## 7. BigQuery
 
-### 7.1 Create Dataset
+> **Windows note:** The `bq` CLI fails on Windows (Python `absl.flags` conflict in the bundled
+> Cloud SDK). Use the Python approach below for all BigQuery provisioning.
 
-```bash
-bq mk --dataset \
-  --description "AOS cold log storage and historical analytics" \
-  --location US \
-  morphic-gaos-prod:aos_logs
+### 7.1 Create Dataset and Tables (automated)
+
+All BigQuery infrastructure is provisioned by a single Python command:
+
+```powershell
+# Prerequisites: .venv activated, ADC configured
+python -c "
+from google.cloud import bigquery
+client = bigquery.Client(project='morphic-gaos-prod')
+ds = bigquery.Dataset('morphic-gaos-prod.aos_logs')
+ds.location = 'US'
+ds.description = 'AOS cold log storage and historical analytics'
+client.create_dataset(ds, exists_ok=True)
+print('Dataset ready')
+"
 ```
 
-### 7.2 Create Tables with TTL Partitioning
+Then create all 5 tables:
 
-```sql
--- Run in BigQuery console (https://console.cloud.google.com/bigquery)
--- or via bq CLI
+| Table | Partition | TTL | Purpose |
+|-------|-----------|-----|---------|
+| `task_outcomes` | `log_date` | 30 days | Episodic memory source — every task result |
+| `evolution_tasks` | `log_date` | 365 days | Self-evolution loop outcomes |
+| `approval_history` | `log_date` | 730 days | Full approval gate history |
+| `observability_weekly` | — | indefinite | Weekly summary archive |
+| `memory_entries` | — | indefinite | Structured metadata for Vertex AI RAG entries |
 
--- Task outcomes (episodic memory source)
-CREATE TABLE `morphic-gaos-prod.aos_logs.task_outcomes`
-(
-  task_id STRING,
-  project_id STRING,
-  agent_id STRING,
-  task_type STRING,
-  status STRING,
-  error_fingerprint STRING,
-  cost_usd FLOAT64,
-  duration_seconds FLOAT64,
-  timestamp TIMESTAMP,
-  log_date DATE
+The `memory_entries` table holds the structured `MemoryEntry` metadata (agent_id, knowledge_type,
+active flag, version, etc.) so that `load_domain_memory()` can filter by agent and active status
+without querying Vertex AI. The Vertex AI RAG corpus stores the raw text for semantic retrieval.
+
+```python
+# Schema: memory_entries
+from google.cloud import bigquery
+client = bigquery.Client(project='morphic-gaos-prod')
+table = bigquery.Table(
+    'morphic-gaos-prod.aos_logs.memory_entries',
+    schema=[
+        bigquery.SchemaField('memory_id', 'STRING'),
+        bigquery.SchemaField('project_id', 'STRING'),
+        bigquery.SchemaField('agent_id', 'STRING'),
+        bigquery.SchemaField('knowledge_type', 'STRING'),
+        bigquery.SchemaField('domain', 'STRING'),
+        bigquery.SchemaField('content', 'STRING'),
+        bigquery.SchemaField('confidence', 'FLOAT64'),
+        bigquery.SchemaField('version', 'INT64'),
+        bigquery.SchemaField('supersedes', 'STRING'),
+        bigquery.SchemaField('active', 'BOOL'),
+        bigquery.SchemaField('tags', 'STRING'),       # JSON array as string
+        bigquery.SchemaField('approved_by', 'STRING'),
+        bigquery.SchemaField('approved_at', 'TIMESTAMP'),
+    ],
 )
-PARTITION BY log_date
-OPTIONS (partition_expiration_days = 30);
-
--- Evolution task outcomes
-CREATE TABLE `morphic-gaos-prod.aos_logs.evolution_tasks`
-(
-  task_id STRING,
-  project_id STRING,
-  agent_id STRING,
-  trigger_reason STRING,
-  total_iterations INT64,
-  stopping_constraint STRING,
-  error_fingerprint STRING,
-  total_duration_seconds FLOAT64,
-  total_cost_usd FLOAT64,
-  escalated BOOL,
-  local_fallback BOOL,
-  timestamp TIMESTAMP,
-  log_date DATE
-)
-PARTITION BY log_date
-OPTIONS (partition_expiration_days = 365);
-
--- Approval gate history
-CREATE TABLE `morphic-gaos-prod.aos_logs.approval_history`
-(
-  proposal_id STRING,
-  project_id STRING,
-  agent_id STRING,
-  priority INT64,
-  status STRING,
-  approved_by STRING,
-  approver_tier INT64,
-  cost_usd FLOAT64,
-  timestamp TIMESTAMP,
-  log_date DATE
-)
-PARTITION BY log_date
-OPTIONS (partition_expiration_days = 730);
-
--- Observability log (weekly summaries — raw deleted from Sheet after 7 days)
-CREATE TABLE `morphic-gaos-prod.aos_logs.observability_weekly`
-(
-  week STRING,
-  project_id STRING,
-  tasks_started INT64,
-  tasks_succeeded INT64,
-  tasks_escalated INT64,
-  top_constraint STRING,
-  top_error STRING,
-  total_cost_usd FLOAT64,
-  archived_at TIMESTAMP
-)
-OPTIONS (expiration_timestamp = NULL);  -- indefinite; manually managed
+client.create_table(table, exists_ok=True)
+print('memory_entries: created')
 ```
 
-**Verification:** In BigQuery console, expand `aos_logs` dataset — 4 tables listed with partition configuration visible.
+**Verification:** In BigQuery console, expand `aos_logs` dataset — 5 tables listed.
 
 ---
 
@@ -673,16 +646,19 @@ Create this file before writing any agent code. It is the single source of truth
 # config/settings.yaml
 # Do NOT commit secrets here — all sensitive values go in Secret Manager.
 # This file is safe to commit.
+# See config/settings.yaml.template for a blank starter.
 
 gcp:
   project_id: "morphic-gaos-prod"
   region: "us-central1"
 
 sheet:
-  workbook_id: "<paste-your-spreadsheet-id-here>"
+  workbook_id: "<your-spreadsheet-id>"   # from setup_workspace.py output
 
-drive:
-  knowledge_folder_id: "<paste-your-knowledge-folder-id-here>"
+projects:
+  default:
+    sheet_id: "<your-spreadsheet-id>"
+    drive_folder_id: "<your-knowledge-folder-id>"  # from setup_workspace.py output
 
 models:
   LOCAL_MODEL: "ollama/llama3.1"
@@ -692,34 +668,38 @@ models:
   DEEP_MODEL: "gemini-2.0-pro"
 
 pubsub:
-  topic_prefix: "agent"       # Topics follow: agent.<name>.events
-  ack_deadline_seconds: 60
+  all_topics:                   # Nexus-Prime validates these exist at boot
+    - "agent.nexus-prime.events"
+    - "agent.ledger.events"
+    - "agent.beacon.events"
+    - "agent.pursuit.events"
+    - "agent.foreman.events"
+    - "agent.steward.events"
+    - "agent.scout.events"
+    - "agent.approvals.events"
 
 bigquery:
   dataset: "aos_logs"
 
-logging:
-  retention_days: 7           # Set in Log Explorer — reduces free tier consumption
+# Vertex AI RAG corpora — populated automatically by scripts/_create_corpora.py
+# Region note: us-central1/us-east1/us-east4 restricted for new projects;
+# use us-west1 or see https://cloud.google.com/vertex-ai/generative-ai/docs/rag-engine/rag-overview#supported-regions
+memory_bank:
+  region: "us-west1"
+  corpora:
+    global: ""        # projects/<num>/locations/us-west1/ragCorpora/<id>
+    accounting: ""
+    marketing: ""
+    sales: ""
+    operations: ""
+    admin: ""
+    research: ""
 
-cost:
-  monthly_budget_alert_usd: 5.00
-
-code_safety:
-  allowed_imports:
-    - google
-    - vertexai
-    - langchain
-    - pydantic
-    - datetime
-    - json
-    - re
-    - math
-    - typing
-    - collections
-    - itertools
-    - functools
-    - logging
-    - gspread
+# Apps Script — populated automatically by scripts/setup_apps_script.py Phase 1
+apps_script:
+  script_id: ""
+  deployment_id: ""
+  webhook_url: ""
 ```
 
 ---
@@ -850,25 +830,25 @@ This is a manual one-time step; there is no `gcloud` CLI command for bucket rete
 
 One corpus per domain. Nexus-Prime has one global corpus.
 
-```bash
-# Run in Cloud Shell or via Python client
-python << 'EOF'
-from google.cloud import aiplatform
-aiplatform.init(project="morphic-gaos-prod", location="us-central1")
+> **Region note:** `us-central1`, `us-east1`, and `us-east4` are capacity-restricted for new
+> projects. Use `us-west1` (or another supported region from the
+> [RAG Engine docs](https://cloud.google.com/vertex-ai/generative-ai/docs/rag-engine/rag-overview#supported-regions)).
+> Set `memory_bank.region` in `settings.yaml` to match.
 
-domains = ["global", "accounting", "marketing", "sales", 
-           "operations", "admin", "research"]
-for domain in domains:
-    # Create a RAG corpus per domain
-    corpus = aiplatform.rag.create_corpus(
-        display_name=f"gaos-{domain}",
-        description=f"Morphic-G AOS semantic memory — {domain} domain"
-    )
-    print(f"{domain}: {corpus.name}")
-EOF
+> **Package note:** Use `vertexai.rag` (from the `google-cloud-aiplatform` package) — **not**
+> `google.cloud.aiplatform.rag`. The `aiplatform.rag` attribute doesn't exist in the installed
+> version; `vertexai.rag` is the correct import path.
+
+```powershell
+# Automated — creates all 7 corpora and writes corpus names to settings.yaml
+python scripts/_create_corpora.py
 ```
 
-Save the corpus resource names — add them to `settings.yaml` under `memory_bank.corpora` after creation.
+The script (`scripts/_create_corpora.py`) uses `vertexai.rag.create_corpus()` and writes
+all corpus resource names to `memory_bank.corpora` in `settings.yaml` automatically.
+
+**Verification:** `settings.yaml` `memory_bank.corpora` section has non-empty values for all
+7 domains.
 
 ---
 

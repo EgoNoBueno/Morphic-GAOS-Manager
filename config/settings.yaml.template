@@ -15,9 +15,9 @@ sheet:
 projects:
   default:
     sheet_id: "<your-spreadsheet-id>"          # Same as sheet.workbook_id for single-project
-    drive_folder_id: "<your-drive-folder-id>"  # Knowledge/ folder ID
+    drive_folder_id: "<your-drive-folder-id>"  # Knowledge/ folder ID from setup_workspace.py
 
-# LLM model aliases — update this line to upgrade models, no code changes needed
+# LLM model aliases — update this section to upgrade models, no code changes needed
 models:
   LOCAL_MODEL: "ollama/llama3.1"          # Free, local — formatting, summaries, logging
   FAST_MODEL: "gemini-2.0-flash"          # Moderate reasoning, routing, lookups
@@ -26,7 +26,6 @@ models:
   LOCAL_MODEL_TIMEOUT_SECONDS: 2
 
 # Pub/Sub topic names that Nexus-Prime monitors and validates at boot.
-# Add all agent event topics here so boot can verify all topics exist.
 pubsub:
   all_topics:
     - "agent.nexus-prime.events"
@@ -36,9 +35,15 @@ pubsub:
     - "agent.foreman.events"
     - "agent.steward.events"
     - "agent.scout.events"
+    - "agent.approvals.events"
 
-# Vertex AI Memory Bank corpus resource names (populated after §12 of Deploy spec)
+bigquery:
+  dataset: "aos_logs"
+
+# Vertex AI RAG corpora (populated by scripts/_create_corpora.py)
+# Region note: us-central1/us-east1/us-east4 restricted for new projects; use us-west1
 memory_bank:
+  region: "us-west1"
   corpora:
     global: ""
     accounting: ""
@@ -47,3 +52,9 @@ memory_bank:
     operations: ""
     admin: ""
     research: ""
+
+# Apps Script (populated automatically by scripts/setup_apps_script.py Phase 1)
+apps_script:
+  script_id: ""
+  deployment_id: ""
+  webhook_url: ""

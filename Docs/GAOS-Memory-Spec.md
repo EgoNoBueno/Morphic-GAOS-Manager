@@ -227,37 +227,121 @@ class MemoryEntry(BaseModel):
 
 At startup, each orchestrator calls `load_domain_memory()` to batch-fetch all active entries for its domain into `working_memory.memory_context`. This is the **only** Memory Bank read during a normal session.
 
+> **Implementation note:** Vertex AI RAG Engine is a document retrieval store, not a structured
+> key-value store. Memory entries use a **two-part storage pattern**:
+> - **BigQuery `memory_entries` table** — structured metadata (agent_id, knowledge_type, active
+>   flag, version, tags). Used for filtered batch loads at boot (free at this scale).
+> - **Vertex AI RAG corpus** — raw text content per domain corpus. Used for semantic similarity
+>   search mid-task via `rag.retrieval_query()`.
+
 ```python
 # tools/memory.py
-from vertexai.preview.memory import MemoryBankClient
+import json
+import yaml
+from pathlib import Path
+from google.cloud import bigquery
+import vertexai
+from vertexai import rag
+
+_SETTINGS = yaml.safe_load(open(Path(__file__).parent.parent / "config" / "settings.yaml"))
+_PROJECT = _SETTINGS["gcp"]["project_id"]
+_REGION = _SETTINGS["memory_bank"]["region"]
+
+vertexai.init(project=_PROJECT, location=_REGION)
+
+
+def _corpus_for_domain(domain: str) -> str:
+    return _SETTINGS["memory_bank"]["corpora"][domain]
+
 
 def load_domain_memory(agent_id: str, project_id: str) -> dict:
-    """Batch-fetch all active memory entries for this agent's domain."""
-    client = MemoryBankClient(project=project_id)
-    entries = client.list(filters={
-        "agent_id": agent_id,
-        "active": True,
-        "project_id": project_id,
-    })
-    # Group by knowledge_type for fast lookup
+    """Batch-fetch all active memory entries for this agent's domain from BigQuery."""
+    client = bigquery.Client(project=_PROJECT)
+    query = """
+        SELECT memory_id, knowledge_type, content, tags
+        FROM `morphic-gaos-prod.aos_logs.memory_entries`
+        WHERE agent_id = @agent_id
+          AND project_id = @project_id
+          AND active = TRUE
+    """
+    job_config = bigquery.QueryJobConfig(query_parameters=[
+        bigquery.ScalarQueryParameter("agent_id", "STRING", agent_id),
+        bigquery.ScalarQueryParameter("project_id", "STRING", project_id),
+    ])
     context = {"fact": [], "pattern": [], "rule": [], "preference": []}
-    for e in entries:
-        context[e.knowledge_type].append({
-            "memory_id": e.memory_id,
-            "content": e.content,
-            "tags": e.tags,
+    for row in client.query(query, job_config=job_config):
+        context[row.knowledge_type].append({
+            "memory_id": row.memory_id,
+            "content": row.content,
+            "tags": json.loads(row.tags or "[]"),
         })
     return context
 
 
-def write_approved_memory(entry: MemoryEntry, project_id: str) -> str:
+def query_memory_semantic(domain: str, query_text: str, top_k: int = 5) -> list[str]:
+    """Semantic similarity search against a domain RAG corpus. Use mid-task for context."""
+    response = rag.retrieval_query(
+        rag_resources=[rag.RagResource(rag_corpus=_corpus_for_domain(domain))],
+        text=query_text,
+        similarity_top_k=top_k,
+    )
+    return [chunk.text for chunk in response.contexts.contexts]
+
+
+def write_approved_memory(entry: "MemoryEntry", project_id: str) -> str:
     """Write a newly approved memory entry. Called by Nexus-Prime only."""
-    client = MemoryBankClient(project=project_id)
-    # If this supersedes an existing entry, mark the old one inactive first
+    import os, tempfile
+    from google.cloud import bigquery as bq
+
+    client = bq.Client(project=_PROJECT)
+
+    # Mark superseded entry inactive in BigQuery
     if entry.supersedes:
-        client.update(entry.supersedes, {"active": False})
-    record = client.create(entry.model_dump())
-    return record.memory_id
+        client.query(
+            "UPDATE `morphic-gaos-prod.aos_logs.memory_entries` "
+            "SET active = FALSE WHERE memory_id = @id",
+            job_config=bq.QueryJobConfig(query_parameters=[
+                bq.ScalarQueryParameter("id", "STRING", entry.supersedes)
+            ]),
+        ).result()
+
+    # Write structured metadata to BigQuery
+    client.insert_rows_json("morphic-gaos-prod.aos_logs.memory_entries", [{
+        "memory_id": entry.memory_id,
+        "project_id": project_id,
+        "agent_id": entry.agent_id,
+        "knowledge_type": entry.knowledge_type,
+        "domain": entry.domain,
+        "content": entry.content,
+        "confidence": entry.confidence,
+        "version": entry.version,
+        "supersedes": entry.supersedes,
+        "active": True,
+        "tags": json.dumps(entry.tags),
+        "approved_by": entry.approved_by,
+        "approved_at": entry.approved_at.isoformat(),
+    }])
+
+    # Write raw text to Vertex AI RAG corpus for semantic retrieval
+    text = (
+        f"# {entry.knowledge_type}: {entry.domain}\n\n"
+        f"{entry.content}\n\n"
+        f"Tags: {', '.join(entry.tags)}"
+    )
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        f.write(text)
+        tmp_path = f.name
+    try:
+        rag.upload_file(
+            corpus_name=_corpus_for_domain(entry.domain),
+            path=tmp_path,
+            display_name=entry.memory_id,
+            description=f"{entry.knowledge_type} | v{entry.version}",
+        )
+    finally:
+        os.unlink(tmp_path)
+
+    return entry.memory_id
 ```
 
 ### Memory Conflict Resolution
