@@ -41,15 +41,12 @@ ollama --version        # Ollama — https://ollama.com/download (Windows)
 git clone https://github.com/EgoNoBueno/Morphic-GAOS-Manager.git
 cd Morphic-GAOS-Manager
 
-# Create Python environment and install dependencies (Phase 1 — minimal)
+# Create Python environment and install all dependencies (including dev tools)
 uv venv
-uv pip install google-cloud-secret-manager google-cloud-pubsub gspread pydantic \
-               google-adk langgraph google-cloud-bigquery google-cloud-logging \
-               google-cloud-aiplatform "google-genai>=1.0.0" \
-               fastapi uvicorn httpx pytest
+uv pip install -e ".[dev]"
 ```
 
-> **SDK note:** Use `google-genai>=1.0.0` (`google.genai.Client()` API) — **not** `google-generativeai`. The `google-generativeai` package is EOL: it imports with a `FutureWarning` and the `v1beta` endpoint it targets no longer serves models like `gemini-1.5-pro`, returning 404. The `google-genai` package is the official successor and is what `google-adk` expects.
+> **Note:** All package versions are pinned in `pyproject.toml`. `[dev]` adds `pytest`, `pytest-cov`, `ruff`, and `mypy`. Omit `[dev]` in a production-only environment: `uv pip install -e .`. Use `google-genai>=1.0.0` (`google.genai.Client()` API) — **not** `google-generativeai`. The `google-generativeai` package is EOL: it imports with a `FutureWarning` and the `v1beta` endpoint it targets no longer serves models like `gemini-1.5-pro`, returning 404. The `google-genai` package is the official successor and is what `google-adk` expects.
 
 ### 0.4 Application Default Credentials (ADC) Setup
 
@@ -778,6 +775,7 @@ gcloud builds submit --tag $IMAGE --project=$PROJECT .
 
 ```bash
 IMAGE="us-central1-docker.pkg.dev/${PROJECT}/cloud-run-source-deploy/gaos-agent:latest"
+REGION=us-central1
 
 for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
   gcloud run deploy ${agent} \
@@ -967,7 +965,7 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [ ] Apps Script `onChange` trigger fires on Status cell change and publishes to `agent.approvals.events`
 - [ ] Local Python subscriber receives the Pub/Sub push and prints the proposal ID and new status
 - [ ] Cloud Scheduler TTL sweep job exists and can be triggered manually (HTTP 200 response)
-- [ ] Cloud Scheduler nightly archive job exists and can be triggered manually (HTTP 200 response)
+- [ ] Cloud Scheduler nightly archive job exists with state `ENABLED` (`/archive` endpoint is not yet implemented — Force Run returns 404 until Phase 2)
 - [ ] All 7 smoke tests above are passing
 - [ ] All 8 webhook tests from `GAOS-Manager-Spec.md §14` are passing
 - [ ] `setupProtections()` has been run; Status/Code/Hash columns are locked to owner
