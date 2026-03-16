@@ -45,8 +45,8 @@ cd Morphic-GAOS-Manager
 uv venv
 uv pip install google-cloud-secret-manager google-cloud-pubsub gspread pydantic \
                google-adk langgraph google-cloud-bigquery google-cloud-logging \
-               google-cloud-aiplatform \
-               "google-genai>=1.0.0"
+               google-cloud-aiplatform "google-genai>=1.0.0" \
+               fastapi uvicorn httpx pytest
 ```
 
 > **SDK note:** Use `google-genai>=1.0.0` (`google.genai.Client()` API) — **not** `google-generativeai`. The `google-generativeai` package is EOL: it imports with a `FutureWarning` and the `v1beta` endpoint it targets no longer serves models like `gemini-1.5-pro`, returning 404. The `google-genai` package is the official successor and is what `google-adk` expects.
@@ -708,36 +708,27 @@ apps_script:
 
 ### 9.1 Build and Deploy Each Agent
 
-Each agent is packaged as a Cloud Run service. The directory structure per agent:
+All 7 agents share a single codebase and a single Dockerfile at the project root. `main.py` is the FastAPI entry point for every service. The `AGENT_NAME` environment variable tells it which orchestrator to instantiate.
 
-```
-src/agents/tier2/beacon/
-├── agent.py          # ADK Agent class
-├── Dockerfile
-└── requirements.txt  # or pyproject.toml if using uv
-```
+> **`--concurrency 1` is mandatory.** LangGraph maintains in-memory graph state. Allowing multiple concurrent requests on one instance would corrupt state across invocations. The `CMD` in the Dockerfile enforces `--workers 1` for the same reason — do not override this.
 
-**Dockerfile template (all agents use this pattern):**
+**Dockerfile (project root — one image, seven services):**
 
 ```dockerfile
 FROM python:3.11-slim
 
 WORKDIR /app
-
-# Copy the full Docs/agents/ directory — identity files must be in the image
-COPY Docs/ ./Docs/
-COPY config/settings.yaml ./config/settings.yaml
-COPY src/agents/tier2/<name>/ ./
-COPY tools/ ./tools/
+COPY . .
 
 RUN pip install --no-cache-dir \
     google-adk langgraph google-cloud-pubsub google-cloud-secret-manager \
-    gspread pydantic google-cloud-logging google-cloud-aiplatform
+    gspread pydantic google-cloud-logging google-cloud-aiplatform \
+    "google-genai>=1.0.0" fastapi uvicorn httpx
 
-CMD ["python", "agent.py"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
 ```
 
-**Deploy command (run once per agent after Dockerfile is ready):**
+**Deploy command (deploys all 7 services from the project root):**
 
 ```bash
 PROJECT=morphic-gaos-prod
@@ -745,20 +736,32 @@ REGION=us-central1
 
 for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
   gcloud run deploy ${agent} \
-    --source src/agents/tier2/${agent}/ \
+    --source . \
     --region $REGION \
     --project $PROJECT \
     --service-account ${agent}-sa@${PROJECT}.iam.gserviceaccount.com \
     --memory 512Mi \
     --cpu 1 \
     --timeout 60s \
-    --concurrency 10 \
+    --concurrency 1 \
     --min-instances 0 \
     --max-instances 5 \
     --no-allow-unauthenticated \
+    --set-env-vars AGENT_NAME=${agent} \
     --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest,OLLAMA_HOST=OLLAMA_HOST:latest"
 done
 ```
+
+Each service exposes four endpoints:
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/pubsub` | POST | Pub/Sub push subscription delivery |
+| `/ttl-sweep` | POST | Cloud Scheduler hourly TTL sweep (Nexus-Prime only) |
+| `/sync` | POST | Apps Script approval callback (Nexus-Prime only) |
+| `/health` | GET | Liveness probe — always returns `{"status":"ok"}` |
+
+All POST endpoints require a `Bearer` token in the `Authorization` header. Cloud Run ingress validates the OIDC token before the request reaches the handler; the handler check is defense-in-depth only.
 
 ### 9.2 Update Pub/Sub Subscription Endpoints
 
@@ -776,6 +779,8 @@ done
 Copy each URL and update subscriptions using the modify-push-config commands from §5.2.
 
 Also update `VERTEX_AGENT_ENDPOINT` in Apps Script properties with the Nexus-Prime Cloud Run URL + `/sync`.
+
+**Verification:** `curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" <service-url>/health` — returns `{"status":"ok"}` for each of the 7 services.
 
 ---
 
@@ -858,6 +863,7 @@ Phase 1 is complete when all of the following pass. Run them in order.
 
 | # | Test | How to run | Expected result |
 |---|------|-----------|-----------------|
+| 0 | Unit test suite | `pytest` | 151 tests pass, 0 failures |
 | 1 | Sheet write | Run `python -c "from tools.google_sheets import init_sheets_client, append_row; init_sheets_client('default'); append_row('Logs', {'timestamp': '2026-03-14', 'agent_id': 'test', 'message': 'smoke test'}, 'default')"` | Row appears in `Logs` tab |
 | 2 | Sheet read | Run `python -c "from tools.google_sheets import init_sheets_client, get_all_records; init_sheets_client('default'); print(get_all_records('Project Registry', 'default'))"` | Returns list with the `default` project row |
 | 3 | Pub/Sub publish | Run `python -c "from tools.pubsub import publish; from models import A2AMessage; ..."` sending a test message to `agent.nexus-prime.events` | Message ID returned; no exception |
@@ -875,6 +881,7 @@ Run all 8 webhook-specific tests from `GAOS-Manager-Spec.md §14` after test 7 p
 Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **every item** below is checked:
 
 - [ ] `tools/google_sheets.py` appends a row and reads a cell value without errors
+- [ ] All 151 unit tests pass (`pytest` — green, 0 failures)
 - [ ] Apps Script `onChange` trigger fires on Status cell change and publishes to `agent.approvals.events`
 - [ ] Local Python subscriber receives the Pub/Sub push and prints the proposal ID and new status
 - [ ] Cloud Scheduler TTL sweep job exists and can be triggered manually (HTTP 200 response)
