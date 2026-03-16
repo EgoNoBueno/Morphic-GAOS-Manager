@@ -5,6 +5,16 @@
 //   setupTrigger_()                 — installs the onChange trigger programmatically
 // All functions in this file are available to every other .gs file in the project.
 
+// Spreadsheet ID — used by getSpreadsheet_() so doPost (web-app context)
+// can access the sheet; SpreadsheetApp.getActiveSpreadsheet() returns null
+// for standalone scripts called outside an interactive session.
+const SPREADSHEET_ID_ = '1O0GA48SIJtyKPOZku8sV9li71p1KRgbJoTyhfXoooH4';
+
+/** Returns the control-plane spreadsheet, safe to call from any context. */
+function getSpreadsheet_() {
+  return SpreadsheetApp.openById(SPREADSHEET_ID_);
+}
+
 /**
  * Returns a JSON ContentService response.
  * Note: Apps Script Web Apps always return HTTP 200 to the caller;
@@ -26,7 +36,7 @@ function jsonResponse_(obj, statusCode) {
  *   J=Timestamp, K=Approved By, L=Approver Tier, M=code_sha256, N=Priority
  */
 function appendProposal_(payload) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
   const sheet = ss.getSheetByName('Agent_Approvals');
   const inner = payload.payload || {};
   sheet.appendRow([
@@ -51,7 +61,7 @@ function appendProposal_(payload) {
  * Returns true if project_id matches an active row in the Project Registry tab.
  */
 function isValidProject_(projectId) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
   const tab = ss.getSheetByName('Project Registry');
   if (!tab) return false;
   const data = tab.getDataRange().getValues();
@@ -79,7 +89,7 @@ function getPriorityFromProposal_(sheet, row) {
  * Signature matches the inline definition in the spec so both files work.
  */
 function logSecurityEvent_(type, detail) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
   const log = ss.getSheetByName('Logs') || ss.insertSheet('Logs');
   log.appendRow([new Date(), 'SECURITY', type, String(detail)]);
 }
@@ -187,7 +197,7 @@ function setupPropertiesFromApi_(props) {
  * Called remotely via the Apps Script API during automated setup.
  */
 function setupTrigger_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
   const triggers = ScriptApp.getUserTriggers(ss);
   for (const t of triggers) {
     if (t.getHandlerFunction() === 'onChangeApproval' &&

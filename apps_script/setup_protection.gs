@@ -8,7 +8,7 @@
 //   Run this exactly once after the spreadsheet is created.
 
 function setupProtections() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
   const me = Session.getEffectiveUser();
 
   // Lock Status column (col I) on Agent_Approvals tab

@@ -46,7 +46,7 @@ function onChangeApproval(e) {
 }
 
 function getApprover_(email) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
   const tab = ss.getSheetByName('Authorized Approvers');
   if (!tab) return null;
   const data = tab.getDataRange().getValues();
@@ -66,7 +66,7 @@ function revertAndAlert_(sheet, row, proposalId, email, reason) {
 }
 
 function logApprovalEvent_(proposalId, email, tier, status) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
   const log = ss.getSheetByName('Logs');
   log.appendRow([new Date(), 'APPROVAL', proposalId, email, tier, status]);
 }

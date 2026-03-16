@@ -9,13 +9,14 @@ Spec: GAOS-Tools-Spec.md §6
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import ipaddress
 import json
 import time
 from datetime import UTC, datetime
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 
@@ -56,7 +57,7 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
          SHA-256 of that value and adds it as ``code_sha256`` before signing.
       2. Serializes payload to canonical JSON (sorted keys, no whitespace).
       3. Computes HMAC-SHA256(body, WEBHOOK_HMAC_SECRET).
-      4. Attaches the hex digest as the ``X-AOS-Signature`` header.
+      4. Attaches the base64 digest as the ``X-AOS-Signature`` header and ``?signature`` query param.
       5. Adds ``X-AOS-Project-ID`` and ``X-AOS-Timestamp`` headers.
       6. POSTs to WEBHOOK_URL with Content-Type: application/json.
 
@@ -103,13 +104,17 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
     body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     body_bytes = body.encode("utf-8")
 
-    signature = hmac.new(
-        hmac_secret.encode("utf-8"), body_bytes, hashlib.sha256
-    ).hexdigest()
+    signature = base64.b64encode(
+        hmac.new(hmac_secret.encode("utf-8"), body_bytes, hashlib.sha256).digest()
+    ).decode("utf-8")
+
+    # Apps Script doPost reads e.parameter.signature (URL query param, not header).
+    # URL-encode the signature so base64 chars (+, /) don't get mangled in transit.
+    url_with_sig = f"{webhook_url}?signature={quote(signature)}"
 
     headers = {
         "Content-Type": "application/json",
-        "X-AOS-Signature": signature,
+        "X-AOS-Signature": signature,  # kept for defense-in-depth / future use
         "X-AOS-Project-ID": project_id,
         "X-AOS-Timestamp": datetime.now(UTC).isoformat(),
     }
@@ -118,21 +123,35 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
     for attempt in range(_MAX_RETRIES):
         try:
             resp = httpx.post(
-                webhook_url,
+                url_with_sig,
                 content=body_bytes,
                 headers=headers,
                 timeout=_TIMEOUT_SECONDS,
+                follow_redirects=True,
             )
-            if resp.is_success:
-                return
-            last_exc = WebhookDeliveryError(
-                f"Webhook returned HTTP {resp.status_code}: {resp.text[:200]}"
-            )
-            if resp.status_code < 500:
-                # 4xx errors are not transient — raise immediately
-                raise last_exc
-            # 5xx — back off and retry
-            time.sleep(2 ** attempt)
+            if not resp.is_success:
+                last_exc = WebhookDeliveryError(
+                    f"Webhook returned HTTP {resp.status_code}: {resp.text[:200]}"
+                )
+                if resp.status_code < 500:
+                    raise last_exc
+                time.sleep(2 ** attempt)
+                continue
+            # Apps Script always returns HTTP 200 — check the body statusCode too
+            try:
+                body_json = resp.json()
+                status_code = body_json.get("statusCode", 200)
+                if status_code not in (200, 201, 202):
+                    last_exc = WebhookDeliveryError(
+                        f"Webhook rejected (statusCode={status_code}): {resp.text[:200]}"
+                    )
+                    if status_code < 500:
+                        raise last_exc
+                    time.sleep(2 ** attempt)
+                    continue
+            except Exception:
+                pass  # non-JSON body — treat HTTP 200 as success
+            return
         except httpx.TimeoutException as exc:
             last_exc = WebhookTimeoutError(
                 f"Webhook request timed out after {_TIMEOUT_SECONDS}s."

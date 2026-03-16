@@ -143,6 +143,9 @@ def build_script_content() -> dict:
                 "executeAs": "USER_DEPLOYING",
                 "access": "ANYONE_ANONYMOUS",
             },
+            "executionApi": {
+                "access": "MYSELF",
+            },
             "exceptionLogging": "STACKDRIVER",
             "runtimeVersion": "V8",
             "oauthScopes": [
@@ -321,7 +324,7 @@ def phase2() -> None:
     run_body = {
         "function": "setupPropertiesFromApi_",
         "parameters": [props],
-        "devMode": False,
+        "devMode": True,
     }
     try:
         resp = script_service.scripts().run(
@@ -342,7 +345,7 @@ def phase2() -> None:
     trigger_body = {
         "function": "setupTrigger_",
         "parameters": [],
-        "devMode": False,
+        "devMode": True,
     }
     try:
         resp = script_service.scripts().run(
@@ -364,7 +367,7 @@ def phase2() -> None:
     prot_body = {
         "function": "setupProtections",
         "parameters": [],
-        "devMode": False,
+        "devMode": True,
     }
     try:
         resp = script_service.scripts().run(

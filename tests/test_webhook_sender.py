@@ -1,4 +1,5 @@
 """tests/test_webhook_sender.py — Unit tests for tools/webhook_sender.py"""
+import base64
 import hashlib
 import hmac
 import json
@@ -70,28 +71,30 @@ class TestHmacSignature:
         payload = {"agent_id": "beacon", "status": "ok"}
         captured: dict = {}
 
-        def _fake_post(url, *, content, headers, timeout):
+        def _fake_post(url, *, content, headers, timeout, follow_redirects=False):
             captured["headers"] = headers
             captured["body"] = content
             resp = MagicMock()
             resp.is_success = True
+            resp.json.return_value = {"statusCode": 200}
             return resp
 
         with patch("tools.webhook_sender.httpx.post", side_effect=_fake_post):
             post_to_webhook(payload, "test-project")
 
-        expected_sig = hmac.new(
-            _HMAC_SECRET.encode(), captured["body"], hashlib.sha256
-        ).hexdigest()
+        expected_sig = base64.b64encode(
+            hmac.new(_HMAC_SECRET.encode(), captured["body"], hashlib.sha256).digest()
+        ).decode()
         assert captured["headers"]["X-AOS-Signature"] == expected_sig
 
     def test_x_aos_project_id_header_is_set(self, mock_secrets):
         captured: dict = {}
 
-        def _fake_post(url, *, content, headers, timeout):
+        def _fake_post(url, *, content, headers, timeout, follow_redirects=False):
             captured["headers"] = headers
             resp = MagicMock()
             resp.is_success = True
+            resp.json.return_value = {"statusCode": 200}
             return resp
 
         with patch("tools.webhook_sender.httpx.post", side_effect=_fake_post):
@@ -104,10 +107,11 @@ class TestHmacSignature:
         payload = {"Proposed Code": code}
         captured: dict = {}
 
-        def _fake_post(url, *, content, headers, timeout):
+        def _fake_post(url, *, content, headers, timeout, follow_redirects=False):
             captured["body"] = content
             resp = MagicMock()
             resp.is_success = True
+            resp.json.return_value = {"statusCode": 200}
             return resp
 
         with patch("tools.webhook_sender.httpx.post", side_effect=_fake_post):
@@ -122,6 +126,7 @@ class TestHmacSignature:
         original_keys = set(payload.keys())
         resp = MagicMock()
         resp.is_success = True
+        resp.json.return_value = {"statusCode": 200}
 
         with patch("tools.webhook_sender.httpx.post", return_value=resp):
             post_to_webhook(payload, "test-project")
@@ -210,6 +215,7 @@ class TestRetryAndErrorHandling:
     def test_successful_response_returns_none(self, mock_secrets):
         resp = MagicMock()
         resp.is_success = True
+        resp.json.return_value = {"statusCode": 200}
 
         with patch("tools.webhook_sender.httpx.post", return_value=resp):
             result = post_to_webhook({"k": "v"}, "test-project")

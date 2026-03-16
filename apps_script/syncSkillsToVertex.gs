@@ -6,7 +6,7 @@
 // Gate 3: Deploy to Vertex AI Agent Engine via REST
 
 function syncSkillsToVertex() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
   const sheet = ss.getSheetByName('Agent_Approvals');
   const data = sheet.getDataRange().getValues();
 
