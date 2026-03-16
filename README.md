@@ -344,8 +344,6 @@ If an agent hits a problem it cannot self-resolve — and its Write-Test-Refine 
 
 > **Budget alert:** Nexus-Prime publishes a Priority-4 `ALERT` if monthly spend exceeds **$5.00**. Set a GCP billing alert at $10/month as a second layer. See `GAOS-Manager-Spec.md §9.4` for full volume assumptions.
 
-> ⚠️ **Graphic to update:** [`Docs/assets/Monthly-Cost-Breakdown.png`](Docs/assets/Monthly-Cost-Breakdown.png) — the pie/bar chart reflects the old $1.50 breakdown. Regenerate with: Flash ~$0.10, Pro ~$1.00, Memory Bank ~$1.10, Code Exec ~$0.01, Run ~$0.01.
-
 <div align="center">
 <img src="Docs/assets/Monthly-Cost-Breakdown.png" alt="Monthly Cost Breakdown" width="75%"/>
 </div>
