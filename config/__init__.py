@@ -38,6 +38,7 @@ class ModelAliases(BaseModel):
 
 
 class MemoryBankConfig(BaseModel):
+    region: str = "us-central1"
     corpora: dict[str, str] = Field(default_factory=dict)
 
 
@@ -50,6 +51,12 @@ class ProjectConfig(BaseModel):
     drive_folder_id: str = ""
 
 
+class AppsScriptConfig(BaseModel):
+    script_id: str = ""
+    deployment_id: str = ""
+    webhook_url: str = ""
+
+
 class Settings(BaseModel):
     gcp: GCPConfig
     sheet: SheetConfig
@@ -57,6 +64,7 @@ class Settings(BaseModel):
     memory_bank: MemoryBankConfig = Field(default_factory=MemoryBankConfig)
     pubsub: PubSubConfig = Field(default_factory=PubSubConfig)
     projects: dict[str, ProjectConfig] = Field(default_factory=dict)
+    apps_script: AppsScriptConfig = Field(default_factory=AppsScriptConfig)
 
     @property
     def GCP_PROJECT_ID(self) -> str:

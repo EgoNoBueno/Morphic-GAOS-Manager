@@ -1191,7 +1191,7 @@ function logApprovalEvent_(proposalId, email, tier, status) {
 Execute once after Sheet creation to lock the Status column and the Authorized Approvers tab to owner-only edit:
 
 ```javascript
-// apps_script/setup_protection.gs — run once from Script Editor
+// apps_script/setup_protections.gs — run once from Script Editor
 function setupProtections() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const me = Session.getEffectiveUser();

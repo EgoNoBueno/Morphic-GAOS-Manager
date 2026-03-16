@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, Field
 
@@ -141,6 +141,45 @@ class AgentOutput(BaseModel):
     timestamp: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
+
+
+# ── AgentWorkingMemory ────────────────────────────────────────────────────────────
+
+
+class AgentWorkingMemory(TypedDict):
+    """
+    LangGraph state schema shared by all orchestrator agents (Tier 1 + Tier 2).
+    Defined in GAOS-Memory-Spec.md §3; extended by NexusPrimeWorkingMemory
+    in GAOS-Nexus-Prime-Spec.md §2.
+    """
+    # Core task context
+    task_id: str                         # Current task UUID
+    project_id: str                      # Active project namespace
+    current_objective: str               # What the agent is doing right now
+
+    # Sub-task tracking
+    sub_task_results: list[dict]         # Collected outputs from Tier 3 sub-agents
+    parked_proposals: list[str]          # Proposal IDs awaiting Approval Gate
+    error_history: list[str]             # Error fingerprints seen this session
+
+    # Memory layers (loaded once at boot — not refreshed mid-task)
+    memory_context: dict                 # Layer 4 semantic facts cached at boot
+    episodic_cache: dict                 # Layer 2 recent outcomes cached at boot
+    observation_buffer: list[dict]       # Layer 3 candidate learnings this session
+
+    # Cost and loop tracking
+    cost_usd: float                      # Running cost for this invocation
+    iteration_count: int                 # Evolution loop iteration (see §13.1)
+    step_count: int                      # LangGraph step counter
+    tokens_used: int                     # Token consumption this invocation
+
+    # Event processing
+    incoming_message: A2AMessage | None  # Current message being handled
+    messages: list                       # LangGraph message log
+
+    # Guard flags
+    hard_stop_triggered: bool            # True if a hard stop constraint fired
+    evolution_triggered: bool            # True if Write-Test-Refine loop is active
 
 
 # ── MemoryEntry ───────────────────────────────────────────────────────────────────

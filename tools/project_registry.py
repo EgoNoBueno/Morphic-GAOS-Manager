@@ -40,18 +40,20 @@ class ProjectRecord(BaseModel):
     """
     One row in the Project Registry Sheet tab.
 
-    Column headers (case-sensitive, must match the Sheet):
-        project_id | display_name | status | sheet_workbook_id |
-        drive_folder_id | pubsub_prefix | created_at
+    Column headers match setup_workspace.py HEADERS["Project Registry"] exactly:
+        project_id | project_name | status | sheet_workbook_id |
+        drive_folder_id | budget_ceiling_usd | owner_email | created_date | notes
     """
 
-    project_id: str           # Unique slug (e.g., "acme", "northstar")
-    display_name: str         # Human-readable name
-    status: str               # "Active" | "Pending" | "Paused" | "Archived"
-    sheet_workbook_id: str    # Google Sheets workbook ID for this project
-    drive_folder_id: str      # Knowledge/ root Drive folder ID
-    pubsub_prefix: str        # Topic prefix (usually matches project_id)
-    created_at: str           # ISO 8601 timestamp
+    project_id: str                 # Unique slug (e.g., "acme", "northstar")
+    project_name: str               # Human-readable display name
+    status: str                     # "Active" | "Pending" | "Paused" | "Archived"
+    sheet_workbook_id: str          # Google Sheets workbook ID for this project
+    drive_folder_id: str            # Knowledge/ root Drive folder ID
+    budget_ceiling_usd: str = ""   # Monthly LLM spend ceiling (blank = no limit)
+    owner_email: str = ""          # Google account to notify on escalations
+    created_date: str = ""         # ISO 8601 date the project was registered
+    notes: str = ""                # Free-text context for Nexus-Prime
 
 
 # ── Tab name ─────────────────────────────────────────────────────────────────
