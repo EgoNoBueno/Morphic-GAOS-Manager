@@ -66,7 +66,8 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory):
     # Cross-domain synthesis context
     active_broadcasts: list[A2AMessage]     # Messages awaiting BROADCAST resolution
     conflict_queue: list[dict]              # Conflicting agent state pairs pending arbitration
-    parked_proposals: list[ApprovalProposal]  # Reloaded on boot from Agent_Approvals tab
+    # Note: parked_proposals (list[str]) is inherited from AgentWorkingMemory.
+    #       It stores proposal IDs only — not full row dicts.
     
     # Project initialization state (ephemeral per task)
     pending_project_row: Optional[SheetRow]
@@ -92,25 +93,21 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory):
 Nexus-Prime's `StateGraph` has 10 nodes. The router node determines which branch to execute based on message type.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                     Nexus-Prime Graph                   │
-│                                                         │
-│  [boot] ──► [monitor] ──► [route]                       │
-│                               │                         │
-│               ┌───────────────┼───────────────┐         │
-│               │               │               │         │
-│          [diagnose]    [knowledge_review]  [init_project]│
-│               │               │               │         │
-│          [propose_gate]   [promote]       [provision]   │
-│               │                               │         │
-│          [park_or_broadcast]             [notify_agents] │
-│               │                               │         │
-│          [conflict_resolve]                   │         │
-│               │                               │         │
-│               └───────────────┬───────────────┘         │
-│                               │                         │
-│                          [record] ──► END               │
-└─────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                       Nexus-Prime Graph                        │
+│                                                                │
+│  [boot] ──► [monitor] ──► [route]                              │
+│                               │                                │
+│       ┌───────────┬───────────┼────────────┬────────────┐      │
+│       │           │           │            │            │      │
+│  [diagnose] [knowledge_review] [init_project] [conflict_resolve]│
+│       │           │           │            │            │      │
+│  [propose_gate] [promote] [notify_agents] [park_or_broadcast]  │
+│       │           │           │            │            │      │
+│       └───────────┴───────────┴────────────┴────────────┘      │
+│                               │                                │
+│                          [record] ──► END                      │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ### 3.2 Node Definitions
@@ -129,11 +126,11 @@ def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     for topic in settings.pubsub.all_topics:
         ensure_topic_exists(topic, state["project_id"])
 
-    # Load parked proposals (Status = "Pending" or "Needs Revision")
+    # Load parked proposals — store IDs only (consistent with list[str])
     all_proposals = get_all_records("Agent_Approvals", state["project_id"])
     state["parked_proposals"] = [
-        row for row in all_proposals
-        if row.get("Status") in ("Pending", "Needs Revision")
+        r["ID"] for r in all_proposals
+        if r.get("Status") in ("Pending", "Needs Revision") and r.get("ID")
     ]
 
     # Load system state summary (all active projects from Project Registry)
@@ -151,12 +148,19 @@ def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 Listens for incoming Pub/Sub push messages. Decodes the `A2AMessage` envelope and loads it into working memory. This is the only node that reads from external HTTP input.
 
 ```python
-def monitor(state: NexusPrimeWorkingMemory, incoming: dict) -> NexusPrimeWorkingMemory:
+def monitor(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     from tools.pubsub import decode_push_message
-    msg = decode_push_message(incoming)
+    # The raw Pub/Sub push envelope is injected into state["_raw_incoming"]
+    # by the HTTP entry point before the graph starts.
+    raw = state.get("_raw_incoming")
+    if not raw:
+        state["step_count"] = state.get("step_count", 0) + 1
+        return state  # TTL sweep or internal trigger — no incoming message
+    msg = decode_push_message(raw)
     state["incoming_message"] = msg
     state["project_id"] = msg.project_id
-    state["task_id"] = msg.task_id
+    state["task_id"] = msg.task_id or str(uuid.uuid4())
+    state["step_count"] = state.get("step_count", 0) + 1
     return state
 ```
 
@@ -170,27 +174,28 @@ def route(state: NexusPrimeWorkingMemory) -> str:
     if msg is None:
         return "record"   # TTL sweep or heartbeat with no action needed
 
+    # Keys are MessageType enum members, not raw strings.
     routing_table = {
-        "STATUS_UPDATE":    "record",          # Log and store; no action
-        "TASK_COMPLETE":    "record",          # Log and store; no action
-        "ESCALATION":      "diagnose",         # Tier 2 needs help
-        "EVOLUTION_REQUEST": "diagnose",        # Code evolution cycle requested
-        "APPROVAL_RESULT":  "route_approval",   # Human responded to a proposal
-        "KNOWLEDGE_CANDIDATE": "knowledge_review",  # New observation to evaluate
-        "BROADCAST":        "conflict_resolve", # Cross-domain state conflict
-        "NEW_PROJECT":      "init_project",     # Project Registry change detected
+        MessageType.STATUS_UPDATE:       "record",           # Log and store; no action
+        MessageType.TASK_COMPLETE:       "record",           # Log and store; no action
+        MessageType.ESCALATION:          "diagnose",         # Tier 2 needs help
+        MessageType.EVOLUTION_REQUEST:   "diagnose",         # Code evolution cycle requested
+        MessageType.APPROVAL_RESULT:     "_route_approval",  # Human responded to a proposal
+        MessageType.KNOWLEDGE_CANDIDATE: "knowledge_review", # New observation to evaluate
+        MessageType.BROADCAST:           "conflict_resolve", # Cross-domain state conflict
+        MessageType.NEW_PROJECT:         "init_project",     # Project Registry change detected
     }
     return routing_table.get(msg.message_type, "record")
 
-# Approval sub-route (called from route when message_type == APPROVAL_RESULT)
-def route_approval(state: NexusPrimeWorkingMemory) -> str:
-    result = state["incoming_message"].payload.get("status")
-    if result == "Approved":
+# Approval sub-router — called via add_conditional_edges when APPROVAL_RESULT arrives
+def _route_approval(state: NexusPrimeWorkingMemory) -> str:
+    msg = state.get("incoming_message")
+    status = msg.payload.get("status", "") if (msg and msg.payload) else ""
+    if status == "Approved":
         return "promote"
-    elif result == "Rejected":
-        return "record"   # Log rejection; remove from parked_proposals
-    else:
-        return "park_or_broadcast"
+    if status == "Rejected":
+        return "record"   # Log rejection; no further action
+    return "park_or_broadcast"
 ```
 
 #### `diagnose`
@@ -217,15 +222,24 @@ def diagnose(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     recent_errors = find_rows("Error Logs", "error_fingerprint", error_fp, state["project_id"])
 
     # Determine next action using DEEP_MODEL
-    analysis_prompt = _build_diagnosis_prompt(msg, similar, recent_errors)
-    decision = call_model(analysis_prompt, model=settings.models.DEEP_MODEL)
+    prompt = _build_diagnosis_prompt(msg, similar, recent_errors)
+    resp = _call_model(prompt, model=_model_for_node("diagnose"), parse_json=True)
+    state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+    state["messages"].append({"role": "assistant", "content": resp.text})
 
-    state["messages"].append({"role": "assistant", "content": decision.text})
-    
-    if decision.suggests_code_change:
+    if resp.data.get("suggests_code_change"):
+        # Run the Write-Test-Refine evolution loop inline
+        evo = _run_evolution_loop(
+            issue=msg.payload.get("description", error_fp),
+            agent_id=msg.source_agent,
+            context=resp.data.get("fix_summary", ""),
+        )
         state["evolution_triggered"] = True
+        state["candidate_code"] = evo["code"]
         state["candidate_agent_id"] = msg.source_agent
-    
+        state["cost_usd"] += evo["cost_usd"]
+        state["iteration_count"] += evo["iterations"]
+
     return state
 ```
 
@@ -239,41 +253,42 @@ def propose_gate(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     from tools.webhook_sender import post_to_webhook
     import hashlib, uuid
 
-    if not state.get("candidate_code"):
-        raise ValueError("propose_gate called without candidate_code in state")
+    candidate_code: str = state.get("candidate_code") or ""
+    if not candidate_code:
+        return state  # Nothing to propose; called without evolution output
 
     # Safety gate — hard stop if blocked by allowed_imports or blocklist
-    safety_result = validate_code_safety(state["candidate_code"])
-    if not safety_result.passed:
+    safety = validate_code_safety(candidate_code)
+    if not safety["passed"]:
         state["hard_stop_triggered"] = True
-        _log_hard_stop(state, safety_result.reason)
+        _log_hard_stop(state, f"BLOCKED_STATIC: {safety['reason']}")
         return state
 
-    sha256 = hashlib.sha256(state["candidate_code"].encode()).hexdigest()
+    sha256 = hashlib.sha256(candidate_code.encode()).hexdigest()
     proposal_id = str(uuid.uuid4())
-    priority = _compute_priority(state)
 
-    row = {
-        "ID": proposal_id,
-        "Agent ID": state["candidate_agent_id"],
-        "Issue": state["incoming_message"].payload.get("issue", ""),
-        "Trigger Reason": state["incoming_message"].payload.get("trigger_reason", ""),
-        "Stopping Constraint": state["incoming_message"].payload.get("stopping_constraint", ""),
-        "Iterations Run": state["incoming_message"].payload.get("iterations_run", 0),
-        "Total Cost USD": round(state["cost_usd"], 6),
-        "Proposed Code": state["candidate_code"],
-        "Status": "Pending",
-        "Timestamp": utcnow_iso(),
-        "Approved By": "",
-        "Approver Tier": "",
-        "code_sha256": sha256,
-    }
+    msg = state.get("incoming_message")
+    payload = msg.payload if (msg and msg.payload) else {}
+    agent_id_str: str = state.get("candidate_agent_id") or ""
+
+    proposal = ApprovalProposal(
+        id=proposal_id,
+        agent_id=agent_id_str,
+        issue=payload.get("issue", payload.get("description", "")),
+        trigger_reason=payload.get("trigger_reason", "EVOLUTION_REQUEST"),
+        stopping_constraint=payload.get("stopping_constraint", ""),
+        iterations_run=state.get("iteration_count", 0),
+        total_cost_usd=state.get("cost_usd", 0.0),
+        proposed_code=candidate_code,
+        code_sha256=sha256,
+    )
+    row = proposal.to_sheet_row()
 
     append_row("Agent_Approvals", row, state["project_id"])
-    state["parked_proposals"].append(row)
+    # Store proposal ID only (consistent with list[str])
+    state["parked_proposals"].append(proposal_id)
     state["candidate_sha256"] = sha256
 
-    # Notify via webhook — HMAC signed
     post_to_webhook(row, state["project_id"])
 
     return state
@@ -333,12 +348,22 @@ def promote(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     # Find the proposal row
     row = find_row("Agent_Approvals", "ID", proposal_id, state["project_id"])
     if row is None:
-        raise ValueError(f"promote: proposal {proposal_id} not found in Agent_Approvals")
+        _log_cloud("nexus-prime", state["project_id"], "security",
+                   state.get("task_id", ""), f"promote: proposal {proposal_id} not found", "ERROR")
+        return state
 
     # Hash must match — reject if tampered
-    live_sha = hashlib.sha256(row["Proposed Code"].encode()).hexdigest()
-    if live_sha != row["code_sha256"]:
-        raise SecurityError(f"promote: SHA-256 mismatch for proposal {proposal_id}. Aborting.")
+    live_sha = hashlib.sha256((row.get("Proposed Code") or "").encode()).hexdigest()
+    stored_sha = row.get("code_sha256", "")
+    if live_sha != stored_sha:
+        _log_cloud(
+            "nexus-prime", state["project_id"], "security",
+            state.get("task_id", ""),
+            f"CODE_HASH_MISMATCH proposal={proposal_id}",
+            "CRITICAL",
+        )
+        update_row("Agent_Approvals", proposal_id, {"Status": "Needs Revision"}, state["project_id"])
+        return state
 
     # Trigger deployment via Apps Script syncSkillsToVertex
     _trigger_sync_to_vertex(row, state)
@@ -346,9 +371,9 @@ def promote(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     # Update proposal status to Deployed
     update_row("Agent_Approvals", proposal_id, {"Status": "Deployed"}, state["project_id"])
 
-    # Remove from parked proposals in working memory
+    # Remove proposal ID from parked list (list[str])
     state["parked_proposals"] = [
-        p for p in state["parked_proposals"] if p["ID"] != proposal_id
+        p for p in state.get("parked_proposals", []) if p != proposal_id
     ]
 
     return state
@@ -362,26 +387,31 @@ Called when a `NEW_PROJECT` message is received (or when `boot` detects a `Pendi
 def init_project(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     from tools.google_sheets import get_all_records, update_row
     
-    pending = get_all_records("Project Registry", state["project_id"])
-    new_rows = [r for r in pending if r.get("status") == "Pending"]
+    registry = get_all_records("Project Registry", state["project_id"])
+    pending_rows = [r for r in registry if r.get("status") == "Pending"]
+    if not pending_rows:
+        return state
 
-    for row in new_rows:
-        new_pid = row["project_id"]
-        # 1. Create a new Sheet workbook (via Drive API copy of template)
-        new_sheet_id = _create_sheet_workbook(new_pid)
-        # 2. Create Knowledge/ subfolder in Drive
-        new_folder_id = _create_drive_folder(new_pid)
-        # 3. Pub/Sub topics already exist (single shared topic namespace using project_id in payload)
-        # 4. Update Project Registry row to Active
-        update_row("Project Registry", row["ID"], {
-            "status": "Active",
-            "sheet_workbook_id": new_sheet_id,
-            "drive_folder_id": new_folder_id,
-        }, state["project_id"])
-        # 5. Broadcast to all orchestrators so they initialize their workspace
-        state["pending_project_row"] = row
-        state["new_project_id"] = new_pid
+    # Process one pending row per invocation to bound latency
+    row = pending_rows[0]
+    new_pid = row.get("project_id", "")
+    if not new_pid:
+        return state
 
+    # 1. Clone the master Sheet workbook for this project namespace
+    new_sheet_id = _create_sheet_workbook(new_pid)
+    # 2. Create Knowledge/ subfolder in Drive
+    new_folder_id = _create_drive_folder(new_pid)
+    # 3. Pub/Sub topics are shared (project_id scoped in payload); no new topics needed
+    # 4. Update Project Registry row to Active
+    update_row("Project Registry", row.get("ID", new_pid), {
+        "status": "Active",
+        "sheet_workbook_id": new_sheet_id,
+        "drive_folder_id": new_folder_id,
+    }, state["project_id"])
+
+    state["pending_project_row"] = {**row, "sheet_workbook_id": new_sheet_id, "drive_folder_id": new_folder_id}
+    state["new_project_id"] = new_pid
     return state
 ```
 
@@ -398,24 +428,29 @@ def notify_agents(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     if not new_pid:
         return state
 
+    prow = state.get("pending_project_row") or {}
     broadcast = A2AMessage(
         source_agent="nexus-prime",
         target_agent="broadcast",
         project_id=state["project_id"],
-        task_id=state["task_id"],
-        message_type="BROADCAST",
+        task_id=state.get("task_id", str(uuid.uuid4())),
+        message_type=MessageType.BROADCAST,
+        priority=2,
         payload={
             "action": "PROJECT_INITIALIZED",
             "new_project_id": new_pid,
-            "sheet_workbook_id": state["pending_project_row"]["sheet_workbook_id"],
-            "drive_folder_id": state["pending_project_row"]["drive_folder_id"],
-        }
+            "sheet_workbook_id": prow.get("sheet_workbook_id", ""),
+            "drive_folder_id": prow.get("drive_folder_id", ""),
+        },
     )
 
-    for agent in ["ledger", "beacon", "pursuit", "foreman", "steward", "scout"]:
-        publish(f"agent.{agent}.events", broadcast, state["project_id"])
+    for agent in ("ledger", "beacon", "pursuit", "foreman", "steward", "scout"):
+        try:
+            publish(f"agent.{agent}.events", broadcast, state["project_id"])
+        except Exception:
+            pass
 
-    state["active_broadcasts"].append(broadcast)
+    state.setdefault("active_broadcasts", []).append(broadcast)
     return state
 ```
 
@@ -435,20 +470,24 @@ def conflict_resolve(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             source_agent="nexus-prime",
             target_agent="broadcast",
             project_id=state["project_id"],
-            task_id=state["task_id"],
-            message_type="BROADCAST",
+            task_id=state.get("task_id", str(uuid.uuid4())),
+            message_type=MessageType.BROADCAST,
+            priority=2,
             payload={
                 "action": "CONFLICT_RESOLVED",
-                "entity_key": conflict["entity_key"],
-                "resolution": resolution.decision,
-                "rationale": resolution.rationale,
-            }
+                "entity_key": conflict.get("entity_key"),
+                "resolution": resp.data.get("decision", resp.text[:200]),
+                "rationale": resp.data.get("rationale", ""),
+            },
         )
 
-        for agent in ["ledger", "beacon", "pursuit", "foreman", "steward", "scout"]:
-            publish(f"agent.{agent}.events", broadcast, state["project_id"])
+        for agent in ("ledger", "beacon", "pursuit", "foreman", "steward", "scout"):
+            try:
+                publish(f"agent.{agent}.events", broadcast, state["project_id"])
+            except Exception:
+                pass
 
-        state["active_broadcasts"].append(broadcast)
+        state.setdefault("active_broadcasts", []).append(broadcast)
 
     state["conflict_queue"] = []
     return state
@@ -481,30 +520,49 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     from tools.bigquery import insert_row
     from tools.pubsub import publish
 
-    outcome = {
-        "task_id": state["task_id"],
-        "project_id": state["project_id"],
+    msg = state.get("incoming_message")
+    outcome: dict = {
+        "task_id": state.get("task_id", ""),
+        "project_id": state.get("project_id", ""),
         "agent_id": "nexus-prime",
-        "task_type": state["incoming_message"].message_type if state.get("incoming_message") else "TTL_SWEEP",
-        "status": "hard_stop" if state["hard_stop_triggered"] else "success",
-        "error_fingerprint": state.get("incoming_message", {}).get("payload", {}).get("error_fingerprint", ""),
-        "cost_usd": state["cost_usd"],
-        "duration_seconds": _elapsed_seconds(state),
+        "task_type": msg.message_type.value if msg else "TTL_SWEEP",
+        "status": "hard_stop" if state.get("hard_stop_triggered") else "success",
+        "error_fingerprint": (msg.payload or {}).get("error_fingerprint", "") if msg else "",
+        "cost_usd": state.get("cost_usd", 0.0),
+        "duration_seconds": _elapsed_seconds(dict(state)),
         "timestamp": utcnow_iso(),
         "log_date": utcnow_date(),
     }
-    insert_row("aos_logs.task_outcomes", outcome)
+    try:
+        insert_row("aos_logs.task_outcomes", outcome)
+    except Exception:
+        pass
 
     # Publish heartbeat
+    heartbeat_text = _format_heartbeat(state)
     heartbeat = A2AMessage(
         source_agent="nexus-prime",
         target_agent="broadcast",
-        project_id=state["project_id"],
-        task_id=state["task_id"],
-        message_type="STATUS_UPDATE",
-        payload={"summary": _format_heartbeat(state)}
+        project_id=state.get("project_id", ""),
+        task_id=state.get("task_id", str(uuid.uuid4())),
+        message_type=MessageType.STATUS_UPDATE,
+        priority=1,
+        payload={"summary": heartbeat_text},
     )
-    publish("agent.nexus-prime.events", heartbeat, state["project_id"])
+    try:
+        publish("agent.nexus-prime.events", heartbeat, state["project_id"])
+    except Exception:
+        pass
+
+    _write_heartbeat(
+        agent_id="nexus-prime",
+        project_id=state.get("project_id", ""),
+        status="hard_stop" if state.get("hard_stop_triggered") else "IDLE",
+        objective=heartbeat_text[:255],
+        open_proposals=len(state.get("parked_proposals", [])),
+        last_error="" if not state.get("hard_stop_triggered") else "hard_stop triggered",
+        tab="Main Control Plane",
+    )
 
     return state
 ```
@@ -555,7 +613,7 @@ def build_nexus_prime_graph() -> StateGraph:
     graph.add_edge("park_or_broadcast", "record")
     graph.add_edge("record",            END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=MemorySaver())
 ```
 
 ---
@@ -572,7 +630,7 @@ These are enforcement rules — not configurable behavior. Each must be verified
 | Modify domain orchestrator instruction files | Requires Tier 5 (owner) approval via Approval Gate | `candidate_agent_id` must match the agent being modified; owner-only approval for orchestrator identity files |
 | Modify `Project Registry` status without provisioning | Must complete `init_project` sequence first (sheet, folder, topics) before setting `status = Active` | `init_project` node validates all three provisioning steps before calling `update_row` |
 | Deploy code that fails the import allowlist | Hard stop — `validate_code_safety()` must return `passed = True` | `propose_gate` gate check is unconditional; raises `CodeSafetyError` on failure |
-| Deploy code without SHA-256 match | Hard stop — `promote` verifies hash against both `code_sha256` field and live cell value | `promote` raises `SecurityError` on mismatch and rolls back the approval status to `Needs Revision` |
+| Deploy code without SHA-256 match | Hard stop — `promote` verifies hash against both `code_sha256` field and live cell value | `promote` logs `CRITICAL` to Cloud Logging, sets proposal status back to `Needs Revision`, and returns without deploying |
 | Perform actions without `project_id` | All tool calls require `project_id` parameter; tools raise `ValueError` if missing | Enforced in `tools/google_sheets.py`, `tools/pubsub.py`, `tools/bigquery.py` |
 
 ### 4.2 Model Selection Rules
