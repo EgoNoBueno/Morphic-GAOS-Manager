@@ -119,7 +119,7 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
     # Step 5: Load domain memory into working memory cache
     try:
         state["memory_context"] = load_domain_memory(
-            domain="accounting", project_id=pid
+            agent_id=_AGENT_ID, project_id=pid
         )
     except Exception:
         pass

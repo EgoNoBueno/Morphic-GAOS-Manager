@@ -151,13 +151,22 @@ def validate_code_safety(code: str) -> dict[str, Any]:
 
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if not any(alias.name.startswith(a) for a in _ALLOWED_IMPORTS):
+                if not any(
+                    alias.name == a or alias.name.startswith(a + ".")
+                    for a in _ALLOWED_IMPORTS
+                ):
                     return {"passed": False, "reason": f"Unapproved import: {alias.name}"}
 
         if isinstance(node, ast.ImportFrom):
             module = node.module or ""
-            if module and not any(module.startswith(a) for a in _ALLOWED_IMPORTS):
-                return {"passed": False, "reason": f"Unapproved import: {module}"}
+            if module:
+                for alias in node.names:
+                    full_name = f"{module}.{alias.name}" if alias.name != "*" else module
+                    if not any(
+                        full_name == a or full_name.startswith(a + ".")
+                        for a in _ALLOWED_IMPORTS
+                    ):
+                        return {"passed": False, "reason": f"Unapproved import: {full_name}"}
 
     for pattern in _BLOCKED_PATTERNS:
         if pattern in code:

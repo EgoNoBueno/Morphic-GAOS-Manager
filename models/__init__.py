@@ -27,10 +27,12 @@ class MessageType(str, Enum):
     ALERT             = "ALERT"            # Anomaly or error needing manager awareness
     ESCALATION        = "ESCALATION"       # Requires human decision via Approval Gate
     EVOLUTION_REQUEST = "EVOLUTION_REQUEST" # Code evolution cycle requested
+    APPROVAL_REQUEST  = "APPROVAL_REQUEST" # Agent requests human approval (Approval Gate)
     APPROVAL_RESULT   = "APPROVAL_RESULT"  # Human responded to a proposal
     KNOWLEDGE_CANDIDATE = "KNOWLEDGE_CANDIDATE"  # New observation for knowledge review
     NEW_PROJECT       = "NEW_PROJECT"      # Project Registry change detected
     BROADCAST         = "BROADCAST"        # Nexus-Prime → All: system-wide directive
+    TTL_SWEEP         = "TTL_SWEEP"        # Cloud Scheduler: sweep stale proposals
 
 
 # ── A2AMessage ─────────────────────────────────────────────────────────────

@@ -64,7 +64,7 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
     except Exception:
         pass
     try:
-        state["memory_context"] = load_domain_memory(domain="research", project_id=pid)
+        state["memory_context"] = load_domain_memory(agent_id=_AGENT_ID, project_id=pid)
     except Exception:
         pass
     try:

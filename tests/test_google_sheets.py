@@ -108,19 +108,23 @@ class TestInitSheetsClient:
         with pytest.raises(WorkbookNotFoundError, match="unknown-project"):
             init_sheets_client("unknown-project")
 
-    @patch("tools.google_sheets.get_secret", return_value='{"type":"service_account"}')
-    @patch("tools.google_sheets.gspread.service_account_from_dict")
-    def test_opens_spreadsheet_by_key(self, mock_sa, mock_secret):
+    @patch("tools.google_sheets.gspread.Client")
+    @patch("tools.google_sheets.google.auth.default")
+    def test_opens_spreadsheet_by_key(self, mock_auth, mock_client_cls):
+        mock_creds = MagicMock()
+        mock_auth.return_value = (mock_creds, None)
         mock_client = MagicMock()
-        mock_sa.return_value = mock_client
+        mock_client_cls.return_value = mock_client
         init_sheets_client("default")
         mock_client.open_by_key.assert_called_once_with("spreadsheet-123")
 
-    @patch("tools.google_sheets.get_secret", return_value='{"type":"service_account"}')
-    @patch("tools.google_sheets.gspread.service_account_from_dict")
-    def test_raises_workbook_not_found_on_missing_spreadsheet(self, mock_sa, mock_secret):
+    @patch("tools.google_sheets.gspread.Client")
+    @patch("tools.google_sheets.google.auth.default")
+    def test_raises_workbook_not_found_on_missing_spreadsheet(self, mock_auth, mock_client_cls):
+        mock_creds = MagicMock()
+        mock_auth.return_value = (mock_creds, None)
         mock_client = MagicMock()
-        mock_sa.return_value = mock_client
+        mock_client_cls.return_value = mock_client
         mock_client.open_by_key.side_effect = gspread.exceptions.SpreadsheetNotFound
         with pytest.raises(WorkbookNotFoundError, match="spreadsheet-123"):
             init_sheets_client("default")
