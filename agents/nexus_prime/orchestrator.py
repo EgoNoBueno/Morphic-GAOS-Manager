@@ -753,6 +753,238 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     return state
 
 
+# ── Nightly archive job ───────────────────────────────────────────────────────
+
+
+async def handle_archive(project_id: str) -> dict[str, Any]:
+    """
+    Nightly Sheet → BigQuery archive sweep.
+
+    Called directly by POST /archive (Cloud Scheduler, 2AM daily).
+    Not a graph node — runs outside the LangGraph state machine.
+
+    Steps per GAOS-Manager-Spec.md §9.5:
+      1. Summarize — LOCAL_MODEL weekly aggregate → observability_weekly (Mondays only)
+      2. Archive   — aged rows moved to BigQuery cold storage
+      3. Delete    — successfully archived rows deleted from Sheet
+      4. Report    — one summary row appended to the Logs tab
+      5. Alert     — ALERT published if any tab exceeds 25,000 rows
+
+    Retention policy:
+      Logs tab:        30 days → aos_logs.task_outcomes
+      Error Logs tab:  30 days → aos_logs.evolution_tasks
+      Agent_Approvals: 90 days (closed status only) → aos_logs.approval_history
+    """
+    from datetime import datetime, timezone, timedelta
+    from config import get_settings
+    from tools.google_sheets import (
+        get_all_records,
+        get_all_records_with_row_numbers,
+        delete_rows as sheets_delete_rows,
+        append_row,
+    )
+    from tools.bigquery import insert_rows as bq_insert_rows
+    from tools.pubsub import publish
+
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    cutoff_30 = now - timedelta(days=30)
+    cutoff_90 = now - timedelta(days=90)
+    task_id = str(uuid.uuid4())
+    stats: dict[str, int] = {}
+    cost_usd = 0.0
+
+    def _parse_ts(ts_str: str) -> datetime:
+        """Parse ISO timestamp; returns epoch on failure so malformed rows stay."""
+        try:
+            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except (ValueError, AttributeError):
+            return datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    # ── 1. Weekly observability summary (Mondays only) ────────────────────────
+    if now.weekday() == 0:
+        try:
+            logs_week = get_all_records("Logs", project_id)
+            err_week = get_all_records("Error Logs", project_id)
+            week_cutoff = now - timedelta(days=7)
+            recent_logs = [r for r in logs_week if _parse_ts(r.get("timestamp", "")) >= week_cutoff]
+            recent_errs = [r for r in err_week if _parse_ts(r.get("timestamp", "")) >= week_cutoff]
+            top_agents = list({r.get("agent_id", "?") for r in recent_logs[:50] if r.get("agent_id")})
+            summary_prompt = (
+                f"Summarize in one sentence: week ending {now.strftime('%Y-W%U')}, "
+                f"{len(recent_logs)} log entries, {len(recent_errs)} error entries. "
+                f"Active agents: {', '.join(top_agents[:5]) or 'none'}. "
+                "Format: 'Week of <date>: <N> entries, <summary>.'"
+            )
+            resp = _call_model(summary_prompt, model=settings.models.LOCAL_MODEL)
+            cost_usd += resp.cost_usd
+            bq_insert_rows("aos_logs.observability_weekly", [{
+                "week_label": now.strftime("%Y-W%U"),
+                "log_count": len(recent_logs),
+                "error_count": len(recent_errs),
+                "summary": resp.text.strip()[:1000],
+                "project_id": project_id,
+                "created_at": now.isoformat(),
+            }])
+        except Exception as exc:
+            _log_cloud("nexus-prime", project_id, "task", task_id,
+                       f"archive weekly summary failed: {exc}", "WARNING")
+
+    # ── 2+3. Archive Logs tab → task_outcomes ────────────────────────────────
+    try:
+        log_numbered = get_all_records_with_row_numbers("Logs", project_id)
+        aged_logs = [(rn, r) for rn, r in log_numbered
+                     if _parse_ts(r.get("timestamp", "")) < cutoff_30]
+        if aged_logs:
+            bq_rows = [{
+                "task_id": task_id,
+                "project_id": r.get("project_id", project_id),
+                "agent_id": r.get("agent_id", ""),
+                "task_type": r.get("level", "LOG"),
+                "status": "archived",
+                "error_fingerprint": "",
+                "cost_usd": 0.0,
+                "duration_seconds": 0.0,
+                "timestamp": r.get("timestamp", ""),
+                "log_date": r.get("timestamp", "")[:10],
+            } for _, r in aged_logs]
+            try:
+                bq_insert_rows("aos_logs.task_outcomes", bq_rows)
+                sheets_delete_rows("Logs", [rn for rn, _ in aged_logs], project_id)
+                stats["Logs"] = len(aged_logs)
+            except Exception as exc:
+                _log_cloud("nexus-prime", project_id, "task", task_id,
+                           f"archive Logs → BQ failed: {exc}", "ERROR")
+                stats["Logs"] = 0
+        else:
+            stats["Logs"] = 0
+    except Exception as exc:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"archive Logs read failed: {exc}", "ERROR")
+        stats["Logs"] = 0
+
+    # ── Archive Error Logs tab → evolution_tasks ─────────────────────────────
+    try:
+        err_numbered = get_all_records_with_row_numbers("Error Logs", project_id)
+        aged_errs = [(rn, r) for rn, r in err_numbered
+                     if _parse_ts(r.get("timestamp", "")) < cutoff_30]
+        if aged_errs:
+            bq_rows = [{
+                "task_id": str(uuid.uuid4()),
+                "project_id": r.get("project_id", project_id),
+                "agent_id": r.get("agent_id", ""),
+                "error_type": r.get("error_type", ""),
+                "error_message": r.get("message", "")[:1000],
+                "iterations": 0,
+                "stopping_constraint": "archived",
+                "cost_usd": 0.0,
+                "timestamp": r.get("timestamp", ""),
+                "log_date": r.get("timestamp", "")[:10],
+            } for _, r in aged_errs]
+            try:
+                bq_insert_rows("aos_logs.evolution_tasks", bq_rows)
+                sheets_delete_rows("Error Logs", [rn for rn, _ in aged_errs], project_id)
+                stats["Error Logs"] = len(aged_errs)
+            except Exception as exc:
+                _log_cloud("nexus-prime", project_id, "task", task_id,
+                           f"archive Error Logs → BQ failed: {exc}", "ERROR")
+                stats["Error Logs"] = 0
+        else:
+            stats["Error Logs"] = 0
+    except Exception as exc:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"archive Error Logs read failed: {exc}", "ERROR")
+        stats["Error Logs"] = 0
+
+    # ── Archive Agent_Approvals → approval_history ───────────────────────────
+    _CLOSED_STATUSES = {"Approved", "Rejected", "Deployed"}
+    try:
+        approval_numbered = get_all_records_with_row_numbers("Agent_Approvals", project_id)
+        aged_approvals = [
+            (rn, r) for rn, r in approval_numbered
+            if r.get("Status", "") in _CLOSED_STATUSES
+            and _parse_ts(r.get("Timestamp", "")) < cutoff_90
+        ]
+        if aged_approvals:
+            bq_rows = [{
+                "proposal_id": r.get("ID", ""),
+                "project_id": project_id,
+                "agent_id": r.get("Agent ID", ""),
+                "issue": r.get("Issue", "")[:500],
+                "status": r.get("Status", ""),
+                "approved_by": r.get("Approved By", ""),
+                "approver_tier": int(r.get("Approver Tier", 0) or 0),
+                "cost_usd": float(r.get("Total Cost USD", 0) or 0),
+                "code_sha256": r.get("code_sha256", ""),
+                "timestamp": r.get("Timestamp", ""),
+                "log_date": r.get("Timestamp", "")[:10],
+            } for _, r in aged_approvals]
+            try:
+                bq_insert_rows("aos_logs.approval_history", bq_rows)
+                sheets_delete_rows("Agent_Approvals", [rn for rn, _ in aged_approvals], project_id)
+                stats["Agent_Approvals"] = len(aged_approvals)
+            except Exception as exc:
+                _log_cloud("nexus-prime", project_id, "task", task_id,
+                           f"archive Agent_Approvals → BQ failed: {exc}", "ERROR")
+                stats["Agent_Approvals"] = 0
+        else:
+            stats["Agent_Approvals"] = 0
+    except Exception as exc:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"archive Agent_Approvals read failed: {exc}", "ERROR")
+        stats["Agent_Approvals"] = 0
+
+    # ── 4. Report ─────────────────────────────────────────────────────────────
+    total_archived = sum(stats.values())
+    report_msg = (
+        f"NIGHTLY_ARCHIVE complete: {total_archived} rows archived. "
+        + " | ".join(f"{tab}={n}" for tab, n in stats.items())
+    )
+    try:
+        append_row("Logs", {
+            "timestamp": now.isoformat(),
+            "agent_id": "nexus-prime",
+            "level": "ARCHIVE",
+            "message": report_msg,
+            "project_id": project_id,
+        }, project_id)
+    except Exception:
+        pass
+
+    # ── 5. Alert if any monitored tab exceeds 25,000 rows ────────────────────
+    _ALERT_THRESHOLD = 25_000
+    for tab in ("Logs", "Error Logs", "Agent_Approvals", "Pending_Knowledge"):
+        try:
+            count = len(get_all_records(tab, project_id))
+            if count > _ALERT_THRESHOLD:
+                alert = A2AMessage(
+                    source_agent="nexus-prime",
+                    target_agent="nexus-prime",
+                    project_id=project_id,
+                    task_id=task_id,
+                    message_type=MessageType.ALERT,
+                    priority=3,
+                    payload={
+                        "tab": tab,
+                        "row_count": count,
+                        "reason": f"Tab '{tab}' has {count} rows (threshold: {_ALERT_THRESHOLD})",
+                    },
+                )
+                publish("agent.nexus-prime.events", alert, project_id)
+        except Exception:
+            pass
+
+    _log_cloud("nexus-prime", project_id, "task", task_id, report_msg)
+
+    return {
+        "archived": stats,
+        "total": total_archived,
+        "cost_usd": round(cost_usd, 6),
+        "task_id": task_id,
+    }
+
+
 # ── Graph assembly ────────────────────────────────────────────────────────────
 
 def build_nexus_prime_graph() -> Any:

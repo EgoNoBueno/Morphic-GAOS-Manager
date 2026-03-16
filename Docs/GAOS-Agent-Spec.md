@@ -4,7 +4,7 @@
 
 > This document defines the mandatory construction requirements every agent in the system must satisfy before it is considered complete and deployable. It is the counterpart to the master specification (`GAOS-Manager-Spec.md`) and is referenced from Section 1.3 of that document.
 >
-> **Importing external agents or tools?** Before applying this checklist, the skill must first pass all required gates in `GAOS-Skill-Compliance-Spec.md`. That document defines the security, supply chain, and integration review process for code sourced outside this repository. The §7 checklists below are the *final* step — not the first.
+> **Importing external agents or tools?** Before applying this checklist, the skill must first pass all required gates in `GAOS-Skill-Compliance-Spec.md`. That document defines the security, supply chain, and integration review process for code sourced outside this repository. The §8 checklists below are the *final* step — not the first.
 >
 > **Identity files** (per-agent persona, goal, guardrails) follow the template in `GAOS-Manager-Spec.md` §18.2 and live in `Docs/agents/<name>.md`. This document covers the *engineering* requirements — how an agent is built, wired, and tested.
 
@@ -274,7 +274,28 @@ Sub-agents receive `project_id` from the orchestrator's `AgentInput`. They must 
 
 ---
 
-## 5. Naming Conventions
+## 5. Model Selection
+
+Every agent selects its model via a `settings.yaml` alias — never a hardcoded version string. The three aliases and their intended uses:
+
+| Alias | Default value | When to use |
+|-------|--------------|-------------|
+| `LOCAL_MODEL` | `ollama/llama3.1` | Logging, formatting, summarisation, data classification — any task where cloud LLM quality is not required. Zero API cost. |
+| `FAST_MODEL` | `gemini-2.0-flash` | Routing decisions, structured data extraction, tasks needing current knowledge but not deep reasoning. Low cost. |
+| `DEEP_MODEL` | `gemini-2.0-pro` | Complex multi-step reasoning, cross-domain synthesis, final approval gate analysis. Higher cost — use sparingly. |
+
+**Tier defaults** (from the obligations table in §1):
+- Tier 1 (Nexus-Prime): `DEEP_MODEL`
+- Tier 2 (Orchestrators): context-dependent — use `LOCAL_MODEL` for routine work, `FAST_MODEL` for domain decisions, `DEEP_MODEL` for evolution loop final analysis
+- Tier 3 (Sub-Agents): `LOCAL_MODEL` first; escalate to `FAST_MODEL` only if output quality requires it
+
+**`LOCAL_MODEL` with web access:** Pass `web_access=True` to `_call_model()` when the task references real-world current data (prices, events, competitor activity) and Gemini-quality reasoning is not required. See `GAOS-Tools-Spec.md` §10 for the full design. Do not use `web_access=True` with `FAST_MODEL` or `DEEP_MODEL`.
+
+**Fallback behaviour:** If Ollama is unreachable, `_call_model()` automatically falls back to `LOCAL_MODEL_FALLBACK` (`gemini-2.0-flash`). Agents do not need to handle this — it is transparent.
+
+---
+
+## 6. Naming Conventions
 
 | Element | Convention | Example |
 |---------|-----------|---------|
@@ -289,7 +310,7 @@ Sub-agents receive `project_id` from the orchestrator's `AgentInput`. They must 
 
 ---
 
-## 6. Agent Boot Sequence
+## 7. Agent Boot Sequence
 
 When an orchestrator agent starts (either on Cloud Run invocation or on Nexus-Prime dispatch), it must execute these steps in order before processing any task:
 
@@ -305,7 +326,7 @@ If any step fails, the agent must log a `STARTUP_FAILURE` security event and exi
 
 ---
 
-## 7. Per-Agent Completion Checklist
+## 8. Per-Agent Completion Checklist
 
 An agent is **not complete** until every item below is checked. This checklist must be satisfied before the agent is added to the Implementation Checklist in `GAOS-Manager-Spec.md` §17.
 
@@ -315,7 +336,7 @@ An agent is **not complete** until every item below is checked. This checklist m
 - [ ] ADK `Agent` class created — `name`, `model` (alias), `instruction`, `tools` declared
 - [ ] Pydantic `Input` and `Output` schemas defined — no `dict` or `Any` typed fields
 - [ ] LangGraph graph declared — minimum 7 nodes: `plan`, `dispatch`, `collect`, `report`, `park`, `resume`, `escalate`
-- [ ] Pub/Sub outbound topic created and named per §5 convention
+- [ ] Pub/Sub outbound topic created and named per §6 convention
 - [ ] Pub/Sub inbound subscription to Nexus-Prime + required cross-domain topics
 - [ ] `A2AMessage` schema used for all published messages (including `project_id`)
 - [ ] Dashboard heartbeat writes at end of every cycle
@@ -324,10 +345,10 @@ An agent is **not complete** until every item below is checked. This checklist m
 - [ ] Model selection: all `DEEP_MODEL` calls justified in comments; `LOCAL_MODEL` used for all routine tasks
 - [ ] Cost accumulation: `cost_usd` tracked and returned in `AgentOutput`
 - [ ] Cloud Logging labels applied to all log entries
-- [ ] Boot sequence (§6) implemented
+- [ ] Boot sequence (§7) implemented
 - [ ] All secrets accessed via `get_secret()`; no hardcoded credentials
 - [ ] `project_id` forwarded to every tool call; no cross-project data access
-- [ ] Unit tests pass (see §8)
+- [ ] Unit tests pass (see §9)
 
 ### Tier 3 Sub-Agent Checklist
 
@@ -340,15 +361,15 @@ An agent is **not complete** until every item below is checked. This checklist m
 - [ ] `project_id` inherited from orchestrator and forwarded to all tool calls
 - [ ] Cloud Logging labels applied
 - [ ] All secrets accessed via `get_secret()`
-- [ ] Unit tests pass (see §8)
+- [ ] Unit tests pass (see §9)
 
 ---
 
-## 8. Testing Requirements
+## 9. Testing Requirements
 
 All agents must pass the following tests before they are considered deployable.
 
-### 8.1 Unit Tests (All Tiers)
+### 9.1 Unit Tests (All Tiers)
 
 | # | Test | Pass Condition |
 |---|------|----------------|
@@ -358,7 +379,7 @@ All agents must pass the following tests before they are considered deployable.
 | U4 | Missing secret causes `STARTUP_FAILURE` log + clean exit | Agent does not continue with a `None` secret value |
 | U5 | Unknown `project_id` returns `status: "failed"` | Agent does not process work for unlisted projects |
 
-### 8.2 Tier 2 Integration Tests
+### 9.2 Tier 2 Integration Tests
 
 | # | Test | Pass Condition |
 |---|------|----------------|
@@ -369,7 +390,7 @@ All agents must pass the following tests before they are considered deployable.
 | I5 | No-progress detector fires when error fingerprint repeats | Loop stops on iteration N; `stopping_constraint = no_progress` |
 | I6 | Cross-domain message from subscribed topic is processed | Correct handler invoked; `project_id` preserved in response |
 
-### 8.3 Static Analysis Gate (Code-Producing Agents)
+### 9.3 Static Analysis Gate (Code-Producing Agents)
 
 Any agent that autonomously writes Python (Write-Test-Refine loop) must demonstrate:
 
@@ -382,7 +403,7 @@ Any agent that autonomously writes Python (Write-Test-Refine loop) must demonstr
 
 ---
 
-## 9. Reference Index
+## 10. Reference Index
 
 | Topic | Location |
 |-------|----------|

@@ -1000,7 +1000,7 @@ gcloud scheduler jobs create http nightly-archive \
   --project=morphic-gaos-prod
 ```
 
-**Verification:** In Cloud Scheduler console, both jobs appear with state `ENABLED`. Run each manually by clicking **Force run** — `ttl-sweep` should return HTTP 200; `nightly-archive` will return 404 until the `/archive` endpoint is implemented in the Nexus-Prime orchestrator.
+**Verification:** In Cloud Scheduler console, both jobs appear with state `ENABLED`. Run each manually by clicking **Force run** — both should return HTTP 200. `ttl-sweep` hits `POST /ttl-sweep`; `nightly-archive` hits `POST /archive` (implemented in Phase 2 Item 3 — archives aged Sheet rows to BigQuery).
 
 ---
 
@@ -1073,7 +1073,7 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [ ] Apps Script `onChange` trigger fires on Status cell change and publishes to `agent.approvals.events`
 - [ ] Local Python subscriber receives the Pub/Sub push and prints the proposal ID and new status
 - [ ] Cloud Scheduler TTL sweep job exists and can be triggered manually (HTTP 200 response)
-- [ ] Cloud Scheduler nightly archive job exists with state `ENABLED` (`/archive` endpoint is not yet implemented — Force Run returns 404 until Phase 2)
+- [x] Cloud Scheduler nightly archive job exists with state `ENABLED` — `POST /archive` implemented in Phase 2 Item 3 (returns HTTP 200)
 - [ ] All 7 smoke tests above are passing
 - [ ] All 8 webhook tests from `GAOS-Manager-Spec.md §14` are passing
 - [ ] `setupProtections()` has been run; Status/Code/Hash columns are locked to owner

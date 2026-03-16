@@ -8,6 +8,7 @@ Endpoints:
   POST /pubsub      Pub/Sub push subscription delivery
   POST /ttl-sweep   Cloud Scheduler TTL sweep (Nexus-Prime only)
   POST /sync        Apps Script → promote approved skill (Nexus-Prime only)
+  POST /archive     Cloud Scheduler nightly archive sweep (Nexus-Prime only)
   GET  /health      Cloud Run health check (always 200)
 
 All POST endpoints verify the OIDC token in the Authorization header before
@@ -248,6 +249,40 @@ async def sync(request: Request) -> JSONResponse:
         "status": "ok",
         "task_id": getattr(result, "task_id", ""),
     })
+
+
+@app.post("/archive")
+async def archive(request: Request) -> JSONResponse:
+    """
+    Nightly archive sweep — called by Cloud Scheduler at 2:00 AM daily.
+    Moves aged Sheet rows to BigQuery cold storage and deletes them from the Sheet.
+    Nexus-Prime only.
+
+    Spec: GAOS-Manager-Spec.md §9.5
+    """
+    _verify_pubsub_audience(request)
+
+    if _AGENT_NAME != "nexus-prime":
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{_AGENT_NAME}' does not support /archive.",
+        )
+
+    from agents.nexus_prime.orchestrator import handle_archive
+
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    try:
+        result = await handle_archive(project_id)
+        log.info(
+            "Nightly archive complete: %d rows archived across %s",
+            result.get("total", 0),
+            list(result.get("archived", {}).keys()),
+        )
+    except Exception as exc:
+        log.exception("Nightly archive failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return JSONResponse(content={"status": "ok", **result})
 
 
 # ── Cloud Run startup ─────────────────────────────────────────────────────────

@@ -138,6 +138,34 @@ def get_all_records(tab: str, project_id: str) -> list[dict]:
         TabNotFoundError, RateLimitError, SheetsReadError.
     """
 
+def get_all_records_with_row_numbers(
+        tab: str, project_id: str) -> list[tuple[int, dict]]:
+    """
+    Same as `get_all_records` but returns (1-based-row-number, record) pairs.
+    Row 1 is always the header; data starts at row 2. The row number is the
+    physical sheet row number as used by `delete_rows()`.
+
+    Use this instead of `get_all_records` whenever you need to delete specific
+    rows after reading — otherwise row numbers shift after each deletion.
+
+    Raises:
+        TabNotFoundError, RateLimitError, SheetsReadError.
+    """
+
+def delete_rows(tab: str, row_numbers: list[int], project_id: str) -> None:
+    """
+    Delete the given 1-based row numbers from `tab`. Rows are deleted in
+    descending order so that earlier deletions do not shift the numbers of
+    later rows.
+
+    Row numbers ≤ 1 (the header) are silently skipped.
+
+    Rate-limited via the shared token bucket (same 300 req/min budget).
+
+    Raises:
+        TabNotFoundError, RateLimitError, SheetsWriteError.
+    """
+
 def read_range(tab: str, a1_range: str, project_id: str) -> list[list]:
     """
     Return raw cell values for an A1-notation range (e.g., "A2:D50").
@@ -631,7 +659,59 @@ All standard tables live in the `aos_logs` dataset provisioned in `GAOS-Deploy-S
 
 ---
 
-## 10. Tool Usage Rules Summary
+## 10. `agents/__init__.py` — LLM Routing Helper
+
+All LLM calls in the system go through `_call_model()` in `agents/__init__.py`. This is not a tool module (it does not live in `tools/`) but it is the shared abstraction for model access and must be treated as a first-class interface.
+
+### Signature
+
+```python
+def _call_model(
+    prompt: str,
+    model: str,
+    system_prompt: str = "",
+    parse_json: bool = False,
+    web_access: bool = False,
+) -> ModelResponse:
+```
+
+### Routing Logic
+
+| `model` value | Route | Notes |
+|---------------|-------|-------|
+| starts with `ollama/` | `_call_model_ollama()` → local Ollama server | Falls back to `LOCAL_MODEL_FALLBACK` on timeout or connection error |
+| any other string | `_call_model_gemini()` → `google.genai` | Falls back to ADC / Vertex AI if `GEMINI_API_KEY` is unavailable |
+
+### Ollama Call Details
+
+- **Host:** fetched from Secret Manager as `OLLAMA_HOST` at call-time; defaults to `http://localhost:11434` if the secret fetch fails (intentional local-dev fallback)
+- **Timeout:** `LOCAL_MODEL_TIMEOUT_SECONDS` from `settings.yaml` (default: 2 seconds)
+- **Fallback:** on `httpx.TimeoutException` or `httpx.ConnectError`, automatically retries via `_call_model_gemini()` with the `LOCAL_MODEL_FALLBACK` alias — the caller never sees the error
+- **Streaming:** always disabled (`stream=False`) — agents process complete responses, not token streams
+
+### `web_access` Parameter
+
+When `web_access=True` and the model is an `ollama/` alias, `_call_model` prepends DuckDuckGo Instant Answer results to the prompt before sending to Ollama. This gives the local model access to current real-world data without incurring Gemini API costs.
+
+- Web results are fetched via `tools.web_search.web_search(prompt)` (see `tools/web_search.py`)
+- If the web fetch fails for any reason, Ollama still receives the original prompt — failure is silent
+- `web_access=True` is silently ignored when the model is a Gemini alias (Gemini has live knowledge natively)
+- **Do not use** `web_access=True` in high-frequency loops or with prompts containing customer data (the query string is sent to DuckDuckGo)
+
+### `ModelResponse` Fields
+
+```python
+@dataclass
+class ModelResponse:
+    text: str           # raw response text
+    cost_usd: float     # estimated cost (0.0 for Ollama; token-based estimate for Gemini)
+    tokens_used: int    # total tokens (0 for Ollama)
+    data: dict          # parsed JSON if parse_json=True, else {}
+```
+
+---
+
+## 11. Tool Usage Rules Summary
 
 | Rule | Detail |
 |------|--------|
@@ -641,10 +721,11 @@ All standard tables live in the `aos_logs` dataset provisioned in `GAOS-Deploy-S
 | Never call `write_approved_memory()` from any agent except Nexus-Prime | Unauthorized writes are logged as Priority-5 security events |
 | Always propagate `project_id` into every tool call | There is no ambient project context — dropping it is a bug |
 | Catch tool errors at the agent level | Do not retry inside a tool call; the tool raises after its own backoff. The agent decides whether to escalate or park. |
+| Never call `httpx` or any Google SDK directly from an agent | Use the tool layer and `_call_model()` — direct SDK calls bypass scoping, error handling, and fallback logic. |
 
 ---
 
-## 11. Reference Index
+## 12. Reference Index
 
 | Topic | Location |
 |-------|----------|
@@ -654,6 +735,6 @@ All standard tables live in the `aos_logs` dataset provisioned in `GAOS-Deploy-S
 | Secret inventory | `GAOS-Manager-Spec.md` §15.1 |
 | Sheets quota limits | `GAOS-Manager-Spec.md` §9.4 |
 | Memory layer schemas and self-learning loop | `GAOS-Memory-Spec.md` |
-| Agent boot sequence (tool call order) | `GAOS-Agent-Spec.md` §6 |
+| Agent boot sequence (tool call order) | `GAOS-Agent-Spec.md` §7 |
 | Project Registry tab schema | `GAOS-Manager-Spec.md` §2 |
 | Drive Knowledge/ folder structure | `GAOS-Memory-Spec.md` §7 |

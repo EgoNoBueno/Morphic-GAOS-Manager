@@ -380,3 +380,70 @@ def find_rows(
     """
     records = get_all_records(tab, project_id)
     return [r for r in records if str(r.get(column, "")) == value]
+
+
+def get_all_records_with_row_numbers(
+    tab: str, project_id: str
+) -> list[tuple[int, dict[str, Any]]]:
+    """
+    Return all data rows as (sheet_row_number, record) pairs.
+
+    Row numbers are 1-based sheet row numbers (row 1 = header, so data
+    starts at row 2). Useful when you need to delete specific rows by
+    position after filtering.
+
+    Raises:
+        TabNotFoundError, RateLimitError, SheetsReadError.
+    """
+    ws = _get_worksheet(tab)
+    if not _bucket.consume():
+        raise RateLimitError("Token bucket exhausted.")
+    try:
+        all_values: list[list[Any]] = _retry(ws.get_all_values)
+    except gspread.exceptions.APIError as exc:
+        raise SheetsReadError(f"Read from '{tab}' failed: {exc}") from exc
+
+    if not all_values:
+        return []
+
+    headers = all_values[0]
+    result: list[tuple[int, dict[str, Any]]] = []
+    for sheet_row_number, row_values in enumerate(all_values[1:], start=2):
+        record = {
+            headers[j]: (row_values[j] if j < len(row_values) else "")
+            for j in range(len(headers))
+        }
+        result.append((sheet_row_number, record))
+    return result
+
+
+def delete_rows(tab: str, row_numbers: list[int], project_id: str) -> None:
+    """
+    Delete specific rows from a tab by their 1-based sheet row numbers.
+
+    Processes rows in descending order so earlier deletions do not shift
+    the indices of rows yet to be deleted. Row 1 (header) is never deleted.
+
+    Args:
+        tab:         Tab name.
+        row_numbers: 1-based sheet row numbers to delete.
+        project_id:  AOS project namespace (passed for API symmetry).
+
+    Raises:
+        TabNotFoundError, RateLimitError, SheetsWriteError.
+    """
+    if not row_numbers:
+        return
+
+    ws = _get_worksheet(tab)
+    for row_num in sorted(row_numbers, reverse=True):
+        if row_num <= 1:
+            continue  # Never delete the header row
+        if not _bucket.consume():
+            raise RateLimitError("Token bucket exhausted.")
+        try:
+            _retry(ws.delete_rows, row_num)
+        except gspread.exceptions.APIError as exc:
+            raise SheetsWriteError(
+                f"Delete row {row_num} from '{tab}' failed: {exc}"
+            ) from exc

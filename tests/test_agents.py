@@ -470,3 +470,494 @@ class TestS4HashMismatch:
         )
         assert proposal.code_sha256 == digest
         assert len(proposal.code_sha256) == 64  # hex SHA-256 is always 64 chars
+
+
+# ── Ollama routing ─────────────────────────────────────────────────────────
+
+
+class TestOllamaRouting:
+    """Verify _call_model routes ollama/ prefix to the local server and falls back correctly."""
+
+    def test_ollama_prefix_calls_httpx_not_genai(self):
+        """ollama/llama3.1 must POST to /api/generate, not call google.genai."""
+        from agents import _call_model
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"response": "hello from ollama"}
+
+        with patch("httpx.post", return_value=mock_resp) as mock_post:
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                result = _call_model("test prompt", model="ollama/llama3.1")
+
+        mock_post.assert_called_once()
+        call_kwargs = mock_post.call_args
+        assert "/api/generate" in call_kwargs[0][0]
+        assert result.text == "hello from ollama"
+        assert result.cost_usd == 0.0  # local model has no API cost
+
+    def test_ollama_timeout_falls_back_to_gemini(self):
+        """On TimeoutException from Ollama, must fall back to LOCAL_MODEL_FALLBACK."""
+        import httpx as _httpx
+        from agents import _call_model
+
+        mock_gemini_resp = MagicMock()
+        mock_gemini_resp.text = "fallback gemini response"
+        mock_gemini_resp.usage_metadata = None
+
+        with patch("httpx.post", side_effect=_httpx.TimeoutException("timed out")):
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                with patch("google.genai.Client") as mock_client_cls:
+                    mock_client = MagicMock()
+                    mock_client.models.generate_content.return_value = mock_gemini_resp
+                    mock_client_cls.return_value = mock_client
+                    result = _call_model("test prompt", model="ollama/llama3.1")
+
+        assert result.text == "fallback gemini response"
+
+    def test_ollama_connect_error_falls_back(self):
+        """On ConnectError (Ollama not running), must fall back gracefully."""
+        import httpx as _httpx
+        from agents import _call_model
+
+        mock_gemini_resp = MagicMock()
+        mock_gemini_resp.text = "gemini fallback"
+        mock_gemini_resp.usage_metadata = None
+
+        with patch("httpx.post", side_effect=_httpx.ConnectError("refused")):
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                with patch("google.genai.Client") as mock_client_cls:
+                    mock_client = MagicMock()
+                    mock_client.models.generate_content.return_value = mock_gemini_resp
+                    mock_client_cls.return_value = mock_client
+                    result = _call_model("test prompt", model="ollama/llama3.1")
+
+        assert result.text == "gemini fallback"
+
+    def test_gemini_model_does_not_call_httpx(self):
+        """gemini-2.0-flash must never touch httpx.post."""
+        from agents import _call_model
+
+        mock_resp = MagicMock()
+        mock_resp.text = "gemini response"
+        mock_resp.usage_metadata = None
+
+        with patch("httpx.post") as mock_post:
+            with patch("google.genai.Client") as mock_client_cls:
+                mock_client = MagicMock()
+                mock_client.models.generate_content.return_value = mock_resp
+                mock_client_cls.return_value = mock_client
+                with patch("tools.secrets.get_secret", return_value="fake-key"):
+                    _call_model("test prompt", model="gemini-2.0-flash")
+
+        mock_post.assert_not_called()
+
+    def test_web_access_prepends_search_results_to_prompt(self):
+        """web_access=True must prepend web_search() output before the Ollama call."""
+        from agents import _call_model
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"response": "answer"}
+
+        with patch("httpx.post", return_value=mock_resp) as mock_post:
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                with patch("tools.web_search.web_search", return_value="snippet: some result") as mock_ws:
+                    _call_model("what is steel price", model="ollama/llama3.1", web_access=True)
+
+        mock_ws.assert_called_once_with("what is steel price")
+        posted_prompt = mock_post.call_args[1]["json"]["prompt"]
+        assert "snippet: some result" in posted_prompt
+
+    def test_web_access_false_does_not_call_web_search(self):
+        """web_access=False (default) must never call web_search."""
+        from agents import _call_model
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"response": "ok"}
+
+        with patch("httpx.post", return_value=mock_resp):
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                with patch("tools.web_search.web_search") as mock_ws:
+                    _call_model("prompt", model="ollama/llama3.1", web_access=False)
+
+        mock_ws.assert_not_called()
+
+
+# ── Web search tool ────────────────────────────────────────────────────────
+
+
+class TestWebSearch:
+    """Verify tools/web_search.py handles DDG responses and errors cleanly."""
+
+    def test_returns_abstract_text_when_present(self):
+        from tools.web_search import web_search
+
+        ddg_payload = {
+            "AbstractText": "Steel is an alloy of iron and carbon.",
+            "AbstractSource": "Wikipedia",
+            "Answer": "",
+            "RelatedTopics": [],
+        }
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = ddg_payload
+
+        with patch("httpx.get", return_value=mock_resp):
+            result = web_search("steel alloy")
+
+        assert "Steel is an alloy" in result
+        assert "Wikipedia" in result
+
+    def test_returns_direct_answer_when_present(self):
+        from tools.web_search import web_search
+
+        ddg_payload = {
+            "AbstractText": "",
+            "AbstractSource": "",
+            "Answer": "42",
+            "RelatedTopics": [],
+        }
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = ddg_payload
+
+        with patch("httpx.get", return_value=mock_resp):
+            result = web_search("answer to everything")
+
+        assert "42" in result
+
+    def test_includes_related_topics(self):
+        from tools.web_search import web_search
+
+        ddg_payload = {
+            "AbstractText": "",
+            "AbstractSource": "",
+            "Answer": "",
+            "RelatedTopics": [
+                {"Text": "Topic A — first related topic"},
+                {"Text": "Topic B — second related topic"},
+            ],
+        }
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = ddg_payload
+
+        with patch("httpx.get", return_value=mock_resp):
+            result = web_search("query")
+
+        assert "Topic A" in result
+        assert "Topic B" in result
+
+    def test_returns_empty_string_on_timeout(self):
+        import httpx as _httpx
+        from tools.web_search import web_search
+
+        with patch("httpx.get", side_effect=_httpx.TimeoutException("timed out")):
+            result = web_search("anything")
+
+        assert result == ""
+
+    def test_returns_empty_string_on_connect_error(self):
+        import httpx as _httpx
+        from tools.web_search import web_search
+
+        with patch("httpx.get", side_effect=_httpx.ConnectError("refused")):
+            result = web_search("anything")
+
+        assert result == ""
+
+    def test_empty_query_returns_empty_string(self):
+        from tools.web_search import web_search
+
+        with patch("httpx.get") as mock_get:
+            result = web_search("")
+
+        mock_get.assert_not_called()
+        assert result == ""
+
+    def test_caps_related_topics_at_max_results(self):
+        from tools.web_search import web_search
+
+        topics = [{"Text": f"Topic {i}"} for i in range(20)]
+        ddg_payload = {"AbstractText": "", "AbstractSource": "", "Answer": "", "RelatedTopics": topics}
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = ddg_payload
+
+        with patch("httpx.get", return_value=mock_resp):
+            result = web_search("query", max_results=3)
+
+        # Should only include 3 topics
+        assert result.count("Topic") == 3
+
+
+# ── TestArchiveJob ─────────────────────────────────────────────────────────────
+
+
+class TestArchiveJob:
+    """
+    Unit tests for handle_archive() and the POST /archive endpoint.
+
+    All Sheet and BigQuery calls are mocked — no real API traffic.
+    """
+
+    # ── helpers ────────────────────────────────────────────────────────────────
+
+    def _make_aged_log(self, days_old: int = 60) -> dict:
+        from datetime import datetime, timezone, timedelta
+        ts = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
+        return {"timestamp": ts, "agent_id": "beacon", "level": "INFO", "message": "test", "project_id": "test-project"}
+
+    def _make_fresh_log(self) -> dict:
+        from datetime import datetime, timezone
+        return {"timestamp": datetime.now(timezone.utc).isoformat(), "agent_id": "beacon", "level": "INFO", "message": "fresh", "project_id": "test-project"}
+
+    def _make_aged_approval(self, days_old: int = 100) -> dict:
+        from datetime import datetime, timezone, timedelta
+        ts = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
+        return {
+            "ID": "proposal-001", "Agent ID": "ledger", "Issue": "test issue",
+            "Trigger Reason": "test", "Stopping Constraint": "", "Iterations Run": "1",
+            "Total Cost USD": "0.05", "Proposed Code": "print('hi')", "Status": "Approved",
+            "Timestamp": ts, "Approved By": "owner@example.com", "Approver Tier": "5",
+            "code_sha256": "abc123", "Priority": "3",
+        }
+
+    # ── archive job core tests ─────────────────────────────────────────────────
+
+    def test_archives_aged_logs_to_bigquery(self):
+        """Aged Logs rows (>30 days) are written to BQ and deleted from the Sheet."""
+        from agents.nexus_prime.orchestrator import handle_archive
+
+        aged_row = self._make_aged_log(60)
+        fresh_row = self._make_fresh_log()
+        numbered = [(2, aged_row), (3, fresh_row)]
+
+        # Use side_effect so only the Logs tab returns aged rows — prevents
+        # Error Logs from also triggering a BQ call, which would shift call_args.
+        def _row_se(tab, pid):
+            return numbered if tab == "Logs" else []
+
+        with (
+            patch("tools.google_sheets.get_all_records", return_value=[]),
+            patch("tools.google_sheets.get_all_records_with_row_numbers", side_effect=_row_se),
+            patch("tools.google_sheets.delete_rows") as mock_delete,
+            patch("tools.google_sheets.append_row"),
+            patch("tools.bigquery.insert_rows") as mock_bq,
+        ):
+            result = asyncio.run(handle_archive("test-project"))
+
+        # Only the aged row should be passed to BQ
+        assert mock_bq.called
+        bq_call_rows = mock_bq.call_args[0][1]
+        assert len(bq_call_rows) == 1
+        assert bq_call_rows[0]["task_type"] == "INFO"
+
+        # Only row 2 (aged) should be deleted
+        mock_delete.assert_called()
+        deleted_rows = mock_delete.call_args[0][1]
+        assert deleted_rows == [2]
+
+        assert result["archived"]["Logs"] == 1
+
+    def test_fresh_logs_not_archived(self):
+        """Logs rows newer than 30 days are not archived or deleted."""
+        from agents.nexus_prime.orchestrator import handle_archive
+
+        fresh_row = self._make_fresh_log()
+        numbered = [(2, fresh_row)]
+
+        with (
+            patch("tools.google_sheets.get_all_records", return_value=[]),
+            patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=numbered),
+            patch("tools.google_sheets.delete_rows") as mock_delete,
+            patch("tools.google_sheets.append_row"),
+            patch("tools.bigquery.insert_rows"),
+        ):
+            result = asyncio.run(handle_archive("test-project"))
+
+        mock_delete.assert_not_called()
+        assert result["archived"]["Logs"] == 0
+
+    def test_archives_closed_approvals_to_bigquery(self):
+        """Approved/Rejected/Deployed approvals >90 days old go to approval_history."""
+        from agents.nexus_prime.orchestrator import handle_archive
+
+        aged_approval = self._make_aged_approval(100)
+        pending_approval = {**self._make_aged_approval(100), "Status": "Pending"}
+        approval_numbered = [(2, aged_approval), (3, pending_approval)]
+
+        with (
+            patch("tools.google_sheets.get_all_records", return_value=[]),
+            patch("tools.google_sheets.get_all_records_with_row_numbers", side_effect=[
+                [],                # Logs
+                [],                # Error Logs
+                approval_numbered, # Agent_Approvals
+            ]),
+            patch("tools.google_sheets.delete_rows") as mock_delete,
+            patch("tools.google_sheets.append_row"),
+            patch("tools.bigquery.insert_rows") as mock_bq,
+        ):
+            result = asyncio.run(handle_archive("test-project"))
+
+        # Pending approval must NOT be archived
+        approval_bq_calls = [
+            c for c in mock_bq.call_args_list
+            if "approval_history" in c[0][0]
+        ]
+        assert len(approval_bq_calls) == 1
+        assert approval_bq_calls[0][0][1][0]["status"] == "Approved"
+
+        # Only row 2 deleted, not row 3 (pending)
+        delete_calls = {c[0][1][0] for c in mock_delete.call_args_list if c[0][1]}
+        assert 2 in delete_calls
+        assert 3 not in delete_calls
+
+        assert result["archived"]["Agent_Approvals"] == 1
+
+    def test_pending_approvals_never_archived(self):
+        """Pending proposals are never touched even if they are old."""
+        from agents.nexus_prime.orchestrator import handle_archive
+
+        old_pending = {**self._make_aged_approval(200), "Status": "Pending"}
+
+        with (
+            patch("tools.google_sheets.get_all_records", return_value=[]),
+            patch("tools.google_sheets.get_all_records_with_row_numbers", side_effect=[
+                [], [], [(2, old_pending)]
+            ]),
+            patch("tools.google_sheets.delete_rows") as mock_delete,
+            patch("tools.google_sheets.append_row"),
+            patch("tools.bigquery.insert_rows"),
+        ):
+            result = asyncio.run(handle_archive("test-project"))
+
+        mock_delete.assert_not_called()
+        assert result["archived"]["Agent_Approvals"] == 0
+
+    def test_summary_row_always_written_to_logs(self):
+        """A summary row is appended to Logs regardless of how many rows were archived."""
+        from agents.nexus_prime.orchestrator import handle_archive
+
+        with (
+            patch("tools.google_sheets.get_all_records", return_value=[]),
+            patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
+            patch("tools.google_sheets.delete_rows"),
+            patch("tools.google_sheets.append_row") as mock_append,
+            patch("tools.bigquery.insert_rows"),
+        ):
+            asyncio.run(handle_archive("test-project"))
+
+        calls = [c for c in mock_append.call_args_list if c[0][0] == "Logs"]
+        assert len(calls) >= 1
+        summary_row = calls[-1][0][1]
+        assert summary_row["level"] == "ARCHIVE"
+        assert "NIGHTLY_ARCHIVE" in summary_row["message"]
+
+    def test_alert_published_when_tab_exceeds_threshold(self):
+        """An ALERT is published when a tab has >25,000 rows after archiving."""
+        from agents.nexus_prime.orchestrator import handle_archive
+
+        # Simulate 26,000 rows remaining in Logs after archive
+        big_table = [{"timestamp": "2020-01-01T00:00:00+00:00", "agent_id": "x",
+                      "level": "INFO", "message": "", "project_id": "test-project"}] * 26_000
+
+        with (
+            patch("tools.google_sheets.get_all_records", return_value=big_table),
+            patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
+            patch("tools.google_sheets.delete_rows"),
+            patch("tools.google_sheets.append_row"),
+            patch("tools.bigquery.insert_rows"),
+            patch("tools.pubsub.publish") as mock_publish,
+        ):
+            asyncio.run(handle_archive("test-project"))
+
+        # At least one ALERT should have been published
+        assert mock_publish.called
+        from models import MessageType
+        published_msgs = [c[0][1] for c in mock_publish.call_args_list]
+        alert_msgs = [m for m in published_msgs if m.message_type == MessageType.ALERT]
+        assert len(alert_msgs) >= 1
+
+    def test_bq_failure_does_not_delete_sheet_rows(self):
+        """If BQ insert fails, rows are NOT deleted from the Sheet."""
+        from agents.nexus_prime.orchestrator import handle_archive
+
+        aged_row = self._make_aged_log(60)
+        numbered = [(2, aged_row)]
+
+        with (
+            patch("tools.google_sheets.get_all_records", return_value=[]),
+            patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=numbered),
+            patch("tools.google_sheets.delete_rows") as mock_delete,
+            patch("tools.google_sheets.append_row"),
+            patch("tools.bigquery.insert_rows", side_effect=RuntimeError("BQ down")),
+        ):
+            result = asyncio.run(handle_archive("test-project"))
+
+        mock_delete.assert_not_called()
+        assert result["archived"]["Logs"] == 0
+
+    # ── /archive endpoint tests ────────────────────────────────────────────────
+
+    def test_archive_endpoint_returns_200_for_nexus_prime(self, monkeypatch):
+        """POST /archive returns 200 when AGENT_NAME=nexus-prime."""
+        import main as app_module
+        from httpx import ASGITransport, AsyncClient
+
+        monkeypatch.setenv("AGENT_NAME", "nexus-prime")
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+
+        async def _fake_handle_archive(pid: str) -> dict:
+            return {"archived": {"Logs": 3}, "total": 3, "cost_usd": 0.0, "task_id": "t1"}
+
+        with patch("agents.nexus_prime.orchestrator.handle_archive", _fake_handle_archive):
+            with patch.object(app_module, "_AGENT_NAME", "nexus-prime"):
+                async def _run():
+                    async with AsyncClient(
+                        transport=ASGITransport(app=app_module.app), base_url="http://test"
+                    ) as client:
+                        return await client.post(
+                            "/archive",
+                            headers={"Authorization": "Bearer test-token"},
+                        )
+                resp = asyncio.run(_run())
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ok"
+        assert resp.json()["total"] == 3
+
+    def test_archive_endpoint_returns_404_for_non_nexus_agents(self, monkeypatch):
+        """POST /archive returns 404 when AGENT_NAME is not nexus-prime."""
+        import main as app_module
+        from httpx import ASGITransport, AsyncClient
+
+        with patch.object(app_module, "_AGENT_NAME", "ledger"):
+            async def _run():
+                async with AsyncClient(
+                    transport=ASGITransport(app=app_module.app), base_url="http://test"
+                ) as client:
+                    return await client.post(
+                        "/archive",
+                        headers={"Authorization": "Bearer test-token"},
+                    )
+            resp = asyncio.run(_run())
+
+        assert resp.status_code == 404
+
+    def test_archive_endpoint_returns_401_without_auth_header(self):
+        """POST /archive without Authorization header returns 401."""
+        import main as app_module
+        from httpx import ASGITransport, AsyncClient
+
+        with patch.object(app_module, "_AGENT_NAME", "nexus-prime"):
+            async def _run():
+                async with AsyncClient(
+                    transport=ASGITransport(app=app_module.app), base_url="http://test"
+                ) as client:
+                    return await client.post("/archive")
+            resp = asyncio.run(_run())
+
+        assert resp.status_code == 401

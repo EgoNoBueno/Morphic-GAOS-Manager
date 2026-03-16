@@ -33,6 +33,7 @@ class MessageType(str, Enum):
     NEW_PROJECT       = "NEW_PROJECT"      # Project Registry change detected
     BROADCAST         = "BROADCAST"        # Nexus-Prime → All: system-wide directive
     TTL_SWEEP         = "TTL_SWEEP"        # Cloud Scheduler: sweep stale proposals
+    NIGHTLY_ARCHIVE   = "NIGHTLY_ARCHIVE"  # Cloud Scheduler: nightly Sheet → BigQuery archive
 
 
 # ── A2AMessage ─────────────────────────────────────────────────────────────

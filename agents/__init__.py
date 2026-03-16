@@ -2,7 +2,8 @@
 agents/__init__.py — Shared utilities for all Morphic-G AOS agent orchestrators.
 
 Provides:
-  - ModelResponse and _call_model()   — thin wrapper over google.genai
+  - ModelResponse and _call_model()   — thin wrapper over google.genai / Ollama
+  - _call_model_ollama()              — Ollama HTTP routing with timeout + fallback
   - validate_code_safety()            — AST-based import + pattern gate
   - _run_evolution_loop()             — Write-Test-Refine loop (§13.1)
   - _load_identity_file()             — reads Docs/agents/<name>.md at boot
@@ -56,31 +57,111 @@ def _call_model(
     model: str,
     system_prompt: str = "",
     parse_json: bool = False,
+    web_access: bool = False,
 ) -> ModelResponse:
     """
-    Thin wrapper around google.genai.  API key is read from Secret Manager
-    at call-time (not module init) so it respects per-project scoping.
+    Routes to Ollama (local) or google.genai depending on the model alias.
+
+    If model starts with "ollama/":
+      - Optionally prepends web search results when web_access=True
+      - POSTs to OLLAMA_HOST/api/generate with LOCAL_MODEL_TIMEOUT_SECONDS timeout
+      - On timeout or connection error, falls back to LOCAL_MODEL_FALLBACK via Gemini
+
+    If model is a Gemini alias:
+      - Calls google.genai with the GEMINI_API_KEY secret
+      - Falls back to ADC / Vertex AI if the secret is unavailable
 
     Args:
         prompt:        User-turn content.
-        model:         Resolved model alias string (e.g. "gemini-2.0-flash").
+        model:         Resolved model alias string (e.g. "ollama/llama3.1" or "gemini-2.0-flash").
         system_prompt: Optional system instruction prefix.
         parse_json:    If True, attempt to extract and parse JSON from response.
+        web_access:    If True and model is an Ollama alias, prepend DuckDuckGo search
+                       results for the prompt before sending to the local model.
 
     Returns:
         ModelResponse with text, rough cost_usd, and parsed data dict.
     """
-    import google.genai as genai
     from config import get_settings
-
     settings = get_settings()
+
+    if web_access and model.startswith("ollama/"):
+        from tools.web_search import web_search
+        snippets = web_search(prompt)
+        if snippets:
+            prompt = f"Web search results for context:\n{snippets}\n\n---\n\n{prompt}"
+
+    if model.startswith("ollama/"):
+        return _call_model_ollama(prompt, model, system_prompt, parse_json, settings)
+
+    return _call_model_gemini(prompt, model, system_prompt, parse_json, settings)
+
+
+def _call_model_ollama(
+    prompt: str,
+    model: str,
+    system_prompt: str,
+    parse_json: bool,
+    settings: Any,
+) -> ModelResponse:
+    """
+    Calls the local Ollama server. Falls back to LOCAL_MODEL_FALLBACK on any error.
+    Model alias format: "ollama/<model-name>" e.g. "ollama/llama3.1"
+    """
+    import httpx
+
+    ollama_model = model.split("/", 1)[1]  # strip "ollama/" prefix
+    timeout_s = float(getattr(settings.models, "LOCAL_MODEL_TIMEOUT_SECONDS", 2))
+    fallback_model = settings.models.LOCAL_MODEL_FALLBACK
+
+    try:
+        from tools.secrets import get_secret
+        host = get_secret("OLLAMA_HOST", settings.GCP_PROJECT_ID).rstrip("/")
+    except Exception:
+        host = "http://localhost:11434"
+
+    full_prompt = f"System: {system_prompt}\n\n{prompt}" if system_prompt else prompt
+
+    try:
+        response = httpx.post(
+            f"{host}/api/generate",
+            json={"model": ollama_model, "prompt": full_prompt, "stream": False},
+            timeout=timeout_s,
+        )
+        response.raise_for_status()
+        data = response.json()
+        text = data.get("response", "")
+        parsed: dict = {}
+        if parse_json and text:
+            json_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+            raw = json_match.group(1) if json_match else text
+            try:
+                parsed = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                parsed = {}
+        return ModelResponse(text=text, cost_usd=0.0, tokens_used=0, data=parsed)
+
+    except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as exc:
+        # Ollama unreachable or too slow — fall back to Gemini
+        _fallback_reason = type(exc).__name__
+        return _call_model_gemini(prompt, fallback_model, system_prompt, parse_json, settings)
+
+
+def _call_model_gemini(
+    prompt: str,
+    model: str,
+    system_prompt: str,
+    parse_json: bool,
+    settings: Any,
+) -> ModelResponse:
+    """Calls google.genai. Falls back to ADC/Vertex AI if API key is unavailable."""
+    import google.genai as genai
 
     try:
         from tools.secrets import get_secret
         api_key = get_secret("GEMINI_API_KEY", settings.GCP_PROJECT_ID)
         client = genai.Client(api_key=api_key)
     except Exception:
-        # Fall back to Application Default Credentials / Vertex AI
         client = genai.Client(
             vertexai=True,
             project=settings.GCP_PROJECT_ID,
