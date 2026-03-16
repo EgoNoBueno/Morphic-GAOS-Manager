@@ -197,13 +197,13 @@ for agent in ledger beacon pursuit foreman steward scout; do
   gcloud projects add-iam-policy-binding $PROJECT \
     --member="serviceAccount:${SA}" --role="roles/logging.logWriter"
   gcloud projects add-iam-policy-binding $PROJECT \
-    --member="serviceAccount:${SA}" --role="roles/bigquery.dataViewer"
+    --member="serviceAccount:${SA}" --role="roles/bigquery.dataEditor"
 done
 
-# ── Apps Script SA: Sheets + Drive ────────────────────────────────────────
-gcloud projects add-iam-policy-binding $PROJECT \
-  --member="serviceAccount:apps-script-sa@${PROJECT}.iam.gserviceaccount.com" \
-  --role="roles/sheets.editor"
+# ── Apps Script SA ────────────────────────────────────────────────────────
+# No project-level IAM needed. Sheets and Drive access for apps-script-sa is
+# granted at the file level when setup_workspace.py shares the root Drive folder
+# with all service account emails (see §4.1). No gcloud command required here.
 ```
 
 ### 2.3 Service Account Identity
