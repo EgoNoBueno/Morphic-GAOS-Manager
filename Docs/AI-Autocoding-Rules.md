@@ -237,4 +237,108 @@ Classify every request into one of four modes before responding:
 
 ---
 
+## 16. Pythonic Code Standards (PEP 8+)
+
+**Rule:** All Python code in this codebase must meet the following standards:
+
+- **Line length:** Max 100 characters. Configured in `pyproject.toml` under `[tool.ruff]`.
+- **Formatter:** **Ruff** is the single linter and formatter for all files. No Black, no Flake8. VS Code workspace settings must enable Format on Save with Ruff — this eliminates whitespace noise in diffs.
+- **String interpolation:** Use f-strings exclusively. Never `.format()` or `%` substitution.
+- **Type hints:** Required on all function signatures — parameters and return type. No bare `def f(x):`.
+
+```python
+# ❌ Wrong
+def archive_rows(tab, rows, pid):
+    msg = "Archived %d rows from %s" % (len(rows), tab)
+
+# ✅ Correct
+def archive_rows(tab: str, rows: list[dict], project_id: str) -> int:
+    msg = f"Archived {len(rows)} rows from {tab}"
+```
+
+> **Tooling note:** A `.pre-commit-config.yaml` running `ruff check --fix` and `ruff format` enforces this at commit time without relying on developer discipline. Recommended setup task — not yet configured.
+
+---
+
+## 17. Public Functions Must Have Docstrings
+
+**Rule:** Every public function (not prefixed with `_`) in `tools/`, `agents/`, and `models/` must include a Google-style docstring covering `Args`, `Returns`, and `Raises` where applicable.
+
+```python
+# ✅ Correct
+def get_secret(name: str, project_id: str) -> str:
+    """Fetch a secret value from GCP Secret Manager.
+
+    Args:
+        name: The secret name as registered in Secret Manager.
+        project_id: GCP project that owns the secret.
+
+    Returns:
+        The secret payload as a UTF-8 string.
+
+    Raises:
+        SecretNotFoundError: If the secret does not exist.
+        google.api_core.exceptions.PermissionDenied: If the SA lacks access.
+    """
+```
+
+Private helpers (`_parse_ts`, `_log_cloud`, etc.) are exempt but encouraged.
+
+---
+
+## 18. Structured Logging Only — Never `print()`
+
+**Rule:** Never use `print()` anywhere in `agents/`, `tools/`, or `main.py`. All runtime logging goes through `_log_cloud(agent_id, project_id, level, task_id, message, severity)`.
+
+**Why:** `print()` output is invisible in Cloud Logging, has no `project_id` attached, and cannot be filtered or alerted on. Every `_log_cloud` call is automatically routed to the correct GCP project stream with structured metadata.
+
+```python
+# ❌ Wrong
+print(f"Archived {count} rows")
+
+# ✅ Correct
+_log_cloud("nexus-prime", project_id, "task", task_id,
+           f"Archived {count} rows from Logs tab", "INFO")
+```
+
+The only permitted use of `print()` is in one-off scripts under `scripts/` that are run interactively (e.g., `setup_workspace.py`).
+
+---
+
+## 19. Specific Exception Handling — No Bare `except`
+
+**Rule:** Never use a bare `except:` or `except Exception:` without at minimum logging the exception type and re-raising or handling it intentionally.
+
+- Catch the most specific exception available (`ValueError`, `google.api_core.exceptions.NotFound`, etc.).
+- When catching a broad exception to log and continue, name the variable and include it in the log message.
+- When re-raising after logging, use `raise ... from exc` to preserve the full stack trace.
+
+```python
+# ❌ Wrong
+try:
+    bq_insert_rows(table, rows)
+except:
+    pass
+
+# ✅ Correct
+try:
+    bq_insert_rows(table, rows)
+except Exception as exc:
+    _log_cloud("nexus-prime", project_id, "task", task_id,
+               f"BQ insert failed: {exc}", "ERROR")
+    raise RuntimeError("archive aborted") from exc
+```
+
+---
+
+## 20. Search Before Writing — No Duplicate Abstractions
+
+**Rule:** Before writing any new helper, tool wrapper, or utility function, search the codebase for an existing implementation. Use `Ctrl+Shift+F` in VS Code to search by function name, pattern, or behavior description.
+
+If an abstraction already exists, it **must** be used — not re-implemented inline. If an existing abstraction is insufficient, extend it and update its spec entry rather than creating a parallel version.
+
+**Why this matters:** Parallel implementations silently diverge. One gets the retry logic update; the other doesn't. Two months later the codebase has two `delete_rows` functions with different behavior and no one knows which is authoritative.
+
+---
+
 _Last updated: 2026-03-16_
