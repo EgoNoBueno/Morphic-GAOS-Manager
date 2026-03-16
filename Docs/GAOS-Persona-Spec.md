@@ -103,14 +103,14 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     generated. The result is stored in working memory and logged to BigQuery.
     """
     import json
-    from tools.memory import query_semantic_memory
-    from tools.bigquery import log_monologue_frame
+    from tools.bigquery import insert_row
+    # _call_model and utcnow_iso are imported at the top of orchestrator.py
 
     msg = state["incoming_message"]
     episodic_context = state.get("episodic_cache", {})
     semantic_context = state.get("memory_context", {})
 
-    # --- Reasoning prompt (structured output / JSON mode) ---
+    # --- Reasoning prompt ---
     reasoning_prompt = f"""
     You are the Strategic Architect's internal reasoning engine.
     Evaluate the following user request against all four directives.
@@ -143,20 +143,21 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     Return a JSON object that exactly matches the MonologueFrame schema.
     """
 
-    # DEEP_MODEL call with JSON mode enabled
-    raw = state["model_client"].generate(
-        reasoning_prompt,
-        response_mime_type="application/json",
-        response_schema=MonologueFrame,
-    )
-    frame: MonologueFrame = json.loads(raw)
+    # DEEP_MODEL call — add "think" to _DECISION_NODES in orchestrator.py so
+    # _model_for_node("think") resolves to DEEP_MODEL.
+    resp = _call_model(reasoning_prompt, model=_model_for_node("think"), parse_json=True)
+    frame: MonologueFrame = resp.data
+
+    # Track cost and tokens (matches pattern of all other nodes)
+    state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+    state["tokens_used"] = state.get("tokens_used", 0) + resp.tokens_used
 
     # Determine response_mode from frame fields
-    if frame["urgency_flag"]:
+    if frame.get("urgency_flag"):
         frame["response_mode"] = "Tactical"
-    elif frame["knowledge_gap_detected"]:
+    elif frame.get("knowledge_gap_detected"):
         frame["response_mode"] = "Research"
-    elif frame["efficiency_score"] < 0.60:
+    elif frame.get("efficiency_score", 1.0) < 0.60:
         frame["response_mode"] = "Reframe"
     else:
         frame["response_mode"] = "Direct"
@@ -165,10 +166,15 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     state["monologue_frame"] = frame
 
     # Log to BigQuery for weekly review loop consumption
-    log_monologue_frame(
-        task_id=state["task_id"],
-        project_id=state["project_id"],
-        frame=frame,
+    insert_row(
+        "aos_logs.monologue_frames",
+        {
+            "task_id": state["task_id"],
+            "project_id": state["project_id"],
+            "timestamp": utcnow_iso(),
+            **frame,
+        },
+        state["project_id"],
     )
 
     return state
@@ -266,13 +272,29 @@ def friction_audit(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     repeated Tactical triggers). Proposes automation based on patterns that exceed
     the confidence threshold.
     """
-    from tools.bigquery import query_monologue_history
+    from google.cloud import bigquery as bq
     from tools.google_sheets import append_row
+    from config import get_settings
 
-    frames = query_monologue_history(
-        project_id=state["project_id"],
-        days=7,
+    settings = get_settings()
+    gcp_project = settings.GCP_PROJECT_ID
+    client = bq.Client(project=gcp_project)
+    sql = f"""
+        SELECT *
+        FROM `{gcp_project}.aos_logs.monologue_frames`
+        WHERE project_id = @project_id
+          AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+    """
+    job_config = bq.QueryJobConfig(
+        query_parameters=[
+            bq.ScalarQueryParameter("project_id", "STRING", state["project_id"]),
+        ]
     )
+    try:
+        frames = [dict(row) for row in client.query(sql, job_config=job_config)]
+    except Exception:
+        frames = []
+
 
     # Aggregate by pattern
     reframe_tasks        = [f for f in frames if f["response_mode"] == "Reframe"]
@@ -338,11 +360,15 @@ The Strategic Architect soul is embedded via the `instruction` field of each age
 This two-part assembly means the soul can be updated in one place (Drive) and all agents pick it up on their next boot, without requiring a code deploy.
 
 ```python
-# At agent boot — assembles the full instruction string
-def _build_instruction(agent_name: str) -> str:
-    from tools.memory import load_procedural_knowledge
-    soul   = load_procedural_knowledge("policies/strategic_architect_soul.md")
-    domain = load_procedural_knowledge(f"agents/{agent_name}.md")
+# At agent boot — assembles the full instruction string.
+# project_id is required by tools.drive.read_file to resolve the Drive root.
+def _build_instruction(agent_name: str, project_id: str) -> str:
+    from tools.drive import read_file
+    from agents import _load_identity_file
+    # Soul lives in Google Drive at Knowledge/policies/strategic_architect_soul.md
+    soul   = read_file("Knowledge/policies/strategic_architect_soul.md", project_id)
+    # Domain identity is read from the local container image at Docs/agents/<name>.md
+    domain = _load_identity_file(agent_name)
     return f"{soul}\n\n---\n\n{domain}"
 ```
 

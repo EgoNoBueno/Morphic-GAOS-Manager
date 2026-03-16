@@ -8,6 +8,30 @@ The system is designed to run for roughly **$2.50 per month** in cloud costs by 
 
 ---
 
+## Goals & Objectives
+
+**Primary Goal:** Run all routine small-business operations (accounting, marketing, sales, ops, admin, research) autonomously through a coordinated team of specialized AI agents — escalating to the human owner *only* when a decision genuinely requires one.
+
+**Cost Target:** ~$2.50/month by routing routine work to a free local model (Ollama), using paid Gemini models only for genuine reasoning, and staying within Google's free-tier services everywhere else.
+
+**Key Design Objectives:**
+
+1. **Agent Hierarchy** — Nexus-Prime (GM) → 6 domain orchestrators (Ledger, Beacon, Pursuit, Foreman, Steward, Scout) → unlimited task agents. Owner sees only Tier 2 dashboards; Tier 3 is invisible unless something fails.
+
+2. **No Custom UI** — The entire control plane is a Google Sheet: live agent status, approval queue, task logs, and business data. No terminal, no custom frontend.
+
+3. **Human-in-the-loop Approval Gate** — Risky actions (code deploy, payments, outbound email) are parked until the owner clicks Approved/Rejected in the Sheet. The system continues other work while waiting.
+
+4. **Gated Self-Evolution** — Agents can write new tools when they encounter gaps (5 iterations, 15-min TTL, $0.50 cap), but generated code passes two static analysis gates (pattern gate + import allowlist) and requires owner approval before deploying. No agent can deploy its own code unilaterally.
+
+5. **Multi-Tenant** — One deployment manages multiple business projects; each gets isolated Sheet workbook, Drive folder, and Pub/Sub namespace via the Project Registry.
+
+6. **Layered Memory** — Scratchpad → BigQuery (episodic) → Sheets staging buffer → Vertex AI Memory Bank (long-term). Agents propose learnings; Nexus-Prime promotes them to permanent memory only after owner approval.
+
+**Current State (Phase 1 complete):** All 7 orchestrators, the full tool layer, and a 151-test suite are built. Phases 2–4 cover Ollama observability, the full Gemini + approval loop, and production validation.
+
+---
+
 ## Theory of Operation
 
 Think of Morphic-G AOS like a well-run office with a clear chain of command.
