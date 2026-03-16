@@ -47,11 +47,10 @@ These rules are not guidelines — they are hard constraints the implementation 
 Nexus-Prime's working memory extends the common `AgentWorkingMemory` TypedDict from `GAOS-Agent-Spec.md §5` with additional fields required by its broader scope.
 
 ```python
-from typing import Optional
+from typing import Any, Optional
 from models import A2AMessage, ApprovalProposal
-from tools.google_sheets import SheetRow
 
-class NexusPrimeWorkingMemory(AgentWorkingMemory):
+class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
     # Inherited from AgentWorkingMemory:
     #   project_id: str
     #   task_id: str
@@ -70,7 +69,7 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory):
     #       It stores proposal IDs only — not full row dicts.
     
     # Project initialization state (ephemeral per task)
-    pending_project_row: Optional[SheetRow]
+    pending_project_row: Optional[dict]
     new_project_id: Optional[str]
     
     # Evolution gate state
@@ -90,7 +89,7 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory):
 
 ### 3.1 Node Inventory
 
-Nexus-Prime's `StateGraph` has 10 nodes. The router node determines which branch to execute based on message type.
+Nexus-Prime's `StateGraph` has 12 nodes. The router node determines which branch to execute based on message type.
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -118,26 +117,30 @@ Runs once at service startup. Initializes all subscriptions, loads parked propos
 
 ```python
 def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    from config import get_settings
     from tools.google_sheets import get_all_records
     from tools.pubsub import ensure_topic_exists
-    import settings
 
-    # Ensure all 8 topics exist (idempotent)
+    settings = get_settings()
+    pid = state.get("project_id", settings.GCP_PROJECT_ID)
+    state["project_id"] = pid
+
+    # Ensure all Pub/Sub topics exist (idempotent)
     for topic in settings.pubsub.all_topics:
-        ensure_topic_exists(topic, state["project_id"])
+        ensure_topic_exists(topic, pid)
 
     # Load parked proposals — store IDs only (consistent with list[str])
-    all_proposals = get_all_records("Agent_Approvals", state["project_id"])
+    all_proposals = get_all_records("Agent_Approvals", pid)
     state["parked_proposals"] = [
         r["ID"] for r in all_proposals
         if r.get("Status") in ("Pending", "Needs Revision") and r.get("ID")
     ]
 
     # Load system state summary (all active projects from Project Registry)
-    registry = get_all_records("Project Registry", state["project_id"])
+    registry = get_all_records("Project Registry", pid)
     state["system_state_summary"] = {
-        row["project_id"]: row["status"]
-        for row in registry if row.get("project_id")
+        r["project_id"]: r["status"]
+        for r in registry if r.get("project_id")
     }
 
     return state
@@ -207,19 +210,27 @@ def diagnose(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     from tools.google_sheets import find_rows
     from tools.memory import query_memory_bank
 
-    msg = state["incoming_message"]
-    error_fp = msg.payload.get("error_fingerprint", "")
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+    error_fp = msg.payload.get("error_fingerprint", "") if msg.payload else ""
 
     # Search Memory Bank for matching past failures
-    similar = query_memory_bank(
-        query=error_fp,
-        corpus=f"gaos-{msg.source_agent.replace('-', '_')}",
-        project_id=state["project_id"],
-        top_k=3
-    )
-
-    # Also check Error Logs sheet for recent occurrences 
-    recent_errors = find_rows("Error Logs", "error_fingerprint", error_fp, state["project_id"])
+    similar: list = []
+    recent_errors: list = []
+    try:
+        similar = query_memory_bank(
+            query=error_fp,
+            corpus=f"gaos-{msg.source_agent.replace('-', '_')}",
+            project_id=state["project_id"],
+            top_k=3,
+        )
+    except Exception:
+        pass
+    try:
+        recent_errors = find_rows("Error Logs", "error_fingerprint", error_fp, state["project_id"])
+    except Exception:
+        pass
 
     # Determine next action using DEEP_MODEL
     prompt = _build_diagnosis_prompt(msg, similar, recent_errors)
@@ -300,50 +311,69 @@ Evaluates a `KNOWLEDGE_CANDIDATE` message from a domain orchestrator. Uses `DEEP
 
 ```python
 def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
-    from tools.memory import query_memory_bank
+    from tools.memory import query_memory_bank, write_approved_memory
 
-    msg = state["incoming_message"]
-    candidate = msg.payload
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
 
-    # Check for duplicates in the Memory Bank
-    duplicates = query_memory_bank(
-        query=candidate["content"],
-        corpus=f"gaos-{candidate['domain']}",
-        project_id=state["project_id"],
-        top_k=5,
-        similarity_threshold=0.92
-    )
+    candidate = msg.payload or {}
+    duplicates: list = []
+    try:
+        duplicates = query_memory_bank(
+            query=candidate.get("content", ""),
+            corpus=f"gaos-{candidate.get('domain', 'global')}",
+            project_id=state["project_id"],
+            top_k=5,
+        )
+    except Exception:
+        pass
 
     prompt = _build_knowledge_review_prompt(candidate, duplicates)
-    verdict = call_model(prompt, model=settings.models.DEEP_MODEL)
+    resp = _call_model(prompt, model=_model_for_node("knowledge_review"), parse_json=True)
+    state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
 
-    if verdict.confidence >= 0.80 and not verdict.is_duplicate:
-        # Promote immediately if high confidence and no duplicate
-        state["messages"].append({
-            "role": "assistant",
-            "action": "promote",
-            "content_hash": candidate.get("content_hash"),
-            "corpus": f"gaos-{candidate['domain']}"
-        })
+    confidence = resp.data.get("confidence", 0.0)
+    is_dup = resp.data.get("is_duplicate", True)
+
+    if confidence >= 0.80 and not is_dup:
+        # Auto-promote: write directly to Memory Bank
+        try:
+            from models import MemoryEntry
+            entry = MemoryEntry(
+                project_id=state["project_id"],
+                agent_id=msg.source_agent,
+                knowledge_type=candidate.get("knowledge_type", "fact"),
+                domain=candidate.get("domain", "global"),
+                content=candidate.get("content", ""),
+                confidence=float(resp.data.get("confidence", 0.8)),
+                approved_by="nexus-prime",
+                tags=candidate.get("tags", []),
+            )
+            write_approved_memory(entry=entry, project_id=state["project_id"])
+        except Exception:
+            _write_to_pending_knowledge(state, candidate, resp)
     else:
-        # Add to Pending_Knowledge sheet for human review
-        _write_to_pending_knowledge(state, candidate, verdict)
+        # Uncertain — send to Pending_Knowledge for human review
+        _write_to_pending_knowledge(state, candidate, resp)
 
     return state
 ```
 
 #### `promote`
 
-Only called when `APPROVAL_RESULT` status is `Approved`. Verifies the SHA-256 hash matches `Agent_Approvals`, then calls `syncSkillsToVertex()` via the Apps Script webhook, then writes the promoted document to Memory Bank and archives the old version in Drive.
+Only called when `APPROVAL_RESULT` status is `Approved`. Verifies the SHA-256 hash matches the `Agent_Approvals` sheet, then calls `syncSkillsToVertex()` via the Apps Script webhook, and updates the proposal status to `Deployed`. Drive archiving is handled downstream by Apps Script — this node does not write to Memory Bank or Drive directly.
 
 ```python
 def promote(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     from tools.google_sheets import find_row, update_row
-    from tools.drive import write_file, read_file, copy_file
-    from tools.webhook_sender import post_to_webhook
 
-    msg = state["incoming_message"]
-    proposal_id = msg.payload["proposal_id"]
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+    proposal_id = msg.payload.get("proposal_id", "") if msg.payload else ""
+    if not proposal_id:
+        return state
 
     # Find the proposal row
     row = find_row("Agent_Approvals", "ID", proposal_id, state["project_id"])
@@ -462,9 +492,10 @@ Called when two orchestrators have published messages with contradictory state a
 def conflict_resolve(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     from tools.pubsub import publish
 
-    for conflict in state["conflict_queue"]:
+    for conflict in state.get("conflict_queue", []):
         prompt = _build_conflict_prompt(conflict)
-        resolution = call_model(prompt, model=settings.models.DEEP_MODEL)
+        resp = _call_model(prompt, model=_model_for_node("conflict_resolve"), parse_json=True)
+        state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
 
         broadcast = A2AMessage(
             source_agent="nexus-prime",
@@ -501,9 +532,12 @@ Called when an approval result is neither `Approved` nor `Rejected` (e.g., `Need
 def park_or_broadcast(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     from tools.google_sheets import update_row
 
-    msg = state["incoming_message"]
-    proposal_id = msg.payload.get("proposal_id")
-    new_status = msg.payload.get("status", "Parked")
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+
+    proposal_id = msg.payload.get("proposal_id", "") if msg.payload else ""
+    new_status = msg.payload.get("status", "Parked") if msg.payload else "Parked"
 
     if proposal_id:
         update_row("Agent_Approvals", proposal_id, {"Status": new_status}, state["project_id"])
@@ -572,7 +606,7 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 ```python
 from langgraph.graph import StateGraph, END
 
-def build_nexus_prime_graph() -> StateGraph:
+def build_nexus_prime_graph() -> Any:
     graph = StateGraph(NexusPrimeWorkingMemory)
 
     graph.add_node("boot",             boot)
@@ -629,7 +663,7 @@ These are enforcement rules — not configurable behavior. Each must be verified
 | Approve its own proposals | Never — must wait for human in `Authorized Approvers` list | `propose_gate` writes row; `promote` only fires on `APPROVAL_RESULT` from webhook, not from Nexus-Prime's own Pub/Sub messages |
 | Modify domain orchestrator instruction files | Requires Tier 5 (owner) approval via Approval Gate | `candidate_agent_id` must match the agent being modified; owner-only approval for orchestrator identity files |
 | Modify `Project Registry` status without provisioning | Must complete `init_project` sequence first (sheet, folder, topics) before setting `status = Active` | `init_project` node validates all three provisioning steps before calling `update_row` |
-| Deploy code that fails the import allowlist | Hard stop — `validate_code_safety()` must return `passed = True` | `propose_gate` gate check is unconditional; raises `CodeSafetyError` on failure |
+| Deploy code that fails the import allowlist | Hard stop — `validate_code_safety()` must return `passed = True` | `propose_gate` sets `hard_stop_triggered = True`, calls `_log_hard_stop`, and returns early — no row written to `Agent_Approvals` |
 | Deploy code without SHA-256 match | Hard stop — `promote` verifies hash against both `code_sha256` field and live cell value | `promote` logs `CRITICAL` to Cloud Logging, sets proposal status back to `Needs Revision`, and returns without deploying |
 | Perform actions without `project_id` | All tool calls require `project_id` parameter; tools raise `ValueError` if missing | Enforced in `tools/google_sheets.py`, `tools/pubsub.py`, `tools/bigquery.py` |
 
