@@ -6,7 +6,7 @@
 # Morphic-G AOS
 ### The Intelligent Workforce for Small Business
 
-**A self-evolving team of AI agents** that runs your accounting, marketing, sales, operations, admin, and research — autonomously — on Google's cloud ecosystem, for roughly **$1.50/month**.
+**A self-evolving team of AI agents** that runs your accounting, marketing, sales, operations, admin, and research — autonomously — on Google's cloud ecosystem, for roughly **$2.50/month**.
 
 [![Spec Status](https://img.shields.io/badge/specs-complete-brightgreen)](#documentation)
 [![Cloud](https://img.shields.io/badge/platform-Google%20Cloud-4285F4?logo=googlecloud&logoColor=white)](#setup)
@@ -303,9 +303,13 @@ If an agent hits a problem it cannot self-resolve — and its Write-Test-Refine 
 | [`Docs/GAOS-Memory-Spec.md`](Docs/GAOS-Memory-Spec.md) | Five-layer memory architecture |
 | [`Docs/GAOS-Tools-Spec.md`](Docs/GAOS-Tools-Spec.md) | Shared tool module API reference (`tools/`) |
 | [`Docs/GAOS-Deploy-Spec.md`](Docs/GAOS-Deploy-Spec.md) | Step-by-step infrastructure provisioning guide |
-| [`Docs/GAOS-Nexus-Prime-Spec.md`](Docs/GAOS-Nexus-Prime-Spec.md) | Nexus-Prime construction spec (LangGraph graph, all 10 nodes) |
+| [`Docs/GAOS-Nexus-Prime-Spec.md`](Docs/GAOS-Nexus-Prime-Spec.md) | Nexus-Prime construction spec (LangGraph graph, all 12 nodes) |
 | [`Docs/Morphic-GAOS-Manager-Summary.md`](Docs/Morphic-GAOS-Manager-Summary.md) | Plain-English summary + 34-term glossary |
-| [`Docs/agents/`](Docs/agents/) | Identity files for all 6 domain orchestrators |
+| [`Docs/GAOS-Persona-Spec.md`](Docs/GAOS-Persona-Spec.md) | Strategic Architect persona, `think` node architecture, weekly friction audit |
+| [`Docs/GAOS-Privacy-Spec.md`](Docs/GAOS-Privacy-Spec.md) | Data residency, privacy topology options, risk mitigations |
+| [`Docs/GAOS-Onboarding-Spec.md`](Docs/GAOS-Onboarding-Spec.md) | First-time deployer setup wizard + end-user onboarding via Steward |
+| [`Docs/GAOS-Skill-Compliance-Spec.md`](Docs/GAOS-Skill-Compliance-Spec.md) | 6-gate review checklist for importing external skill modules |
+| [`Docs/agents/`](Docs/agents/) | Identity files for all 7 agents (Nexus-Prime + 6 domain orchestrators) |
 
 ---
 
@@ -327,15 +331,20 @@ If an agent hits a problem it cannot self-resolve — and its Write-Test-Refine 
 
 ## Cost Estimate
 
-| Service | Monthly cost |
-|---------|-------------|
-| Ollama (local machine) | $0.00 |
-| Cloud Run (scale-to-zero) | ~$0.01 |
-| Gemini Flash (`FAST_MODEL`) | ~$0.07 |
-| Gemini Pro (`DEEP_MODEL`) | ~$0.50 |
-| Vertex AI Memory Bank | ~$0.90 |
-| Everything else (Pub/Sub, Scheduler, Logging, BigQuery) | Free tier |
-| **Total** | **≈ $1.50/month** |
+| Service | Monthly cost | Notes |
+|---------|-------------|-------|
+| Ollama (local machine) | $0.00 | Logging, formatting, summarization |
+| Cloud Run (scale-to-zero) | ~$0.01 | 7 services, event-driven only |
+| Gemini Flash (`FAST_MODEL`) | ~$0.10 | Routing, Scout synthesis, fallback |
+| Gemini Pro (`DEEP_MODEL`) | ~$1.00 | Approvals, think node, diagnostics, weekly review |
+| Vertex AI Memory Bank | ~$1.10 | 7-agent boot reads + knowledge writes |
+| Vertex AI Code Execution | ~$0.01 | ~10 evolution task sessions/month |
+| Everything else (Pub/Sub, Scheduler, Logging, BigQuery) | Free tier | Within Google quotas |
+| **Total** | **≈ $2.50/month** | Worst-case, Phase 1–4 load |
+
+> **Budget alert:** Nexus-Prime publishes a Priority-4 `ALERT` if monthly spend exceeds **$5.00**. Set a GCP billing alert at $10/month as a second layer. See `GAOS-Manager-Spec.md §9.4` for full volume assumptions.
+
+> ⚠️ **Graphic to update:** [`Docs/assets/Monthly-Cost-Breakdown.png`](Docs/assets/Monthly-Cost-Breakdown.png) — the pie/bar chart reflects the old $1.50 breakdown. Regenerate with: Flash ~$0.10, Pro ~$1.00, Memory Bank ~$1.10, Code Exec ~$0.01, Run ~$0.01.
 
 <div align="center">
 <img src="Docs/assets/Monthly-Cost-Breakdown.png" alt="Monthly Cost Breakdown" width="75%"/>
