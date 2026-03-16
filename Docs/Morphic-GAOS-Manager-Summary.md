@@ -24,7 +24,7 @@ Think of Morphic-G AOS like a well-run office with a clear chain of command.
 
 **Memory** is layered: fast scratchpad for the current task, recent history in BigQuery for pattern recognition, a staging buffer for candidate learnings, approved long-term facts in Vertex AI Memory Bank, and version-controlled procedure documents in Google Drive. Agents propose new learnings; Nexus-Prime promotes them to permanent memory only after the human owner approves.
 
-**Self-improvement** is built in but gated. When an agent hits a task it cannot do, it writes and tests a Python solution in the Vertex AI sandbox, then submits it for human review. The code is hash-pinned at submission, scanned for dangerous patterns, and checked against a module allowlist before it ever touches production. No agent can deploy its own code unilaterally.
+**Self-improvement** is built in but gated. When an agent hits a task it cannot do, it writes and tests a Python solution (max 5 iterations, 15 min, $0.50 cost cap), then submits it for human review. Before the proposal ever reaches the Approval Queue, the code passes a two-gate AST-based static analysis: the **pattern gate** blocks dangerous call patterns (`os.system`, `subprocess.*`, `pickle.loads`, `eval`, `exec`) and the **import gate** validates every `import` and `from … import` against an explicit allowlist using exact module-boundary matching. No agent can deploy its own code unilaterally.
 
 ---
 
@@ -52,9 +52,9 @@ This is the largest document (over 1,600 lines). It defines the system from top 
 **Resources required:** Google Sheets, Google Drive, Cloud Pub/Sub.
 
 #### Event-Driven Approval Gate
-**What it is:** When an agent needs human sign-off, it writes a proposal row to the `Agent_Approvals` tab, publishes a message to a Pub/Sub topic, and **parks the task** — continuing other work in the meantime. The moment the owner changes the Status cell, an Apps Script trigger fires and the agent is notified instantly.
+**What it is:** When an agent needs human sign-off, it writes a proposal row to the `Agent_Approvals` tab, publishes an **`APPROVAL_REQUEST`** message to Pub/Sub, and **parks the task** — continuing other work in the meantime. The moment the owner changes the Status cell, an Apps Script `onChange` trigger fires, delivering an **`APPROVAL_RESULT`** message via Pub/Sub. Nexus-Prime matches the correlation ID, unparks the task, and execution continues from where it stopped. Proposals that go unanswered are handled by a Cloud Scheduler job that fires a **`TTL_SWEEP`** message to Nexus-Prime once per hour; Nexus-Prime re-notifies the owner and auto-rejects proposals that have exceeded 2× their priority deadline.
 **Why it exists:** A polling approach (the agent repeatedly checking the sheet) wastes API quota, blocks the agent's work queue, and loses its place if the agent restarts. The event-driven model is cheaper, faster, and more resilient.
-**Resources required:** Cloud Pub/Sub, Google Apps Script (`onChange` trigger), Cloud Scheduler (for TTL sweep of unanswered proposals).
+**Resources required:** Cloud Pub/Sub, Google Apps Script (`onChange` trigger), Cloud Scheduler (`TTL_SWEEP` message).
 
 #### Proposal Priority & TTL
 **What it is:** Five priority levels (1 = routine, 5 = critical), each with its own response deadline. A Cloud Scheduler job sweeps hourly and re-notifies the owner when proposals go unanswered, then auto-rejects them at 2× their deadline.
@@ -67,7 +67,7 @@ This is the largest document (over 1,600 lines). It defines the system from top 
 **Resources required:** Ollama (local machine), Google Gemini API, `config/settings.yaml`.
 
 #### A2A Communication Protocol
-**What it is:** A standardized message envelope (`A2AMessage`) with typed fields — source agent, target agent, message type, priority, payload, project ID, correlation ID. All agent-to-agent communication goes through this envelope on Cloud Pub/Sub.
+**What it is:** A standardized message envelope (`A2AMessage`) with typed fields — source agent, target agent, message type, priority, payload, project ID, correlation ID. All agent-to-agent communication goes through this envelope on Cloud Pub/Sub. The `MessageType` enum has 14 values covering the full operational surface: status updates, task routing, data exchange, alerts, escalation, approval flow (`APPROVAL_REQUEST` / `APPROVAL_RESULT`), knowledge promotion, self-evolution, project registry changes, system broadcasts, and the Cloud Scheduler TTL sweep (`TTL_SWEEP`).
 **Why it exists:** Standardization means any agent can be replaced or updated without changing the messaging layer. The `correlation_id` links related messages across a multi-step workflow for audit traceability.
 **Resources required:** Cloud Pub/Sub, Pydantic.
 
@@ -77,9 +77,9 @@ This is the largest document (over 1,600 lines). It defines the system from top 
 **Resources required:** Cloud Pub/Sub, Agent_Approvals Sheet tab.
 
 #### Self-Evolution Protocol (Write-Test-Refine Loop)
-**What it is:** When an agent encounters a task it has no tool for, it writes a Python solution in the Vertex AI sandbox, tests it, and refines it — up to a maximum of 5 iterations, within a 15-minute time budget, and a $0.50 cost cap. If it succeeds, it proposes the new skill for human approval. If it hits a constraint, it escalates to the owner with its partial work.
+**What it is:** When an agent encounters a task it has no tool for, it enters a Write-Test-Refine loop (max 5 iterations, 15-minute TTL, $0.50 cost cap, no-progress detector). Before the result is submitted to the Approval Gate it passes two code safety gates: a **pattern gate** (AST walk for blocked call patterns: `os.system`, `subprocess.*`, `pickle.loads`, `eval`, `exec`, etc.) and an **import gate** (every `import` and `from … import` is checked against the approved module allowlist using exact module-boundary matching, so `import requests` is blocked even though `re` is in the allowlist). Code that fails either gate never reaches the queue — the loop logs a hard stop. The submitted code is then SHA-256 pinned so post-submission edits to the Sheet are detectable at deploy time.
 **Why it exists:** The alternative is a static system that needs a developer every time a new data source or API appears. Self-evolution keeps the system growing without constant manual intervention, while the constraints and approval gate ensure it never goes off the rails.
-**Resources required:** Vertex AI Code Execution, Cloud Pub/Sub, Cloud Storage, Agent_Approvals Sheet tab.
+**Resources required:** `agents/__init__.py` (`validate_code_safety`, `_run_evolution_loop`), Cloud Pub/Sub, Agent_Approvals Sheet tab.
 
 #### Data Retention & Archive Policy
 **What it is:** A nightly Apps Script job that summarizes and archives aged rows from the Sheet to BigQuery, then deletes the raw rows. BigQuery tables have native TTL policies that automatically purge old data. Each data type has a defined "hot" (Sheet), "cold" (BigQuery), and "gone" lifecycle.
@@ -97,7 +97,7 @@ This is the largest document (over 1,600 lines). It defines the system from top 
 **Resources required:** Google Secret Manager, Google Apps Script (protected ranges, `onChange` trigger, `syncSkillsToVertex`), Vertex AI sandbox, Cloud Logging.
 
 #### Development Roadmap (5 Phases)
-**What it is:** A phased build plan — Phase 1 (Sheets connectivity + approval gate wiring), Phase 2 (Ollama observability), Phase 3 (Gemini integration + full approval loop), Phase 4 (full validation with exit criteria), Phase 5 (Grafana CEO dashboard, future).
+**What it is:** A phased build plan. **Phase 1 is complete** — all 7 orchestrators, the `main.py` Cloud Run entry point, the full tool layer (`bigquery`, `webhook_sender`, `memory`, `project_registry`, `google_sheets`, `pubsub`, `secrets`), and a 151-test suite covering U1–U5 unit specs and S1–S4 static analysis gate. Phase 2 (Ollama observability), Phase 3 (Gemini + full approval loop), Phase 4 (full validation, exit criteria), Phase 5 (Grafana CEO dashboard, future).
 **Why it exists:** Building everything at once is how you end up with a broken system that is impossible to debug. Each phase has explicit exit criteria that must all be true before moving to the next.
 **Resources required:** Phases 1–4: Cloud Run, Cloud Pub/Sub, Sheets, Ollama, Gemini. Phase 5 (future): Grafana on Cloud Run, Vertex AI Agent Engine (optional upgrade).
 
@@ -344,7 +344,7 @@ The Tier 4 memory layer. Approved facts, patterns, and business rules that agent
 A Google Identity account used by a software service (not a human). Each agent has its own service account with the minimum GCP permissions it needs. Service account JSON keys are stored in Google Secret Manager.
 
 **Static Analysis**
-A code review performed by the `syncSkillsToVertex` function before any agent-written code is deployed. It blocks code containing dangerous patterns (`os.system`, `subprocess`, `eval`, `exec`, etc.) and rejects any import not on the approved module allowlist.
+A two-gate code review performed by `validate_code_safety()` in `agents/__init__.py` before any agent-written code reaches the Approval Queue. **Gate 1 (pattern gate):** walks the AST to block dangerous call patterns (`os.system`, `subprocess.*`, `pickle.loads`, `eval`, `exec`, `__import__`, etc.). **Gate 2 (import gate):** checks every `import` and `from … import` against the approved module allowlist using exact module-boundary matching (e.g. `import requests` is blocked even though `re` is allowlisted — a substring check would pass it). Code that fails either gate is hard-stopped before it reaches the queue. Separately, `syncSkillsToVertex` (Apps Script) performs a final hash-consistency check at deploy time.
 
 **Steward**
 The Admin & HR domain orchestrator. Manages compliance deadlines, meeting scheduling, onboarding tracking, and document filing.
@@ -383,6 +383,8 @@ See *Evolution Task*.
 | `Docs/agents/foreman.md` | Identity file — Foreman (Operations Agent) | — |
 | `Docs/agents/steward.md` | Identity file — Steward (Admin & HR Agent) | — |
 | `Docs/agents/scout.md` | Identity file — Scout (Research Agent) | — |
+| `main.py` | Cloud Run HTTP entry point — all 7 agents, selected by `AGENT_NAME` env var | — |
+| `tests/` | 151-test suite — U1–U5 unit specs + S1–S4 static analysis gate + tool modules | — |
 
 ---
 
