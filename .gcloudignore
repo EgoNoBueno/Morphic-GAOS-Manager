@@ -1,0 +1,70 @@
+# .gcloudignore — controls what Cloud Build receives when running:
+#   gcloud run deploy --source .
+#
+# This file intentionally does NOT exclude config/settings.yaml (unlike .gitignore),
+# because the agents need it at runtime inside the container.
+#
+# SECURITY: config/keys/ and oauth-client.json are always excluded — they must
+# never enter a Docker image.
+
+# Environment & secrets
+.env
+*.env
+.env.*
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# uv
+.uv/
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Credentials & keys — NEVER in the image
+oauth-client.json
+config/keys/
+
+# Private task agents (not committed; excluded for safety)
+agents/*/tasks/
+
+# Test & lint artefacts (not needed at runtime)
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+.ruff_cache/
+.mypy_cache/
+PENDING_REPAIRS/
+ACTIVE_SKILLS/
+SKILLS_LOG.md
+*.log
+.ipynb_checkpoints/
+
+# Git history
+.git/
