@@ -69,7 +69,12 @@ Agents collaborate across departments through defined policies. Examples:
 ## Key Capabilities
 
 ### Self-Evolution (Human-Gated)
-When an agent encounters a task it has no tool for, it writes and tests a Python solution in the Vertex AI sandbox (max 5 iterations, 15 min, $0.50 cost cap), then submits the code for human approval. The code is **SHA-256 pinned at submission**, scanned against a blocklist, and checked against a module allowlist before it ever touches production. No agent can deploy its own code unilaterally.
+When an agent encounters a task it has no tool for, it writes and tests a Python solution (max 5 iterations, 15 min, $0.50 cost cap), then submits the code for human approval. The code is **SHA-256 pinned at submission** and passes a two-gate static analysis before it ever reaches the Approval Queue:
+
+1. **Pattern gate** — blocks `os.system`, `subprocess.*`, `pickle.loads`, `eval`, `exec`, and similar dangerous call patterns by walking the AST.
+2. **Import gate** — validates every `import` and `from … import` against an explicit allowlist using **exact module-boundary matching** (e.g. `import requests` is blocked even though `re` is allowlisted — a substring match would pass it through). Only `stdlib`, `google.*`, `gspread`, `pydantic`, `langgraph`, `config`, `models`, `tools`, and `agents` are permitted.
+
+No agent can deploy its own code unilaterally. Code that fails either gate never reaches the Approval Queue — the evolution loop is hard-stopped and the result logged.
 
 ### Layered Memory
 | Layer | Where | Lifetime |
@@ -99,6 +104,12 @@ All model references in code are aliases from `settings.yaml`. To upgrade to a n
 
 ### Event-Driven Approval Queue
 Proposals to the `Agent_Approvals` Sheet tab trigger a Pub/Sub event the instant the owner changes the status cell. No polling, no lost messages on restart, no blocking the agent's work queue while it waits.
+
+The gate uses two distinct message types:
+- **`APPROVAL_REQUEST`** — agent → Nexus-Prime: *"I need a human decision on this."*
+- **`APPROVAL_RESULT`** — Apps Script → Nexus-Prime (via Pub/Sub): *"The owner clicked Approved/Rejected."*
+
+Proposals that go unanswered are handled by a Cloud Scheduler job that fires an **`TTL_SWEEP`** message to Nexus-Prime once per hour. Nexus-Prime re-notifies the owner and auto-rejects proposals that have exceeded 2× their priority deadline — so the queue never silently fills with stale requests.
 
 <div align="center">
 <img src="Docs/assets/Approval-%20Gate.png" alt="Approval Gate Flow" width="80%"/>
@@ -132,6 +143,8 @@ A single deployment can manage multiple business units or client accounts. Each 
        │                                │
   Google Sheets · BigQuery · Vertex AI Memory Bank · Google Drive
 ```
+
+**Entry point:** A single `main.py` (FastAPI) is deployed to all 7 Cloud Run services. The `AGENT_NAME` environment variable selects which orchestrator handles requests. Services run with `workers=1` — LangGraph state is never shared across processes. Endpoints: `POST /pubsub`, `POST /ttl-sweep`, `POST /sync`, `GET /health`. All POST endpoints are deployed `--no-allow-unauthenticated`; OIDC token verification is defense-in-depth.
 
 **Infrastructure:** Cloud Run (scale-to-zero) · Cloud Pub/Sub · Secret Manager · BigQuery · Vertex AI · Cloud Scheduler · Google Apps Script
 
@@ -300,7 +313,7 @@ If an agent hits a problem it cannot self-resolve — and its Write-Test-Refine 
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| **Phase 1** | Sheets connectivity, approval gate wiring, local subscriber | In progress |
+| **Phase 1** | All 7 orchestrators, `main.py` Cloud Run entry point, full tool layer, 151-test suite | **Complete** |
 | **Phase 2** | Ollama observability, weekly summarization job | Spec complete |
 | **Phase 3** | Gemini integration, full approval loop end-to-end | Spec complete |
 | **Phase 4** | Full validation, exit criteria, cost verification | Spec complete |
