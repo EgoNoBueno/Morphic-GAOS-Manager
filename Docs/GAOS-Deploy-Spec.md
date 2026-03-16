@@ -214,7 +214,7 @@ gcloud projects add-iam-policy-binding $PROJECT \
 No JSON key files are needed. Service account identity is supplied at runtime:
 
 - **Local development:** `gcloud auth application-default login` (see §0.4) provides ADC credentials. The tool layer calls `google.auth.default()` which picks these up automatically.
-- **Cloud Run (Phase 3):** Each Cloud Run service is deployed with `--service-account=<agent>-sa@${PROJECT}.iam.gserviceaccount.com`. The GCE metadata server provides credentials — no key file required.
+- **Cloud Run:** Each Cloud Run service is deployed with `--service-account=<agent>-sa@${PROJECT}.iam.gserviceaccount.com`. The GCE metadata server provides credentials — no key file required.
 
 **Verification:** `gcloud iam service-accounts list` — 8 service accounts listed.
 
@@ -384,7 +384,7 @@ python scripts/setup_apps_script.py --post-auth
 trigger, and runs `setupProtections` — all via the Apps Script API.
 
 > **Note:** `VERTEX_AGENT_ENDPOINT` is stored as an empty string placeholder.
-> Update it after Cloud Run deploy in §8:
+> Update it after Cloud Run deploy in §9.2:
 > Apps Script → Project Settings → Script Properties → `VERTEX_AGENT_ENDPOINT`
 
 ### 4.5 Run Protection Setup
@@ -412,7 +412,7 @@ Add Trigger → Function: `onChangeApproval` | Event type: On change.
 Handled automatically by Phase 1. The Web App URL is stored in Secret Manager
 as `WEBHOOK_URL` and in `config/settings.yaml` under `apps_script.webhook_url`.
 
-**Verification (Sheet):
+**Verification (Sheet):**
 - Manually change a `Status` cell in `Agent_Approvals` to `Approved` — an entry should appear in the `Logs` tab (from `logApprovalEvent_`).
 - Change a cell without being in the `Authorized Approvers` tab — the cell should revert to `Pending` and a `NOT_IN_APPROVERS_LIST` entry should appear.
 
@@ -733,6 +733,7 @@ COMPUTE_SA="${PROJECT_NUM}-compute@developer.gserviceaccount.com"
 
 # Enable required APIs
 gcloud services enable \
+  cloudbuild.googleapis.com \
   artifactregistry.googleapis.com \
   storage.googleapis.com \
   storage-component.googleapis.com \
@@ -893,7 +894,7 @@ gcloud scheduler jobs create http nightly-archive \
   --project=morphic-gaos-prod
 ```
 
-**Verification:** In Cloud Scheduler console, both jobs appear with state `ENABLED`. Run each manually by clicking **Force run** — `ttl-sweep` should return HTTP 200; `nightly-archive` will return 404 until the archive endpoint is implemented in Phase 3.
+**Verification:** In Cloud Scheduler console, both jobs appear with state `ENABLED`. Run each manually by clicking **Force run** — `ttl-sweep` should return HTTP 200; `nightly-archive` will return 404 until the `/archive` endpoint is implemented in the Nexus-Prime orchestrator.
 
 ---
 
@@ -973,8 +974,11 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [ ] Authorized Approvers tab has at least one row (owner, tier 5, active=TRUE)
 - [ ] `settings.yaml` is complete with correct `workbook_id`, `knowledge_folder_id`, and model aliases
 - [ ] `WEBHOOK_URL` secret is populated in Secret Manager
-- [ ] BigQuery dataset and 4 tables created with TTL partitioning
+- [ ] BigQuery dataset and 5 tables created with TTL partitioning
 - [ ] All Knowledge/ seed files created in Drive
+- [ ] All 7 Cloud Run services deployed and returning `{"status":"ok"}` on `/health`
+- [ ] All 22 Pub/Sub push subscriptions created with OIDC auth (`pubsub-push-sa`)
+- [ ] Vertex AI RAG corpora created — all 7 `memory_bank.corpora` entries in `settings.yaml` are non-empty
 - [ ] Cloud Logging retention reduced to 7 days
 
 ---
