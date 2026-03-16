@@ -34,7 +34,7 @@ Think of Morphic-G AOS like a well-run office with a clear chain of command.
 
 *The authoritative source for how the entire system is designed, why every decision was made, and what the full implementation looks like.*
 
-This is the largest document (over 1,600 lines). It defines the system from top to bottom. Every other spec file links back to it.
+This is the largest document (over 1,690 lines). It defines the system from top to bottom. Every other spec file links back to it.
 
 #### Agent Hierarchy
 **What it is:** A three-tier structure — Nexus-Prime at the top, six domain orchestrators in the middle, unlimited task agents at the bottom.
@@ -213,7 +213,91 @@ This document defines the public interface for six tool modules. The design enfo
 
 ---
 
-### 5. Agent Identity Files (`Docs/agents/`)
+### 5. `GAOS-Deploy-Spec.md` — Infrastructure Provisioning Guide
+
+*Step-by-step instructions for standing up every GCP and Google Workspace resource the system requires.*
+
+This is the operational counterpart to the master blueprint. Where `GAOS-Manager-Spec.md` defines what the system does, this document explains how to build the environment it runs in. Each section ends with a verification step — the guide explicitly says not to proceed until the previous step passes.
+
+**Coverage:** GCP project configuration, service account creation, IAM assignments, Secret Manager setup, Cloud Pub/Sub topic and subscription provisioning, Cloud Run service deployment, Apps Script deployment and `onChange` trigger wiring, BigQuery dataset creation, and Cloud Scheduler job setup. Includes a Phase 1 pre-deployment checklist and the full HMAC test matrix (8 tests) for webhook security validation.
+
+**Resources required:** Every GCP service in the system; Google Cloud CLI (`gcloud`); GitHub CLI for CI/CD setup.
+
+---
+
+### 6. `GAOS-Nexus-Prime-Spec.md` — Nexus-Prime Construction Specification
+
+*Engineering construction requirements for the Tier 1 root orchestrator — the general manager of the entire AOS.*
+
+This is the construction counterpart to the behavioral description in `GAOS-Manager-Spec.md §1`. It defines everything specific to Nexus-Prime that is not covered by the universal requirements in `GAOS-Agent-Spec.md`.
+
+**Key extensions beyond the standard agent spec:**
+- Subscribes to **all 7 domain topics** plus `agent.approvals.events` — the only agent with full-system visibility.
+- Owns the complete **Approval Gate lifecycle**: receives `APPROVAL_REQUEST` messages, writes proposal rows to the `Agent_Approvals` tab, matches `APPROVAL_RESULT` callbacks by correlation ID, and unparks the waiting orchestrator.
+- Handles **project namespace initialization**: when a new row appears in the Project Registry with status `Active`, Nexus-Prime creates the Sheet tabs, Drive folder, and Pub/Sub topics for the new project.
+- Owns the `/sync` endpoint on the Cloud Run service — the Apps Script `syncSkillsToVertex` calls this endpoint to promote an approved skill to Vertex AI after the owner's approval.
+- Defines the **cross-domain conflict resolution** policy: when two orchestrators publish contradictory states (e.g., Pursuit quotes a product Foreman has suspended), Nexus-Prime is the arbitrator.
+
+**Resources required:** Google ADK, LangGraph, all 8 Pub/Sub topics, Google Sheets (all tabs), Vertex AI Memory Bank (write access), Google Drive (write access via Nexus-Prime service account).
+
+---
+
+### 7. `GAOS-Onboarding-Spec.md` — Onboarding Guide
+
+*Two-part guide: first-time deployer setup and ongoing end-user onboarding via Steward.*
+
+**Part 1 — Deployer Onboarding (§1–§4):** A human-facing setup guide that wraps `GAOS-Deploy-Spec.md`. It walks a new operator through the complete service sign-up sequence (Google account, GCP project, GitHub, Gemini API, Vertex AI, Ollama), then hands off to an interactive onboarding script (`tools/onboarding.py`) that automates the `GAOS-Deploy-Spec.md` steps wherever possible and validates the results. Includes a readiness checklist the operator must clear before the system is considered live.
+
+**Part 2 — End-User Onboarding (§5):** The operational workflow Steward runs when a new employee or stakeholder is added to a running AOS instance. Covers Sheet access provisioning, RBAC tier assignment (writing the new approver row to the `Authorized Approvers` tab), and the orientation message sequence Steward sends to the new user.
+
+**Why it exists as a separate document:** The Deploy Spec is a low-level technical reference. This guide is written for the operator — it provides context, explains why each step matters, and handles the inevitable "what if this goes wrong" scenarios that a pure reference doc does not cover.
+
+---
+
+### 8. `GAOS-Persona-Spec.md` — The Strategic Architect
+
+*Defines the AOS behavioral identity, internal monologue architecture, and tone standard that every agent inherits.*
+
+Every agent in the hierarchy inherits the **Strategic Architect** soul when formulating any user-visible output. The persona is not cosmetic — it drives specific decision branches in the LangGraph state machine.
+
+**Three behavioral archetypes:**
+| Archetype | Source | Decision rule |
+|-----------|--------|--------------|
+| **The Huang Effect** | Relentless efficiency | If a faster or cleaner alternative exists (`efficiency_score < 0.60`), surface it before complying. Never silently execute a slow path. |
+| **The Nadella Mindset** | "Learn-it-all" over "know-it-all" | When a knowledge gap or API failure is detected, announce research in progress and provide the best available partial result. Never say "I can't." |
+| **The Nassetta Touch** | Anticipatory service | Look exactly two steps ahead. Every output should proactively surface the next likely need, formatted for the user's actual workflow tool. |
+
+**The `think` node (§4):** A mandatory pre-response reasoning step inserted before any node that produces user-visible output. Uses `DEEP_MODEL` to classify the request into one of four response modes — **Direct**, **Reframe**, **Research**, or **Tactical** — before generating any reply. The monologue is stored in Working Memory and logged to BigQuery, making it auditable and improvable.
+
+**Weekly Review Loop (§5):** A regularly scheduled Nexus-Prime task that reads from the Observation Buffer, surfaces recurring patterns in agent behavior, and proposes system-level improvements through the standard Approval Gate.
+
+---
+
+### 9. `GAOS-Privacy-Spec.md` — Privacy & Data Sovereignty
+
+*Frank assessment of what data the AOS stores and transmits, and a menu of mitigations with explicit effort/compliance labels.*
+
+**Not a compliance certification** — an honest risk map. Each mitigation is labeled **Optional Enhancement**, **Recommended**, or **Required for Compliance** so the operator can choose the right level for their use case.
+
+**Core distinction:** data *at rest* in GCP (owned by the operator's project, encrypted by default, never leaves GCP unless explicitly exported) versus data *processed* by external LLMs (sent to Google's inference infrastructure, subject to Google's data retention and use policies). These are different risks with different mitigations.
+
+**Coverage:** encryption at rest and in transit, Vertex AI data residency options, VPC Service Controls for API boundary enforcement, minimizing LLM data exposure (prompt scrubbing, synthetic test data), the privacy trade-offs of the local Ollama model vs. Gemini API, and a section on what happens to data if the operator stops using the service.
+
+---
+
+### 10. `GAOS-Skill-Compliance-Spec.md` — External Skill Review Process
+
+*Mandatory review checklist for any externally sourced Python module before it is integrated into the AOS environment.*
+
+A "skill" in this context is any tool module (`tools/`), agent class, or supporting utility that was written outside this repository and is being considered for integration. This document defines what must be verified before that code is allowed to run inside the system.
+
+**Relationship to the static analysis gate:** `GAOS-Manager-Spec.md §15.4` defines the automated AST-based gates that run at evolution time. This document covers the human-led review that happens *before* the automated gates — the questions a reviewer must answer that no static analysis tool can answer automatically (intent, data scope, behavior under failure).
+
+**Review checklist covers:** module purpose and scope declaration; import inventory against the approved allowlist; absence of side effects at import time; behavior under partial failure; test coverage requirements; and the Approval Gate submission format used to promote a passing skill into the active tool layer.
+
+---
+
+### 11. Agent Identity Files (`Docs/agents/`)
 
 *One Markdown file per domain orchestrator. This file is loaded verbatim as the agent's system prompt at the start of every session — it is who the agent thinks it is.*
 
@@ -373,10 +457,17 @@ See *Evolution Task*.
 
 | File | Purpose | Length |
 |------|---------|--------|
-| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,666 lines |
-| `Docs/GAOS-Agent-Spec.md` | Engineering construction requirements for every agent tier | ~394 lines |
-| `Docs/GAOS-Memory-Spec.md` | Full memory architecture, five layers, self-learning loop | — |
-| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory) | — |
+| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,691 lines |
+| `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~998 lines |
+| `Docs/GAOS-Nexus-Prime-Spec.md` | Engineering construction requirements for the Tier 1 root orchestrator | ~945 lines |
+| `Docs/GAOS-Onboarding-Spec.md` | Deployer first-run guide + end-user onboarding via Steward | ~827 lines |
+| `Docs/GAOS-Memory-Spec.md` | Full memory architecture, five layers, self-learning loop | ~841 lines |
+| `Docs/GAOS-Agent-Spec.md` | Engineering construction requirements for every agent tier | ~402 lines |
+| `Docs/GAOS-Skill-Compliance-Spec.md` | External skill review process before AOS integration | ~419 lines |
+| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory) | ~659 lines |
+| `Docs/GAOS-Persona-Spec.md` | AOS soul ("The Strategic Architect"), `think` node spec, tone standard | ~360 lines |
+| `Docs/GAOS-Privacy-Spec.md` | Cloud data exposure, privacy risk analysis, and mitigation strategies | ~367 lines |
+| `Docs/agents/nexus-prime.md` | Identity file — Nexus-Prime (Root Orchestrator / General Manager) | — |
 | `Docs/agents/ledger.md` | Identity file — Ledger (Accounting Agent) | — |
 | `Docs/agents/beacon.md` | Identity file — Beacon (Marketing Agent) | — |
 | `Docs/agents/pursuit.md` | Identity file — Pursuit (Sales Agent) | — |

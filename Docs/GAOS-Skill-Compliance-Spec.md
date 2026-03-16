@@ -341,7 +341,7 @@ Before deploying to Cloud Run, verify the boot sequence locally:
 ```powershell
 # Start with STARTUP_ONLY=true to exercise steps 1-6 without entering the event loop
 $env:STARTUP_ONLY = "true"
-python -c "from src.agents.tier2.<name>.agent import <AgentClass>; agent = <AgentClass>(); agent.boot()"
+python -c "from agents.<name>.orchestrator import <AgentClass>; agent = <AgentClass>(); agent.boot()"
 ```
 
 Expected: No exceptions; an IDLE heartbeat row appears in the Sheet within 60 seconds.
@@ -382,7 +382,7 @@ Once all required gates are cleared, submit the integration as a **Priority-3 pr
    - `review_summary`: Link to or inline copy of the Gate 1–6 findings table
    - `risk_level`: `low` (Type D), `medium` (Type A/B), `high` (Type C)
 2. Attach the diff of changed files in the proposal row (or link to the PR).
-3. Publish a `TASK_HANDOFF` to `<project_id>/agent/approvals/events`.
+3. Publish an `APPROVAL_REQUEST` to `agent/approvals/events` targeting `nexus-prime`.
 4. Do not merge until the `Agent_Approvals` row status is `Approved`.
 
 ---
@@ -417,3 +417,6 @@ After the proposal is approved and the skill is merged, the following must be co
 | Secrets management | `GAOS-Manager-Spec.md §15.1` |
 | Write-Test-Refine loop constraints | `GAOS-Manager-Spec.md §13.1` |
 | Infrastructure provisioning | `GAOS-Deploy-Spec.md` |
+| Nexus-Prime construction requirements | `GAOS-Nexus-Prime-Spec.md` |
+| Agent behavioral identity + `think` node spec | `GAOS-Persona-Spec.md` |
+| Deployer and end-user onboarding | `GAOS-Onboarding-Spec.md` |

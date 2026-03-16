@@ -160,9 +160,11 @@ Each orchestrator owns one outbound topic and must subscribe to Nexus-Prime's br
 
 | Resource | Pattern |
 |----------|---------|
-| Outbound topic | `<project_id>/agent/<name>/events` |
-| Subscription to Nexus-Prime | `<project_id>/agent/nexus-prime/events` |
+| Outbound topic | `agent/<name>/events` |
+| Subscription to Nexus-Prime | `agent/nexus-prime/events` |
 | Cross-domain subscriptions | As defined in `GAOS-Manager-Spec.md` §10.1 |
+
+> **Topic naming note:** The display form uses `/` as the separator (e.g. `agent/beacon/events`). GCP Pub/Sub topic names cannot contain `/`, so `tools/pubsub.py` replaces slashes with dots when building the resource path (e.g. `agent.beacon.events`). The GAOS business `project_id` (e.g. `acme-retail`) is *not* part of the topic name — it travels inside `A2AMessage.project_id`. The GCP project that owns the topic is resolved from `settings.GCP_PROJECT_ID` at publish time.
 
 All published messages must use the `A2AMessage` schema from `GAOS-Manager-Spec.md` §10.2, including `project_id`.
 
@@ -188,9 +190,9 @@ When an orchestrator identifies a task requiring human approval:
 
 1. Build a complete proposal row (fields defined in `GAOS-Manager-Spec.md` §14, including `code_sha256` if code is attached).
 2. Write the row to `Agent_Approvals` via `tools/google_sheets.py`.
-3. Publish a `TASK_HANDOFF` (`message_type`) to `<project_id>/agent/approvals/events`.
+3. Publish an `APPROVAL_REQUEST` (`message_type`) to `agent/approvals/events` targeting `nexus-prime`.
 4. Call `park_task(task_id)` on the LangGraph state — do not wait.
-5. On receiving the Pub/Sub resume event, call `resume_task(task_id)` and continue.
+5. On receiving the Pub/Sub resume event (`APPROVAL_RESULT`), call `resume_task(task_id)` and continue.
 
 No orchestrator may bypass the Approval Gate for Priority-3, 4, or 5 proposals.
 
@@ -279,11 +281,11 @@ Sub-agents receive `project_id` from the orchestrator's `AgentInput`. They must 
 | Agent Python class | `PascalCase` | `InvoiceParser`, `BeaconAgent` |
 | Agent `name` field | `snake_case` | `invoice_parser`, `beacon` |
 | Identity file | `kebab-case.md` (but name matches `Agent.name`) | `invoice-parser.md`, `beacon.md` |
-| Pub/Sub topic | `<project_id>/agent/<snake_name>/events` | `acme/agent/beacon/events` |
+| Pub/Sub topic | `agent/<snake_name>/events` (display); `agent.<snake_name>.events` (GCP name) | `agent/beacon/events` |
 | LangGraph graph variable | `<name>_graph` | `beacon_graph` |
 | Pydantic schemas | `<ClassName>Input`, `<ClassName>Output` | `BeaconInput`, `BeaconOutput` |
-| File location — Tier 2 | `src/agents/tier2/<name>/agent.py` | `src/agents/tier2/beacon/agent.py` |
-| File location — Tier 3 | `src/agents/tier3/<name>/agent.py` | `src/agents/tier3/invoice_parser/agent.py` |
+| File location — Tier 2 | `agents/<name>/orchestrator.py` | `agents/beacon/orchestrator.py` |
+| File location — Tier 3 | `agents/<name>/tasks/<task_name>.py` | `agents/ledger/tasks/invoice_parser.py` |
 
 ---
 
@@ -399,4 +401,7 @@ Any agent that autonomously writes Python (Write-Test-Refine loop) must demonstr
 | Cost estimates | `GAOS-Manager-Spec.md` §9.4 |
 | Data retention + BigQuery archive | `GAOS-Manager-Spec.md` §9.5 |
 | Multi-project namespace (`project_id`) | `GAOS-Manager-Spec.md` §2 (Project Registry) |
+| Nexus-Prime construction requirements | `GAOS-Nexus-Prime-Spec.md` |
+| Agent behavioral identity + `think` node spec | `GAOS-Persona-Spec.md` |
+| Infrastructure provisioning | `GAOS-Deploy-Spec.md` |
 | Importing external skills — review process | `GAOS-Skill-Compliance-Spec.md` |
