@@ -34,7 +34,7 @@ The project is in active spec-and-build mode. High-value contributions right now
 |------|---------|
 | **Bug fixes** in spec documents | Incorrect API signatures, wrong IAM role names, contradictions between spec files |
 | **Real-world corrections** | Gotchas discovered during implementation (like the four added in `edcbb42`) |
-| **Phase 1 implementation** | `tools/google_sheets.py`, `tools/secrets.py`, `tools/pubsub.py` per the Tools Spec |
+| **Phase 1 implementation** | `agents/*/orchestrator.py` stubs per `GAOS-Agent-Spec.md`; `tests/` integration coverage for tools |
 | **Test coverage** | Unit and integration tests from the checklists in `GAOS-Agent-Spec.md §9` |
 | **Identity file improvements** | Clarifying agent guardrails, adding concrete examples to Knowledge Sources |
 
@@ -100,20 +100,23 @@ Morphic-GAOS-Manager/
 ├── .gitignore
 ├── config/
 │   └── settings.yaml          # The only place model aliases and project IDs live
-├── tools/                     # Shared tool modules (Phase 1 build target)
+├── tools/                     # Shared tool modules (complete)
 │   ├── secrets.py
 │   ├── google_sheets.py
 │   ├── pubsub.py
 │   ├── drive.py
 │   ├── webhook_sender.py
 │   └── project_registry.py
-├── src/
-│   └── agents/
-│       ├── tier1/nexus-prime/ # Root orchestrator
-│       └── tier2/             # Domain orchestrators (ledger, beacon, etc.)
+├── agents/
+│   ├── nexus_prime/           # Root orchestrator (stub)
+│   └── ledger|beacon|...      # Domain orchestrators (stubs)
+│       ├── orchestrator.py    # Tracked — generic LangGraph wiring
+│       └── tasks/             # Gitignored — your business-specific task agents
+├── scripts/
+│   ├── setup_workspace.py     # Automates Drive + Sheet provisioning
+│   └── setup_apps_script.py   # Automates Apps Script deploy
+├── apps_script/               # .gs source files (uploaded by setup_apps_script.py)
 ├── tests/
-│   ├── unit/
-│   └── integration/
 └── Docs/
     ├── GAOS-Manager-Spec.md   # Master blueprint — read this first
     ├── GAOS-Agent-Spec.md     # Agent construction requirements

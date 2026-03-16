@@ -167,13 +167,20 @@ uv pip install google-cloud-secret-manager google-cloud-pubsub gspread pydantic 
 ### 2. Set up Application Default Credentials
 
 ```powershell
-# Create an OAuth Desktop Client ID in YOUR GCP project at:
-# console.cloud.google.com/apis/credentials → Create Credentials → OAuth client ID
-# Save the downloaded JSON as oauth-client.json
+# Step 1: Configure OAuth Consent Screen in your GCP project:
+# console.cloud.google.com → APIs & Services → OAuth consent screen
+# User type: External → App name: morphic-g-aos → add yourself as a Test User
 
-gcloud auth application-default login `
-  --client-id-file=oauth-client.json `
-  --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive.file,https://www.googleapis.com/auth/cloud-platform"
+# Step 2: Create an OAuth Desktop Client ID:
+# APIs & Services → Credentials → + Create Credentials → OAuth client ID
+# Application type: Desktop app → Download JSON → save as oauth-client.json
+
+# Step 3: Log in (do NOT use --no-browser — Desktop clients require redirect_uri
+# which only the browser flow provides; --no-browser returns Error 400)
+gcloud auth application-default login --client-id-file=oauth-client.json --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive.file,https://www.googleapis.com/auth/cloud-platform"
+
+# Step 4: Set the quota project (login drops this field every time)
+gcloud auth application-default set-quota-project morphic-gaos-prod
 ```
 
 > **Important:** Do not set `GOOGLE_APPLICATION_CREDENTIALS`. If it exists in your environment (even pointing at a missing file), `google-auth` silently bypasses ADC. Also note: the default gcloud client ID **blocks** the `spreadsheets` scope — you must use your own OAuth Desktop client.
@@ -182,15 +189,15 @@ gcloud auth application-default login `
 
 ### 3. GCP Project Setup
 
-```bash
+```powershell
 gcloud projects create morphic-gaos-prod --name="Morphic GAOS"
 gcloud config set project morphic-gaos-prod
+gcloud billing projects link morphic-gaos-prod --billing-account=<BILLING_ACCOUNT_ID>
 
-gcloud services enable sheets.googleapis.com drive.googleapis.com \
-  pubsub.googleapis.com secretmanager.googleapis.com run.googleapis.com \
-  cloudscheduler.googleapis.com bigquery.googleapis.com logging.googleapis.com \
-  aiplatform.googleapis.com cloudresourcemanager.googleapis.com
+gcloud services enable sheets.googleapis.com drive.googleapis.com pubsub.googleapis.com secretmanager.googleapis.com run.googleapis.com cloudscheduler.googleapis.com bigquery.googleapis.com logging.googleapis.com monitoring.googleapis.com aiplatform.googleapis.com cloudresourcemanager.googleapis.com generativelanguage.googleapis.com
 ```
+
+> **Note:** `generativelanguage.googleapis.com` must be enabled in the same project where you create your `GEMINI_API_KEY`. Creating the key in a different project and enabling the API here separately will result in `403 API key expired` errors.
 
 ### 4. Configure `settings.yaml`
 
@@ -210,14 +217,22 @@ models:
 
 ### 5. Provision remaining infrastructure
 
-Follow [`Docs/GAOS-Deploy-Spec.md`](Docs/GAOS-Deploy-Spec.md) for:
-- Service accounts + IAM (one per agent, least-privilege)
-- Secret Manager population
-- Google Sheets workbook + Apps Script + approval triggers
-- Cloud Pub/Sub topics and subscriptions
-- BigQuery tables with TTL partitioning
-- Google Drive `Knowledge/` folder and seed files
-- Cloud Run deploy + Cloud Scheduler jobs
+Most of Phase 1 infrastructure is automated. Run these in order:
+
+```powershell
+# Creates Drive folder, spreadsheet (14 tabs + headers), Knowledge/ subfolders,
+# shares all service accounts — prints IDs to copy into settings.yaml
+python scripts/setup_workspace.py
+
+# Creates bound Apps Script project, uploads all .gs files, deploys as Web App,
+# stores WEBHOOK_URL in Secret Manager (one browser consent click required)
+python scripts/setup_apps_script.py
+python scripts/setup_apps_script.py --post-auth   # run after browser consent
+```
+
+For anything the scripts don't cover (Vertex AI corpora, Cloud Run deploy, Cloud Scheduler jobs), follow [`Docs/GAOS-Deploy-Spec.md`](Docs/GAOS-Deploy-Spec.md).
+
+> **SA keys:** Do not create service account key files. Cloud Run attaches service account identity directly at deploy time. Local dev uses ADC (Step 2 above). See `GAOS-Deploy-Spec.md §2.3`.
 
 ---
 
@@ -285,7 +300,7 @@ If an agent hits a problem it cannot self-resolve — and its Write-Test-Refine 
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| **Phase 1** | Sheets connectivity, approval gate wiring, local subscriber | Spec complete |
+| **Phase 1** | Sheets connectivity, approval gate wiring, local subscriber | In progress |
 | **Phase 2** | Ollama observability, weekly summarization job | Spec complete |
 | **Phase 3** | Gemini integration, full approval loop end-to-end | Spec complete |
 | **Phase 4** | Full validation, exit criteria, cost verification | Spec complete |
