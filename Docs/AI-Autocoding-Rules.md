@@ -148,7 +148,7 @@ New entries go at the **top** of WORKLOG.md (most recent first).
 
 | Completed work | Documents to update |
 |----------------|-------------------|
-| New tool or helper function | `GAOS-Tools-Spec.md`, `GAOS-Manager-Spec.md` (if referenced), `Development-Rules.md` (if a new rule applies) |
+| New tool or helper function | `GAOS-Tools-Spec.md`, `GAOS-Manager-Spec.md` (if referenced), `AI-Autocoding-Rules.md` (if a new rule applies) |
 | New agent behavior or boot change | `GAOS-Agent-Spec.md`, the relevant `Docs/agents/<name>.md` identity file |
 | Infrastructure change (GCP, Pub/Sub, Sheets, etc.) | `GAOS-Deploy-Spec.md` — update the step it affects and the verification command |
 | Phase task completed | `GAOS-Deploy-Spec.md` phase exit checklist — check the item off |
