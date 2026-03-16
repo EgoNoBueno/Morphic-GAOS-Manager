@@ -29,11 +29,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import subprocess
 import sys
 import time
 import webbrowser
 from pathlib import Path
+
+# On Windows, gcloud is gcloud.cmd — use shell=True so the OS resolves it.
+_SHELL = platform.system() == "Windows"
 
 import google.auth
 import yaml
@@ -82,10 +86,8 @@ def get_credentials():
 
 
 def enable_api(api: str) -> None:
-    result = subprocess.run(
-        ["gcloud", "services", "enable", api, "--project", PROJECT],
-        capture_output=True, text=True
-    )
+    cmd = ["gcloud", "services", "enable", api, "--project", PROJECT]
+    result = subprocess.run(cmd, capture_output=True, text=True, shell=_SHELL)
     if result.returncode != 0:
         print(f"  Warning enabling {api}: {result.stderr.strip()}")
     else:
@@ -93,17 +95,18 @@ def enable_api(api: str) -> None:
 
 
 def get_script_id_for_spreadsheet(script_service, spreadsheet_id: str) -> str | None:
-    """Return the script ID if a bound project already exists."""
+    """Return the script ID stored in settings.yaml from a prior run, if valid."""
+    with open(SETTINGS_PATH) as f:
+        settings = yaml.safe_load(f)
+    script_id = settings.get("apps_script", {}).get("script_id")
+    if not script_id:
+        return None
+    # Verify it's still accessible
     try:
-        resp = script_service.projects().list(
-            scriptId=spreadsheet_id
-        ).execute()
-        projects = resp.get("projects", [])
-        if projects:
-            return projects[0]["scriptId"]
+        script_service.projects().get(scriptId=script_id).execute()
+        return script_id
     except HttpError:
-        pass
-    return None
+        return None
 
 
 def create_bound_project(script_service, spreadsheet_id: str, title: str) -> str:
@@ -155,9 +158,16 @@ def build_script_content() -> dict:
 
 
 def deploy_web_app(script_service, script_id: str) -> tuple[str, str]:
-    """Create a HEAD deployment and return (deployment_id, web_app_url)."""
+    """Create a versioned deployment and return (deployment_id, web_app_url)."""
+    # The deployments API requires a non-zero version — create one first.
+    version_resp = script_service.projects().versions().create(
+        scriptId=script_id,
+        body={"description": "v1 — initial deploy"}
+    ).execute()
+    version_number = version_resp["versionNumber"]
+
     body = {
-        "versionNumber": 0,  # HEAD
+        "versionNumber": version_number,
         "manifestFileName": "appsscript",
         "description": "Morphic-G AOS webhook + approval handler",
     }
@@ -181,19 +191,19 @@ def store_secret(name: str, value: str) -> None:
         result = subprocess.run(
             ["gcloud", "secrets", "versions", "add", name,
              "--data-file", str(tmp), "--project", PROJECT],
-            capture_output=True, text=True
+            capture_output=True, text=True, shell=_SHELL
         )
         if result.returncode != 0:
             # Secret may not exist yet — create it first
             subprocess.run(
                 ["gcloud", "secrets", "create", name,
                  "--project", PROJECT, "--replication-policy", "automatic"],
-                capture_output=True, text=True
+                capture_output=True, text=True, shell=_SHELL
             )
             subprocess.run(
                 ["gcloud", "secrets", "versions", "add", name,
                  "--data-file", str(tmp), "--project", PROJECT],
-                check=True, capture_output=True, text=True
+                check=True, capture_output=True, text=True, shell=_SHELL
             )
         print(f"  Secret {name}: stored")
     finally:
@@ -289,7 +299,7 @@ def phase2() -> None:
     result = subprocess.run(
         ["gcloud", "secrets", "versions", "access", "latest",
          "--secret", "WEBHOOK_HMAC_SECRET", "--project", PROJECT],
-        capture_output=True, text=True
+        capture_output=True, text=True, shell=_SHELL
     )
     if result.returncode != 0:
         sys.exit("Could not read WEBHOOK_HMAC_SECRET from Secret Manager")
@@ -304,7 +314,7 @@ def phase2() -> None:
     print("Setting Script Properties via Apps Script API...")
     props = {
         "WEBHOOK_HMAC_SECRET": hmac_secret,
-        "VERTEX_AGENT_ENDPOINT": "",   # filled after Cloud Run deploy in §8
+        "VERTEX_AGENT_ENDPOINT": "https://placeholder.invalid/sync",  # update after Cloud Run deploy §9
         "WEBHOOK_URL": webhook_url,
         "GCP_PROJECT": PROJECT,
     }
