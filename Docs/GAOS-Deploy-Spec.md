@@ -370,39 +370,51 @@ python scripts/setup_apps_script.py
 
 **Phase 1** (create + upload + deploy) runs fully. At the end it opens the
 Apps Script editor in your browser for a **one-time OAuth consent click**.
-After clicking Allow, run Phase 2:
+After clicking Allow, the web app is live and `WEBHOOK_URL` is in Secret Manager.
 
-```powershell
-python scripts/setup_apps_script.py --post-auth
-```
+> **Phase 2 (Script Properties, trigger, protections) must be completed manually.**
+> The `scripts.run()` API requires interactive OAuth credentials — it cannot be
+> called with ADC or service account tokens. Attempting `--post-auth` will return
+> HTTP 403. Complete the following steps in the Apps Script editor instead:
 
-**Phase 2** sets all Script Properties (`WEBHOOK_HMAC_SECRET`, `WEBHOOK_URL`,
-`VERTEX_AGENT_ENDPOINT` placeholder, `GCP_PROJECT`), installs the `onChange`
-trigger, and runs `setupProtections` — all via the Apps Script API.
+**Step 1 — Set Script Properties** (Apps Script editor → Project Settings → Script Properties):
 
-> **Note:** `VERTEX_AGENT_ENDPOINT` is stored as an empty string placeholder.
-> Update it after Cloud Run deploy in §9.2:
-> Apps Script → Project Settings → Script Properties → `VERTEX_AGENT_ENDPOINT`
+| Key | Value |
+|-----|-------|
+| `WEBHOOK_HMAC_SECRET` | Value of `gcloud secrets versions access latest --secret=WEBHOOK_HMAC_SECRET --project=morphic-gaos-prod` |
+| `WEBHOOK_URL` | Value of `gcloud secrets versions access latest --secret=WEBHOOK_URL --project=morphic-gaos-prod` |
+| `VERTEX_AGENT_ENDPOINT` | `https://nexus-prime-975461050387.us-central1.run.app/sync` |
+| `GCP_PROJECT` | `morphic-gaos-prod` |
+
+> ⚠️ **Key names are case-sensitive and must use underscores, not hyphens.**
+> `WEBHOOK_HMAC_SECRET` and `GCP_PROJECT` are correct. `WEBHOOK_HMAC-SECRET`
+> or `GCP_PROPERTY` will silently return `null` and cause `doPost` to throw
+> `Internal error (500)` on every request.
+
+**Step 2 — Run `setupProtections`** (function dropdown → `setupProtections` → Run). Locks Status, Proposed Code, and Code SHA-256 columns + entire Authorized Approvers tab to owner-only edit.
+
+**Step 3 — Install the `onChange` trigger** (Triggers → Add Trigger → Function: `onChangeApproval` | Event type: On change).
+
+> **`doPost` web-app context note:** `SpreadsheetApp.getActiveSpreadsheet()` returns
+> `null` when called from a deployed web-app `doPost` endpoint (as opposed to an
+> interactive editor session). All spreadsheet access in `helpers.gs` uses
+> `getSpreadsheet_()` (which calls `openById(SPREADSHEET_ID_)`) so the web-app
+> context works correctly. The `SPREADSHEET_ID_` constant is hardcoded in
+> `helpers.gs` and matches `sheet.workbook_id` in `settings.yaml`.
 
 ### 4.5 Run Protection Setup
 
-Handled automatically by `--post-auth`. The script calls `setupProtections`,
-which locks:
+Run `setupProtections` manually in the Apps Script editor (see §4.4 Step 2).
+The function locks:
 - Column I (Status) on `Agent_Approvals` → owner only
 - Column H (Proposed Code) on `Agent_Approvals` → owner only
 - Column M (code_sha256) on `Agent_Approvals` → owner only
 - Entire `Authorized Approvers` tab → owner only
 
-If it fails remotely, run manually: Apps Script editor → select
-`setupProtections` → **Run**.
-
 ### 4.6 Install the `onChange` Trigger
 
-Handled automatically by `--post-auth`. The script calls `setupTrigger_()`,
-which installs the `onChangeApproval` onChange trigger idempotently.
-
-If it fails remotely, install manually: Apps Script → **Triggers** →
-Add Trigger → Function: `onChangeApproval` | Event type: On change.
+Install manually in the Apps Script editor (see §4.4 Step 3):
+Triggers → Add Trigger → Function: `onChangeApproval` | Event type: On change.
 
 ### 4.7 Deploy the Webhook as a Web App
 
@@ -860,17 +872,23 @@ Actual URLs for this deployment:
 
 **Update `VERTEX_AGENT_ENDPOINT` in Apps Script:**
 
-The `scripts.run()` API requires the Apps Script project to be linked to the GCP project first. Do this once in the Apps Script editor:
+Set this Script Property in the Apps Script editor (Project Settings → Script Properties):
+- Key: `VERTEX_AGENT_ENDPOINT`
+- Value: `https://nexus-prime-975461050387.us-central1.run.app/sync`
 
-1. Open the script → **Project Settings** → **Google Cloud Platform (GCP) Project** → enter project number `975461050387` → **Set project**
-2. Then go to **Script Properties** → **Add property**:
-   - Key: `VERTEX_AGENT_ENDPOINT`
-   - Value: `https://nexus-prime-975461050387.us-central1.run.app/sync`
-3. Save
+This was completed as part of §4.4 Step 1 if that section was followed. If not already set, add it now.
 
-Alternatively, once the GCP project is linked, the next run of `python scripts/setup_apps_script.py --post-auth` will set it automatically.
-
-**Verification:** `curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" <service-url>/health` — returns `{"status":"ok"}` for each of the 7 services.
+**Verification (Windows PowerShell):**
+```powershell
+# --include-email is required when calling identity-token with ADC user credentials
+foreach ($agent in @('nexus-prime','ledger','beacon','pursuit','foreman','steward','scout')) {
+  $url = "https://${agent}-975461050387.us-central1.run.app/health"
+  $token = & "C:\Program Files (x86)\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd" auth print-identity-token --include-email
+  $resp = Invoke-RestMethod -Uri $url -Headers @{Authorization="Bearer $token"}
+  Write-Host "${agent}: $($resp.status)"
+}
+```
+Expected: `ok` for each of the 7 services.
 
 ---
 
@@ -968,13 +986,13 @@ Phase 1 is complete when all of the following pass. Run them in order.
 | # | Test | How to run | Expected result |
 |---|------|-----------|-----------------|
 | 0 | Unit test suite | `pytest` | 151 tests pass, 0 failures |
-| 1 | Sheet write | Run `python -c "from tools.google_sheets import init_sheets_client, append_row; init_sheets_client('default'); append_row('Logs', {'timestamp': '2026-03-14', 'agent_id': 'test', 'message': 'smoke test'}, 'default')"` | Row appears in `Logs` tab |
-| 2 | Sheet read | Run `python -c "from tools.google_sheets import init_sheets_client, get_all_records; init_sheets_client('default'); print(get_all_records('Project Registry', 'default'))"` | Returns list with the `default` project row |
-| 3 | Pub/Sub publish | Run `python -c "from tools.pubsub import publish; from models import A2AMessage; ..."` sending a test message to `agent.nexus-prime.events` | Message ID returned; no exception |
+| 1 | Sheet write | `python -c "from tools.google_sheets import init_sheets_client, append_row; import datetime; init_sheets_client('default'); append_row('Logs', {'timestamp': datetime.datetime.utcnow().isoformat(), 'level': 'SMOKE_TEST', 'source': 'smoke', 'message': 'phase 1 test'}, 'default')"` | Row appears in `Logs` tab |
+| 2 | Sheet read | `python -c "from tools.google_sheets import init_sheets_client, get_all_records; init_sheets_client('default'); rows = get_all_records('Project Registry', 'default'); print(f'{len(rows)} rows')"` | Prints `0 rows` (or more once project rows are added) |
+| 3 | Pub/Sub publish | `python -c "from tools.pubsub import publish; from models import A2AMessage; ..."` sending a test message to `agent.nexus-prime.events` | Message ID returned; no exception |
 | 4 | Pub/Sub receive | Manually trigger the Apps Script `onChange` by editing a Status cell | Local Python subscriber (or Cloud Run log) shows the event within 5 seconds |
-| 5 | Secret access | Run `python -c "from tools.secrets import get_secret; print(get_secret('GEMINI_API_KEY', 'morphic-gaos-prod'))"` | API key printed (first 8 chars only — enough to confirm it's not empty) |
-| 6 | Webhook HMAC | POST a correctly signed payload to the Apps Script Web App URL | HTTP 200; row appears in `Agent_Approvals` |
-| 7 | Webhook rejection | POST with a tampered signature | HTTP 401; `HMAC_FAILURE` appears in `Logs` tab |
+| 5 | Secret access | `python -c "from tools.secrets import get_secret; v = get_secret('GEMINI_API_KEY', 'morphic-gaos-prod'); print(v[:8] + '...')"` | First 8 chars of API key printed |
+| 6 | Webhook HMAC | POST a correctly signed payload to the Apps Script Web App URL | `statusCode: 200`; row appears in `Agent_Approvals` |
+| 7 | Webhook rejection | POST with a tampered signature | `statusCode: 401`; `HMAC_FAILURE` appears in `Logs` tab |
 
 Run all 8 webhook-specific tests from `GAOS-Manager-Spec.md §14` after test 7 passes.
 

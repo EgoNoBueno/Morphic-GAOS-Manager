@@ -942,8 +942,11 @@ function validatePayload_(p) {
   return null; // valid
 }
 
+// NOTE: getSpreadsheet_() (defined in helpers.gs) must be used instead of
+// getActiveSpreadsheet() — the latter returns null in a deployed web-app
+// doPost context (standalone script, not bound to a spreadsheet).
 function logSecurityEvent_(type, detail) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
   const log = ss.getSheetByName('Logs') || ss.insertSheet('Logs');
   log.appendRow([new Date(), 'SECURITY', type, String(detail)]);
 }
@@ -1018,7 +1021,9 @@ Triggered via custom menu **🤖 Agent OS > Sync Approved Skills**. Before deplo
 ```javascript
 // apps_script/syncSkillsToVertex.gs
 function syncSkillsToVertex() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  // NOTE: getSpreadsheet_() (defined in helpers.gs) must be used here.
+  // getActiveSpreadsheet() returns null in a deployed web-app context.
+  const ss = getSpreadsheet_();
   const sheet = ss.getSheetByName('Agent_Approvals');
   const data = sheet.getDataRange().getValues();
 
