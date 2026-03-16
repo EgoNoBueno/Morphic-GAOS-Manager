@@ -13,7 +13,9 @@ from googleapiclient.discovery import build
 
 SETTINGS_PATH = Path(__file__).parent.parent / "config" / "settings.yaml"
 
-SCOPES = ["https://www.googleapis.com/auth/drive"]
+# drive.file covers files created or opened by this OAuth client (same client_id
+# as setup_workspace.py, so subfolders it created are accessible here too).
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 SEED_FILES = {
     "policies/expense_approval_policy.md": """\

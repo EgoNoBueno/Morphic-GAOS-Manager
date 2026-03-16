@@ -75,7 +75,7 @@ $env:GOOGLE_APPLICATION_CREDENTIALS   # should return nothing
 # Do NOT use --no-browser — Desktop clients require a redirect_uri which only
 # the browser flow provides. Without it Google returns: Error 400 invalid_request.
 # The DEFAULT gcloud client ID BLOCKS the spreadsheets scope — you MUST use your own.
-gcloud auth application-default login --client-id-file=oauth-client.json --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/script.projects,https://www.googleapis.com/auth/script.deployments,https://www.googleapis.com/auth/script.scriptapp,https://www.googleapis.com/auth/cloud-platform"
+gcloud auth application-default login --client-id-file=oauth-client.json --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/script.projects,https://www.googleapis.com/auth/script.deployments,https://www.googleapis.com/auth/cloud-platform"
 
 # Step 4: Set the quota project (gcloud login drops this field every time)
 # The credentials file is at:
