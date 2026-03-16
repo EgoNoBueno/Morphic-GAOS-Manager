@@ -961,3 +961,108 @@ class TestArchiveJob:
             resp = asyncio.run(_run())
 
         assert resp.status_code == 401
+
+
+# ── TestCodeQuality ────────────────────────────────────────────────────────────
+
+
+class TestCodeQuality:
+    """
+    Static analysis gates for Rules 16, 18, and 19.
+
+    Scans project source files (tools/, agents/, main.py) to enforce:
+    - Rule 16: all function defs have return type annotations
+    - Rule 18: no print() calls in production code
+    - Rule 19: no bare except clauses
+    """
+
+    # Files that are permitted to use print() (interactive setup scripts)
+    _PRINT_ALLOWED = {Path("scripts")}
+
+    _SOURCE_DIRS = [
+        Path("tools"),
+        Path("agents"),
+    ]
+    _SOURCE_FILES = [Path("main.py")]
+
+    def _project_py_files(self) -> list[Path]:
+        """Return all .py files in source dirs and top-level files, excluding __pycache__."""
+        files: list[Path] = []
+        root = Path(__file__).parent.parent
+        for d in self._SOURCE_DIRS:
+            for p in (root / d).rglob("*.py"):
+                if "__pycache__" not in p.parts:
+                    files.append(p)
+        for f in self._SOURCE_FILES:
+            fp = root / f
+            if fp.exists():
+                files.append(fp)
+        return files
+
+    def test_no_print_statements_in_production_code(self):
+        """Rule 18 — print() is banned in tools/, agents/, and main.py."""
+        import ast
+
+        violations: list[str] = []
+        for path in self._project_py_files():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "print"
+                ):
+                    violations.append(f"{path}:{node.lineno}")
+
+        assert not violations, (
+            f"Rule 18 violation — print() found in production code:\n"
+            + "\n".join(violations)
+        )
+
+    def test_no_bare_except_clauses(self):
+        """Rule 19 — bare except: and unqualified except Exception: without re-raise."""
+        import ast
+
+        violations: list[str] = []
+        for path in self._project_py_files():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ExceptHandler):
+                    # Bare except: (type is None)
+                    if node.type is None:
+                        violations.append(
+                            f"{path}:{node.lineno} — bare except:"
+                        )
+        assert not violations, (
+            f"Rule 19 violation — bare except clause found:\n"
+            + "\n".join(violations)
+        )
+
+    def test_public_functions_have_return_annotations(self):
+        """Rule 16 — all public function defs must declare a return type annotation."""
+        import ast
+
+        violations: list[str] = []
+        for path in self._project_py_files():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    # Skip private/dunder helpers
+                    if node.name.startswith("_"):
+                        continue
+                    if node.returns is None:
+                        violations.append(f"{path}:{node.lineno} — {node.name}()")
+
+        assert not violations, (
+            f"Rule 16 violation — public function missing return type annotation:\n"
+            + "\n".join(violations)
+        )

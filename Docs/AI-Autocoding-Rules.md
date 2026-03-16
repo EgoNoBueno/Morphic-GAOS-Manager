@@ -1,4 +1,4 @@
-# Development Rules — Morphic-G AOS
+# AI Autocoding Rules — Morphic-G AOS
 
 Hard rules for all development work on this codebase. These apply to human contributors and AI-assisted development sessions alike. Rules here are derived from painful lessons, spec decisions, and things that broke during Phase 1.
 
@@ -25,7 +25,7 @@ response = _call_model(prompt, model=get_settings().models.FAST_MODEL)
 
 ## 2. project_id Must Flow Through Every Call
 
-**Rule:** Every tool call — `insert_row()`, `get_secret()`, `publish_message()`, `load_domain_memory()`, `log_cloud()` — must receive `project_id` explicitly. Never use a global or module-level default.
+**Rule:** Every tool call — `insert_rows()`, `get_secret()`, `publish_message()`, `load_domain_memory()`, `log_cloud()` — must receive `project_id` explicitly. Never use a global or module-level default.
 
 **Why:** Data from different projects must never mix. An agent that drops `project_id` from a sub-call will write to the wrong Sheet tab, query the wrong BigQuery partition, or log to the wrong Cloud Logging stream.
 
@@ -119,7 +119,7 @@ Do not reorder steps. Do not skip steps. Do not catch and swallow the `sys.exit(
 
 ## 11. Tests Must Stay Green
 
-**Rule:** Do not commit code that breaks the existing test suite. Run `pytest` before every commit. The current baseline is **62 tests, 0 failures**.
+**Rule:** Do not commit code that breaks the existing test suite. Run `pytest` before every commit. The current baseline is **65 tests, 0 failures**.
 
 If a new feature legitimately makes an existing test incorrect (e.g., an interface change), update the test in the same commit — not in a follow-up.
 
@@ -256,7 +256,7 @@ def archive_rows(tab: str, rows: list[dict], project_id: str) -> int:
     msg = f"Archived {len(rows)} rows from {tab}"
 ```
 
-> **Tooling note:** A `.pre-commit-config.yaml` running `ruff check --fix` and `ruff format` enforces this at commit time without relying on developer discipline. Recommended setup task — not yet configured.
+> **Tooling note:** `pyproject.toml` already configures `[tool.ruff]` with `line-length = 100` and `target-version = "py311"`. `.vscode/settings.json` is checked in with Format on Save enabled. A `.pre-commit-config.yaml` running `ruff check --fix` and `ruff format` would enforce this at commit time — recommended future setup task.
 
 ---
 
@@ -283,6 +283,8 @@ def get_secret(name: str, project_id: str) -> str:
 ```
 
 Private helpers (`_parse_ts`, `_log_cloud`, etc.) are exempt but encouraged.
+
+> ⚠️ **Tech debt:** Existing public functions in `tools/` were written before this rule. Docstrings are required on all *new* public functions immediately. Backfilling existing functions is a known debt item tracked for Phase 4.
 
 ---
 
