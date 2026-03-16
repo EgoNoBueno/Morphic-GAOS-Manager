@@ -19,10 +19,10 @@ Ensure fulfillment runs without interruption; maintain all inventory SKUs above 
 | `Shipping and Receiving` Sheet tab | Google Sheets | Read/Write |
 | `Agent_Approvals` Sheet tab | Google Sheets | Write (proposals only) |
 | `Project Registry` Sheet tab | Google Sheets | Read only |
-| `agent/foreman/events` | Cloud Pub/Sub | Publish |
-| `agent/nexus-prime/events` | Cloud Pub/Sub | Subscribe |
-| `agent/pursuit/events` | Cloud Pub/Sub | Subscribe (deal-closed events trigger fulfillment) |
-| `agent/approvals/events` | Cloud Pub/Sub | Subscribe (resume events only) |
+| `agent.foreman.events` | Cloud Pub/Sub | Publish |
+| `agent.nexus-prime.events` | Cloud Pub/Sub | Subscribe |
+| `agent.pursuit.events` | Cloud Pub/Sub | Subscribe (deal-closed events trigger fulfillment) |
+| `agent.approvals.events` | Cloud Pub/Sub | Subscribe (resume events only) |
 | Vertex AI Memory Bank (`domain: operations`) | Memory Bank | Read (batch at boot) |
 | `Knowledge/` (Drive folder) | Google Drive | Read |
 | BigQuery `aos_logs.task_outcomes` | BigQuery | Read (episodic queries) |

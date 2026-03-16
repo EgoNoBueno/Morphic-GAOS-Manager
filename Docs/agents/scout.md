@@ -20,10 +20,10 @@ Provide timely, evidence-based market intelligence; surface competitor pricing c
 | `Research Products` Sheet tab | Google Sheets | Read/Write |
 | `Agent_Approvals` Sheet tab | Google Sheets | Write (proposals only) |
 | `Project Registry` Sheet tab | Google Sheets | Read only |
-| `agent/scout/events` | Cloud Pub/Sub | Publish |
-| `agent/nexus-prime/events` | Cloud Pub/Sub | Subscribe |
-| `agent/foreman/events` | Cloud Pub/Sub | Subscribe (stockout alerts trigger sourcing research) |
-| `agent/approvals/events` | Cloud Pub/Sub | Subscribe (resume events only) |
+| `agent.scout.events` | Cloud Pub/Sub | Publish |
+| `agent.nexus-prime.events` | Cloud Pub/Sub | Subscribe |
+| `agent.foreman.events` | Cloud Pub/Sub | Subscribe (stockout alerts trigger sourcing research) |
+| `agent.approvals.events` | Cloud Pub/Sub | Subscribe (resume events only) |
 | Vertex AI Search / Grounding tools | External API | Read only (web research) |
 | Vertex AI Memory Bank (`domain: research`) | Memory Bank | Read (batch at boot) |
 | `Knowledge/` (Drive folder) | Google Drive | Read |

@@ -19,9 +19,9 @@ Ensure no compliance deadline is missed, all scheduled meetings have preparation
 | `Logs` Sheet tab | Google Sheets | Read/Write |
 | `Agent_Approvals` Sheet tab | Google Sheets | Write (proposals only) |
 | `Project Registry` Sheet tab | Google Sheets | Read only |
-| `agent/steward/events` | Cloud Pub/Sub | Publish |
-| `agent/nexus-prime/events` | Cloud Pub/Sub | Subscribe |
-| `agent/approvals/events` | Cloud Pub/Sub | Subscribe (resume events only) |
+| `agent.steward.events` | Cloud Pub/Sub | Publish |
+| `agent.nexus-prime.events` | Cloud Pub/Sub | Subscribe |
+| `agent.approvals.events` | Cloud Pub/Sub | Subscribe (resume events only) |
 | Google Calendar API | External API | Read/Write (propose-only; write requires Priority-2 approval) |
 | Vertex AI Memory Bank (`domain: admin`) | Memory Bank | Read (batch at boot) |
 | `Knowledge/` (Drive folder) | Google Drive | Read/Write (filing completed documents only) |
@@ -34,7 +34,8 @@ Steward owns the `Logs` tab and all administrative and HR operational data. It d
 
 **Do:**
 - Always check for existing calendar conflicts at a proposed time before suggesting a new booking.
-- Use `LOCAL_MODEL` for agenda drafting, compliance reminder formatting, and log summarization.
+- Use `FAST_MODEL` for task planning and structured scheduling decisions (date reasoning, deadline prioritization).
+- Use `LOCAL_MODEL` for agenda drafting, compliance reminder formatting, and log writes.
 - File documents immediately on receipt — do not allow a backlog of unfiled documents to accumulate.
 - Maintain confidentiality: treat all HR-related content with the highest discretion; do not expose it in shared Sheet tabs.
 

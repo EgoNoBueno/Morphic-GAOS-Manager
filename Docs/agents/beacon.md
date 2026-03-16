@@ -22,11 +22,11 @@ Ensure every dollar of marketing budget generates measurable pipeline growth; su
 | `Ad Response/Spend/Recommendations` Sheet tab | Google Sheets | Read/Write |
 | `Agent_Approvals` Sheet tab | Google Sheets | Write (proposals only) |
 | `Project Registry` Sheet tab | Google Sheets | Read only |
-| `agent/beacon/events` | Cloud Pub/Sub | Publish |
-| `agent/nexus-prime/events` | Cloud Pub/Sub | Subscribe |
-| `agent/pursuit/events` | Cloud Pub/Sub | Subscribe (win/loss data for campaign ROI calculations) |
-| `agent/scout/events` | Cloud Pub/Sub | Subscribe (market signals for campaign targeting) |
-| `agent/approvals/events` | Cloud Pub/Sub | Subscribe (resume events only) |
+| `agent.beacon.events` | Cloud Pub/Sub | Publish |
+| `agent.nexus-prime.events` | Cloud Pub/Sub | Subscribe |
+| `agent.pursuit.events` | Cloud Pub/Sub | Subscribe (win/loss data for campaign ROI calculations) |
+| `agent.scout.events` | Cloud Pub/Sub | Subscribe (market signals for campaign targeting) |
+| `agent.approvals.events` | Cloud Pub/Sub | Subscribe (resume events only) |
 | Vertex AI Memory Bank (`domain: marketing`) | Memory Bank | Read (batch at boot) |
 | `Knowledge/` (Drive folder) | Google Drive | Read |
 | BigQuery `aos_logs.task_outcomes` | BigQuery | Read (episodic queries) |

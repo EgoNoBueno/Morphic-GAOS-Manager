@@ -19,11 +19,11 @@ Maintain accurate, real-time visibility into the company's financial position; e
 | `Accounting` Sheet tab | Google Sheets | Read/Write |
 | `Agent_Approvals` Sheet tab | Google Sheets | Write (proposals only) |
 | `Project Registry` Sheet tab | Google Sheets | Read only |
-| `agent/ledger/events` | Cloud Pub/Sub | Publish |
-| `agent/nexus-prime/events` | Cloud Pub/Sub | Subscribe |
-| `agent/pursuit/events` | Cloud Pub/Sub | Subscribe (deal-closed events trigger invoice creation) |
-| `agent/foreman/events` | Cloud Pub/Sub | Subscribe (fulfillment-confirmed events mark AR as fulfilled) |
-| `agent/approvals/events` | Cloud Pub/Sub | Subscribe (resume events only) |
+| `agent.ledger.events` | Cloud Pub/Sub | Publish |
+| `agent.nexus-prime.events` | Cloud Pub/Sub | Subscribe |
+| `agent.pursuit.events` | Cloud Pub/Sub | Subscribe (deal-closed events trigger invoice creation) |
+| `agent.foreman.events` | Cloud Pub/Sub | Subscribe (fulfillment-confirmed events mark AR as fulfilled) |
+| `agent.approvals.events` | Cloud Pub/Sub | Subscribe (resume events only) |
 | Vertex AI Memory Bank (`domain: accounting`) | Memory Bank | Read (batch at boot) |
 | `Knowledge/` (Drive folder) | Google Drive | Read |
 | BigQuery `aos_logs.task_outcomes` | BigQuery | Read (episodic queries) |

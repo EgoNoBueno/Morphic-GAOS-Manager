@@ -20,11 +20,11 @@ Maintain a healthy, up-to-date sales pipeline; ensure every qualified lead recei
 | `Sales by Product` Sheet tab | Google Sheets | Read/Write |
 | `Agent_Approvals` Sheet tab | Google Sheets | Write (proposals only) |
 | `Project Registry` Sheet tab | Google Sheets | Read only |
-| `agent/pursuit/events` | Cloud Pub/Sub | Publish |
-| `agent/nexus-prime/events` | Cloud Pub/Sub | Subscribe |
-| `agent/beacon/events` | Cloud Pub/Sub | Subscribe (campaign context for lead attribution) |
-| `agent/foreman/events` | Cloud Pub/Sub | Subscribe (stock-insufficient alerts — must pause quoting affected products) |
-| `agent/approvals/events` | Cloud Pub/Sub | Subscribe (resume events only) |
+| `agent.pursuit.events` | Cloud Pub/Sub | Publish |
+| `agent.nexus-prime.events` | Cloud Pub/Sub | Subscribe |
+| `agent.beacon.events` | Cloud Pub/Sub | Subscribe (campaign context for lead attribution) |
+| `agent.foreman.events` | Cloud Pub/Sub | Subscribe (stock-insufficient alerts — must pause quoting affected products) |
+| `agent.approvals.events` | Cloud Pub/Sub | Subscribe (resume events only) |
 | Vertex AI Memory Bank (`domain: sales`) | Memory Bank | Read (batch at boot) |
 | `Knowledge/` (Drive folder) | Google Drive | Read |
 | BigQuery `aos_logs.task_outcomes` | BigQuery | Read (episodic queries) |
