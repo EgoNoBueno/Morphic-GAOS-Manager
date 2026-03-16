@@ -79,7 +79,7 @@ class AgentWorkingMemory(TypedDict):
 ### Rules
 
 - `memory_context` is loaded **once at boot** from Layer 4 (Vertex AI Memory Bank) and cached for the entire invocation. It is **not refreshed mid-task** — stale-context risk is acceptable to avoid per-call Memory Bank costs.
-- `observation_buffer` accumulates candidate learnings during the session. On invocation end, the agent calls `flush_observations()` which increments corroboration counts in the `Pending_Knowledge` Sheet tab.
+- `observation_buffer` accumulates candidate learnings during the session. On invocation end, the agent calls `flush_observations()` which appends new observations to the `Pending_Knowledge` Sheet tab (de-duplicated by `content_hash`). Confidence incrementing and proposal triggering run as a separate nightly job, not inline during `flush_observations()`.
 - Working memory is **lost on invocation end**. State that must survive restarts (parked proposals, open task IDs) is persisted to the `Agent_Approvals` Sheet and LangGraph's external checkpoint store before the invocation exits.
 
 ---
@@ -115,27 +115,27 @@ def query_episodic(agent_id: str, project_id: str,
                    task_type: str, limit: int = 5) -> list[dict]:
     """Return the N most recent outcomes for this agent + task_type."""
     settings = get_settings()
-    gcp_project = settings.GCP_PROJECT_ID        # GCP project: "morphic-gaos-prod"
+    gcp_project = settings.GCP_PROJECT_ID
     client = bigquery.Client(project=gcp_project)
-    query = f"""
+    # Table reference uses .replace() — not an f-string — to avoid
+    # accidental injection if gcp_project were ever user-supplied.
+    sql = """
         SELECT task_id, status, result_summary, error_fingerprint,
                total_cost_usd, timestamp
         FROM `{gcp_project}.aos_logs.task_outcomes`
         WHERE agent_id = @agent_id
           AND task_type = @task_type
-          AND project_id = @project_id
         ORDER BY timestamp DESC
         LIMIT @limit
-    """
+    """.replace("{gcp_project}", gcp_project)
     job_config = bigquery.QueryJobConfig(
         query_parameters=[
             bigquery.ScalarQueryParameter("agent_id", "STRING", agent_id),
             bigquery.ScalarQueryParameter("task_type", "STRING", task_type),
-            bigquery.ScalarQueryParameter("project_id", "STRING", project_id),
             bigquery.ScalarQueryParameter("limit", "INT64", limit),
         ]
     )
-    return [dict(row) for row in client.query(query, job_config=job_config)]
+    return [dict(row) for row in client.query(sql, job_config=job_config)]
 ```
 
 ---
@@ -244,23 +244,16 @@ At startup, each orchestrator calls `load_domain_memory()` to batch-fetch all ac
 
 ```python
 # tools/memory.py
-import json
-import yaml
-from pathlib import Path
-import vertexai
-from vertexai.preview.memory import MemoryBankClient
+from config import get_settings
+from vertexai.preview.memory import MemoryBankClient  # type: ignore[import-not-found]
 
-_settings_path = Path(__file__).parent.parent / "config" / "settings.yaml"
-_SETTINGS = yaml.safe_load(_settings_path.read_text())
-_PROJECT = _SETTINGS["gcp"]["project_id"]
-_REGION = _SETTINGS["memory_bank"]["region"]
-
-vertexai.init(project=_PROJECT, location=_REGION)
+# No module-level vertexai.init() — MemoryBankClient is initialised per-call
+# using the project_id parameter so that multi-project deployments work correctly.
 
 
 def load_domain_memory(agent_id: str, project_id: str) -> dict:
     """Batch-fetch all active memory entries for this agent's domain."""
-    client = MemoryBankClient(project=_PROJECT)
+    client = MemoryBankClient(project=project_id)
     entries = client.list(filters={
         "agent_id": agent_id,
         "active": True,
@@ -276,14 +269,19 @@ def load_domain_memory(agent_id: str, project_id: str) -> dict:
     return context
 
 
-def query_memory_bank(domain: str, query_text: str,
+def query_memory_bank(query: str, corpus: str,
                       project_id: str, top_k: int = 5,
                       similarity_threshold: float = 0.80) -> list[dict]:
-    """Semantic similarity search. Use mid-task for context enrichment."""
-    client = MemoryBankClient(project=_PROJECT)
+    """Semantic similarity search against a named corpus. Use mid-task for context enrichment.
+
+    Args:
+        query:   The search text (error fingerprint, knowledge content, etc.).
+        corpus:  Corpus ID, e.g. ``"gaos-ledger"`` or ``"gaos-global"``.
+    """
+    client = MemoryBankClient(project=project_id)
     results = client.query(
-        corpus=domain,
-        query=query_text,
+        corpus=corpus,
+        query=query,
         top_k=top_k,
     )
     return [
@@ -296,7 +294,7 @@ def query_memory_bank(domain: str, query_text: str,
 
 def write_approved_memory(entry: "MemoryEntry", project_id: str) -> str:
     """Write a newly approved memory entry. Called by Nexus-Prime only."""
-    client = MemoryBankClient(project=_PROJECT)
+    client = MemoryBankClient(project=project_id)
     if entry.supersedes:
         client.update(entry.supersedes, {"active": False})
     record = client.create(entry.model_dump())
@@ -465,46 +463,29 @@ so they reload memory on next boot
 def flush_observations(observations: list[dict], project_id: str) -> None:
     """
     Called once at end of every agent invocation.
-    Upserts observation_buffer entries into Pending_Knowledge Sheet tab.
-    Does NOT call Memory Bank — only touches Sheets (free).
+    Appends new observations to the Pending_Knowledge Sheet tab.
+    Entries whose content_hash already exists are silently skipped
+    (deduplication). Does NOT call Memory Bank — only touches Sheets (free).
+
+    Confidence incrementing and automatic proposal triggering are handled
+    by the nightly archive job, not inline here.
     """
-    sheet = get_sheet("Pending_Knowledge", project_id)
-    existing = {row["content_hash"]: row for row in sheet.get_all_records()}
+    if not observations:
+        return
 
+    from tools.google_sheets import batch_append_rows, find_row
+
+    deduped = []
     for obs in observations:
-        content_hash = hashlib.sha256(
-            f"{obs['agent_id']}:{obs['domain']}:{obs['content']}".encode()
-        ).hexdigest()[:16]
+        content_hash = obs.get("content_hash", "")
+        if content_hash:
+            existing = find_row("Pending_Knowledge", "content_hash", content_hash, project_id)
+            if existing is not None:
+                continue  # already buffered — skip
+        deduped.append(obs)
 
-        if content_hash in existing:
-            # Corroborate existing entry
-            row = existing[content_hash]
-            old_conf = float(row["confidence"])
-            new_conf = round(old_conf + (1 - old_conf) * 0.25, 4)
-            sheet.update_row(row["row_index"], {
-                "confidence": new_conf,
-                "observation_count": int(row["observation_count"]) + 1,
-                "evidence": row["evidence"] + "," + obs["task_id"],
-                "last_seen_at": datetime.utcnow().isoformat(),
-            })
-            if new_conf >= 0.70 and row["status"] == "Buffered":
-                _trigger_knowledge_proposal(row, new_conf, project_id)
-        else:
-            # New observation
-            sheet.append_row({
-                "knowledge_id": str(uuid4()),
-                "agent_id": obs["agent_id"],
-                "project_id": project_id,
-                "knowledge_type": obs["knowledge_type"],
-                "domain": obs["domain"],
-                "content": obs["content"],
-                "evidence": obs["task_id"],
-                "confidence": 0.25,
-                "observation_count": 1,
-                "status": "Buffered",
-                "proposed_at": datetime.utcnow().isoformat(),
-                "last_seen_at": datetime.utcnow().isoformat(),
-            })
+    if deduped:
+        batch_append_rows("Pending_Knowledge", deduped, project_id)
 ```
 
 ---

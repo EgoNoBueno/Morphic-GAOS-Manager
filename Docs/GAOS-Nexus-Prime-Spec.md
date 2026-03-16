@@ -452,7 +452,6 @@ Called after `init_project`. Publishes a `BROADCAST` message to all 7 domain orc
 ```python
 def notify_agents(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     from tools.pubsub import publish
-    import settings
 
     new_pid = state.get("new_project_id")
     if not new_pid:
