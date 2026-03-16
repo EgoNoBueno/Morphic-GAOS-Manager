@@ -444,84 +444,96 @@ done
 
 ### 5.2 Create Subscriptions
 
+> **Do this step after §9 (Cloud Run deploy).** Push subscriptions require real Cloud Run URLs. Create topics now (§5.1), then return here once the 7 services are deployed and you have their URLs.
+
+Subscriptions use **OIDC push authentication** — Pub/Sub signs each delivery request with a service account token that Cloud Run verifies. This requires a dedicated push SA and invoker grants on every service.
+
+**Step A — Create the push service account:**
+
+```bash
+PROJECT=morphic-gaos-prod
+gcloud iam service-accounts create pubsub-push-sa \
+  --display-name="Pub/Sub Push Auth" --project=$PROJECT
+```
+
+**Step B — Grant it `roles/run.invoker` on every Cloud Run service:**
+
+```bash
+PROJECT_NUM=$(gcloud projects describe morphic-gaos-prod --format='value(projectNumber)')
+PUSH_SA="pubsub-push-sa@${PROJECT}.iam.gserviceaccount.com"
+
+for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
+  gcloud run services add-iam-policy-binding $agent \
+    --region=us-central1 --project=$PROJECT \
+    --member="serviceAccount:${PUSH_SA}" \
+    --role="roles/run.invoker"
+done
+```
+
+**Step C — Also grant the Pub/Sub service agent token creator rights** (required for OIDC token generation):
+
+```bash
+gcloud projects add-iam-policy-binding $PROJECT \
+  --member="serviceAccount:service-${PROJECT_NUM}@gcp-sa-pubsub.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator"
+```
+
+**Step D — Create all 22 subscriptions:**
+
 ```bash
 PROJECT=morphic-gaos-prod
 BASE="projects/${PROJECT}/topics"
+PUSH_SA="pubsub-push-sa@${PROJECT}.iam.gserviceaccount.com"
+
+declare -A URLS=(
+  [nexus-prime]="https://nexus-prime-975461050387.us-central1.run.app"
+  [ledger]="https://ledger-975461050387.us-central1.run.app"
+  [beacon]="https://beacon-975461050387.us-central1.run.app"
+  [pursuit]="https://pursuit-975461050387.us-central1.run.app"
+  [foreman]="https://foreman-975461050387.us-central1.run.app"
+  [steward]="https://steward-975461050387.us-central1.run.app"
+  [scout]="https://scout-975461050387.us-central1.run.app"
+)
 
 # Nexus-Prime subscribes to all orchestrator topics
 for topic in ledger beacon pursuit foreman steward scout; do
   gcloud pubsub subscriptions create nexus-prime.sub.${topic} \
     --topic="${BASE}/agent.${topic}.events" \
-    --push-endpoint="<nexus-prime-cloud-run-url>/pubsub" \
-    --ack-deadline=60 \
-    --project=$PROJECT
+    --push-endpoint="${URLS[nexus-prime]}/pubsub" \
+    --push-auth-service-account=$PUSH_SA \
+    --ack-deadline=60 --project=$PROJECT
 done
 
-# Approvals subscription — all agents subscribe to this
+# All agents subscribe to approvals
 for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
   gcloud pubsub subscriptions create ${agent}.sub.approvals \
     --topic="${BASE}/agent.approvals.events" \
-    --push-endpoint="<${agent}-cloud-run-url>/pubsub" \
-    --ack-deadline=60 \
-    --project=$PROJECT
+    --push-endpoint="${URLS[$agent]}/pubsub" \
+    --push-auth-service-account=$PUSH_SA \
+    --ack-deadline=60 --project=$PROJECT
 done
 
-# Cross-domain subscriptions per §10.1
-# Pursuit subscribes to ledger + beacon + foreman
-gcloud pubsub subscriptions create pursuit.sub.ledger \
-  --topic="${BASE}/agent.ledger.events" \
-  --push-endpoint="<pursuit-cloud-run-url>/pubsub" \
-  --ack-deadline=60 --project=$PROJECT
-
-gcloud pubsub subscriptions create pursuit.sub.beacon \
-  --topic="${BASE}/agent.beacon.events" \
-  --push-endpoint="<pursuit-cloud-run-url>/pubsub" \
-  --ack-deadline=60 --project=$PROJECT
-
-gcloud pubsub subscriptions create pursuit.sub.foreman \
-  --topic="${BASE}/agent.foreman.events" \
-  --push-endpoint="<pursuit-cloud-run-url>/pubsub" \
-  --ack-deadline=60 --project=$PROJECT
-
-# Ledger subscribes to pursuit + foreman
-gcloud pubsub subscriptions create ledger.sub.pursuit \
-  --topic="${BASE}/agent.pursuit.events" \
-  --push-endpoint="<ledger-cloud-run-url>/pubsub" \
-  --ack-deadline=60 --project=$PROJECT
-
-gcloud pubsub subscriptions create ledger.sub.foreman \
-  --topic="${BASE}/agent.foreman.events" \
-  --push-endpoint="<ledger-cloud-run-url>/pubsub" \
-  --ack-deadline=60 --project=$PROJECT
-
-# Foreman subscribes to pursuit
-gcloud pubsub subscriptions create foreman.sub.pursuit \
-  --topic="${BASE}/agent.pursuit.events" \
-  --push-endpoint="<foreman-cloud-run-url>/pubsub" \
-  --ack-deadline=60 --project=$PROJECT
-
-# Beacon subscribes to pursuit + scout
-gcloud pubsub subscriptions create beacon.sub.pursuit \
-  --topic="${BASE}/agent.pursuit.events" \
-  --push-endpoint="<beacon-cloud-run-url>/pubsub" \
-  --ack-deadline=60 --project=$PROJECT
-
-gcloud pubsub subscriptions create beacon.sub.scout \
-  --topic="${BASE}/agent.scout.events" \
-  --push-endpoint="<beacon-cloud-run-url>/pubsub" \
-  --ack-deadline=60 --project=$PROJECT
-
-# Scout subscribes to foreman
-gcloud pubsub subscriptions create scout.sub.foreman \
-  --topic="${BASE}/agent.foreman.events" \
-  --push-endpoint="<scout-cloud-run-url>/pubsub" \
-  --ack-deadline=60 --project=$PROJECT
+# Cross-domain subscriptions
+for sub_agent_topic in \
+  "pursuit.sub.ledger:pursuit:agent.ledger.events" \
+  "pursuit.sub.beacon:pursuit:agent.beacon.events" \
+  "pursuit.sub.foreman:pursuit:agent.foreman.events" \
+  "ledger.sub.pursuit:ledger:agent.pursuit.events" \
+  "ledger.sub.foreman:ledger:agent.foreman.events" \
+  "foreman.sub.pursuit:foreman:agent.pursuit.events" \
+  "beacon.sub.pursuit:beacon:agent.pursuit.events" \
+  "beacon.sub.scout:beacon:agent.scout.events" \
+  "scout.sub.foreman:scout:agent.foreman.events"; do
+    IFS=: read name subscriber topic <<< "$sub_agent_topic"
+    gcloud pubsub subscriptions create $name \
+      --topic="${BASE}/${topic}" \
+      --push-endpoint="${URLS[$subscriber]}/pubsub" \
+      --push-auth-service-account=$PUSH_SA \
+      --ack-deadline=60 --project=$PROJECT
+done
 ```
 
-> **Note:** Push endpoint URLs contain the Cloud Run service URLs. These are created in §8. Update subscription push endpoints after Cloud Run deploy using:
-> `gcloud pubsub subscriptions modify-push-config <sub-name> --push-endpoint=<url>`
-
-**Verification:** `gcloud pubsub topics list --project=$PROJECT` — 8 topics listed.
+**Verification:** `gcloud pubsub subscriptions list --project=$PROJECT --format="table(name,pushConfig.pushEndpoint)"` — 22 subscriptions listed, all pointing to `*.run.app/pubsub`.
 
 ---
 
@@ -712,7 +724,34 @@ All 7 agents share a single codebase and a single Dockerfile at the project root
 
 > **`--concurrency 1` is mandatory.** LangGraph maintains in-memory graph state. Allowing multiple concurrent requests on one instance would corrupt state across invocations. The `CMD` in the Dockerfile enforces `--workers 1` for the same reason — do not override this.
 
-**Dockerfile (project root — one image, seven services):**
+**Prerequisites — run once before first deploy:**
+
+```bash
+PROJECT=morphic-gaos-prod
+PROJECT_NUM=$(gcloud projects describe $PROJECT --format='value(projectNumber)')
+COMPUTE_SA="${PROJECT_NUM}-compute@developer.gserviceaccount.com"
+
+# Enable required APIs
+gcloud services enable \
+  artifactregistry.googleapis.com \
+  storage.googleapis.com \
+  storage-component.googleapis.com \
+  --project=$PROJECT
+
+# Create the Artifact Registry Docker repo (Cloud Build pushes images here)
+gcloud artifacts repositories create cloud-run-source-deploy \
+  --repository-format=docker \
+  --location=us-central1 \
+  --project=$PROJECT
+
+# Cloud Build workers run as the Compute Engine default SA — grant it storage + registry access
+gcloud projects add-iam-policy-binding $PROJECT \
+  --member="serviceAccount:${COMPUTE_SA}" --role="roles/storage.objectAdmin"
+gcloud projects add-iam-policy-binding $PROJECT \
+  --member="serviceAccount:${COMPUTE_SA}" --role="roles/artifactregistry.writer"
+```
+
+**Dockerfile (project root — committed to repo):**
 
 ```dockerfile
 FROM python:3.11-slim
@@ -720,23 +759,28 @@ FROM python:3.11-slim
 WORKDIR /app
 COPY . .
 
-RUN pip install --no-cache-dir \
-    google-adk langgraph google-cloud-pubsub google-cloud-secret-manager \
-    gspread pydantic google-cloud-logging google-cloud-aiplatform \
-    "google-genai>=1.0.0" fastapi uvicorn httpx
+RUN pip install --no-cache-dir .
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
 ```
 
-**Deploy command (deploys all 7 services from the project root):**
+All dependencies come from `pyproject.toml` via `pip install .`. `config/settings.yaml` is included in the image via `.gcloudignore` (which intentionally does not exclude it, unlike `.gitignore`).
+
+**Step 1 — Build the image once** (this takes ~5 minutes):
 
 ```bash
-PROJECT=morphic-gaos-prod
-REGION=us-central1
+IMAGE="us-central1-docker.pkg.dev/${PROJECT}/cloud-run-source-deploy/gaos-agent:latest"
+gcloud builds submit --tag $IMAGE --project=$PROJECT .
+```
+
+**Step 2 — Deploy all 7 services from the pre-built image** (fast — no rebuild):
+
+```bash
+IMAGE="us-central1-docker.pkg.dev/${PROJECT}/cloud-run-source-deploy/gaos-agent:latest"
 
 for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
   gcloud run deploy ${agent} \
-    --source . \
+    --image $IMAGE \
     --region $REGION \
     --project $PROJECT \
     --service-account ${agent}-sa@${PROJECT}.iam.gserviceaccount.com \
@@ -747,10 +791,11 @@ for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
     --min-instances 0 \
     --max-instances 5 \
     --no-allow-unauthenticated \
-    --set-env-vars AGENT_NAME=${agent} \
-    --set-secrets "GEMINI_API_KEY=GEMINI_API_KEY:latest,OLLAMA_HOST=OLLAMA_HOST:latest"
+    --set-env-vars AGENT_NAME=${agent}
 done
 ```
+
+> **Note:** Secrets (`GEMINI_API_KEY`, etc.) are **not** injected as environment variables. Each agent fetches secrets at boot via the Secret Manager API using its service account identity. `--set-secrets` is not needed.
 
 Each service exposes four endpoints:
 
@@ -763,9 +808,9 @@ Each service exposes four endpoints:
 
 All POST endpoints require a `Bearer` token in the `Authorization` header. Cloud Run ingress validates the OIDC token before the request reaches the handler; the handler check is defense-in-depth only.
 
-### 9.2 Update Pub/Sub Subscription Endpoints
+### 9.2 Post-Deploy Wiring
 
-After Cloud Run deploys, get each service URL and update the subscriptions:
+**Get the deployed service URLs:**
 
 ```bash
 for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
@@ -776,9 +821,31 @@ for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
 done
 ```
 
-Copy each URL and update subscriptions using the modify-push-config commands from §5.2.
+Actual URLs for this deployment:
 
-Also update `VERTEX_AGENT_ENDPOINT` in Apps Script properties with the Nexus-Prime Cloud Run URL + `/sync`.
+| Service | URL |
+|---------|-----|
+| nexus-prime | `https://nexus-prime-975461050387.us-central1.run.app` |
+| ledger | `https://ledger-975461050387.us-central1.run.app` |
+| beacon | `https://beacon-975461050387.us-central1.run.app` |
+| pursuit | `https://pursuit-975461050387.us-central1.run.app` |
+| foreman | `https://foreman-975461050387.us-central1.run.app` |
+| steward | `https://steward-975461050387.us-central1.run.app` |
+| scout | `https://scout-975461050387.us-central1.run.app` |
+
+**Now create Pub/Sub subscriptions (§5.2)** — they require Cloud Run URLs and must be created after this step.
+
+**Update `VERTEX_AGENT_ENDPOINT` in Apps Script:**
+
+The `scripts.run()` API requires the Apps Script project to be linked to the GCP project first. Do this once in the Apps Script editor:
+
+1. Open the script → **Project Settings** → **Google Cloud Platform (GCP) Project** → enter project number `975461050387` → **Set project**
+2. Then go to **Script Properties** → **Add property**:
+   - Key: `VERTEX_AGENT_ENDPOINT`
+   - Value: `https://nexus-prime-975461050387.us-central1.run.app/sync`
+3. Save
+
+Alternatively, once the GCP project is linked, the next run of `python scripts/setup_apps_script.py --post-auth` will set it automatically.
 
 **Verification:** `curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" <service-url>/health` — returns `{"status":"ok"}` for each of the 7 services.
 
@@ -786,15 +853,28 @@ Also update `VERTEX_AGENT_ENDPOINT` in Apps Script properties with the Nexus-Pri
 
 ## 10. Cloud Scheduler Jobs
 
+Cloud Scheduler delivers requests via OIDC. The Nexus-Prime service account issues the token; it must also have `roles/run.invoker` on the nexus-prime Cloud Run service so the token is accepted.
+
+**Grant Nexus-Prime SA invoker rights on its own service:**
+
+```bash
+PROJECT=morphic-gaos-prod
+gcloud run services add-iam-policy-binding nexus-prime \
+  --region=us-central1 --project=$PROJECT \
+  --member="serviceAccount:nexus-prime-sa@${PROJECT}.iam.gserviceaccount.com" \
+  --role="roles/run.invoker"
+```
+
 ### 10.1 TTL Sweep Job (hourly)
 
 Scans `Agent_Approvals` tab for proposals older than their TTL and re-notifies or auto-rejects them.
 
 ```bash
+NP_URL="https://nexus-prime-975461050387.us-central1.run.app"
 gcloud scheduler jobs create http ttl-sweep \
   --location=us-central1 \
   --schedule="0 * * * *" \
-  --uri="<nexus-prime-cloud-run-url>/ttl-sweep" \
+  --uri="${NP_URL}/ttl-sweep" \
   --oidc-service-account-email="nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com" \
   --project=morphic-gaos-prod
 ```
@@ -804,15 +884,16 @@ gcloud scheduler jobs create http ttl-sweep \
 Summarizes and moves aged Sheet rows to BigQuery.
 
 ```bash
+NP_URL="https://nexus-prime-975461050387.us-central1.run.app"
 gcloud scheduler jobs create http nightly-archive \
   --location=us-central1 \
   --schedule="0 2 * * *" \
-  --uri="<nexus-prime-cloud-run-url>/archive" \
+  --uri="${NP_URL}/archive" \
   --oidc-service-account-email="nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com" \
   --project=morphic-gaos-prod
 ```
 
-**Verification:** In Cloud Scheduler console, both jobs appear. Run each manually by clicking **Force run** — they should return HTTP 200 (even on a stub endpoint).
+**Verification:** In Cloud Scheduler console, both jobs appear with state `ENABLED`. Run each manually by clicking **Force run** — `ttl-sweep` should return HTTP 200; `nightly-archive` will return 404 until the archive endpoint is implemented in Phase 3.
 
 ---
 
