@@ -22,7 +22,7 @@ The first step is distinguishing between data *you store* in GCP and data *proce
 | Business rules, approved patterns | Vertex AI Memory Bank | Owned by your GCP project |
 | Procedural docs, workflows, skill files | Google Drive (`Knowledge/`) | Owned by your GCP project |
 | API keys, service account credentials | Secret Manager | Encrypted by default; access is per-secret IAM |
-| MonologueFrame reasoning records | BigQuery (`aos_logs.monologue_frames`) | Includes task context fed to LLM at inference time; table schema defined in `GAOS-Persona-Spec.md` §4.2 — not yet in Deploy Spec §7 provisioning |
+| MonologueFrame reasoning records | BigQuery (`aos_logs.monologue_frames`) | Includes task context fed to LLM at inference time; table schema defined in `GAOS-Persona-Spec.md` §4.2, provisioned in `GAOS-Deploy-Spec.md` §7 |
 
 **Key point:** All of this data is isolated in *your* GCP project. It is not commingled with other GCP customers. Google's [Data Processing Addendum](https://cloud.google.com/terms/data-processing-addendum) governs it — not Google's consumer privacy policy.
 
@@ -343,7 +343,7 @@ This is the baseline. It means using Vertex AI for LLM inference is categoricall
 
 | Approach | Privacy Strength | Cost | Complexity |
 |----------|-----------------|------|------------|
-| Default (Gemini cloud LLM) | Moderate — GCP DPA applies | ~$1.50/month | Lowest |
+| Default (Gemini cloud LLM) | Moderate — GCP DPA applies | ~$2.50/month | Lowest |
 | + `data_classification` routing (Option A) | Good — sensitive tasks never hit cloud LLM | No added cost | Low — one field, one function |
 | + Prompt sanitization (Option B) | Good addition | No added cost | Low |
 | + CMEK (Option D) | Strong at-rest protection | ~$0/month (KMS free tier) | Medium |

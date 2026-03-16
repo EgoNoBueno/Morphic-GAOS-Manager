@@ -5,7 +5,7 @@
 > This document is the step-by-step guide for standing up every Google Cloud and Google Workspace resource the system requires. Follow the sections in order. Each section ends with a verification step — do not proceed to the next section until verification passes.
 >
 > **Estimated time:** 2–3 hours for a first-time setup, 30 minutes for a repeat deployment.
-> **Estimated monthly cost after setup:** ≈ $1.50 (see `GAOS-Manager-Spec.md` §9.4 for breakdown).
+> **Estimated monthly cost after setup:** ≈ $2.50 (see `GAOS-Manager-Spec.md` §9.4 for breakdown).
 
 ---
 
@@ -603,7 +603,7 @@ print('Dataset ready')
 "
 ```
 
-Then create all 5 tables:
+Then create all 6 tables:
 
 | Table | Partition | TTL | Purpose |
 |-------|-----------|-----|---------|
@@ -612,6 +612,7 @@ Then create all 5 tables:
 | `approval_history` | `log_date` | 730 days | Full approval gate history |
 | `observability_weekly` | — | indefinite | Weekly summary archive |
 | `memory_entries` | — | indefinite | Structured metadata for Vertex AI RAG entries |
+| `monologue_frames` | `log_date` | 90 days | Think node reasoning traces (`GAOS-Persona-Spec.md` §4) |
 
 The `memory_entries` table holds the structured `MemoryEntry` metadata (agent_id, knowledge_type,
 active flag, version, etc.) so that `load_domain_memory()` can filter by agent and active status
@@ -643,7 +644,30 @@ client.create_table(table, exists_ok=True)
 print('memory_entries: created')
 ```
 
-**Verification:** In BigQuery console, expand `aos_logs` dataset — 5 tables listed.
+```python
+# Schema: monologue_frames
+from google.cloud import bigquery
+client = bigquery.Client(project='morphic-gaos-prod')
+table = bigquery.Table(
+    'morphic-gaos-prod.aos_logs.monologue_frames',
+    schema=[
+        bigquery.SchemaField('frame_id', 'STRING'),
+        bigquery.SchemaField('project_id', 'STRING'),
+        bigquery.SchemaField('task_id', 'STRING'),
+        bigquery.SchemaField('response_mode', 'STRING'),
+        bigquery.SchemaField('reasoning_summary', 'STRING'),
+        bigquery.SchemaField('log_date', 'DATE'),
+        bigquery.SchemaField('created_at', 'TIMESTAMP'),
+    ],
+)
+table.time_partitioning = bigquery.TimePartitioning(
+    field='log_date', expiration_ms=90 * 86_400_000,
+)
+client.create_table(table, exists_ok=True)
+print('monologue_frames: created')
+```
+
+**Verification:** In BigQuery console, expand `aos_logs` dataset — 6 tables listed.
 
 ---
 
@@ -972,7 +996,7 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [ ] Authorized Approvers tab has at least one row (owner, tier 5, active=TRUE)
 - [ ] `settings.yaml` is complete with correct `workbook_id`, `knowledge_folder_id`, and model aliases
 - [ ] `WEBHOOK_URL` secret is populated in Secret Manager
-- [ ] BigQuery dataset and 5 tables created with TTL partitioning
+- [ ] BigQuery dataset and 6 tables created with TTL partitioning
 - [ ] All Knowledge/ seed files created in Drive
 - [ ] All 7 Cloud Run services deployed and returning `{"status":"ok"}` on `/health`
 - [ ] All 22 Pub/Sub push subscriptions created with OIDC auth (`pubsub-push-sa`)

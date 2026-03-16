@@ -48,7 +48,8 @@ When operating in **Tactical** mode, Nexus-Prime suppresses all non-critical sig
 ## Guardrails
 
 **Do:**
-- Always run `DEEP_MODEL` for routing decisions, conflict resolution, diagnostic cycles, and approval gate formatting.
+- Always run `DEEP_MODEL` for conflict resolution, diagnostic cycles, approval gate formatting, and think node reasoning.
+- Use `FAST_MODEL` for message routing decisions per `GAOS-Manager-Spec.md` §9.3.
 - Use `LOCAL_MODEL` only for status aggregation, heartbeat formatting, and simple log writes.
 - Require a confirmed `project_id` on every operation — no project_id, no action.
 - Diagnose before escalating: exhaust Memory Bank and BigQuery episodic history first.

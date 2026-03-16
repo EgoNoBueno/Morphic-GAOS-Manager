@@ -4,7 +4,7 @@
 
 Morphic-G AOS (Agent Operating System) is an intelligent workforce built entirely on Google's cloud ecosystem. Instead of one monolithic bot, it is a coordinated team of specialized AI agents that handle the day-to-day operations of a small business — accounting, marketing, sales, operations, admin, and research — running autonomously, learning from experience, and escalating to the human owner only when a decision genuinely requires one.
 
-The system is designed to run for roughly **$1.50 per month** in cloud costs by routing routine work to a free local AI model, reserving the paid cloud models for decisions that actually warrant them, and using Google's free-tier services wherever possible.
+The system is designed to run for roughly **$2.50 per month** in cloud costs by routing routine work to a free local AI model, reserving the paid cloud models for decisions that actually warrant them, and using Google's free-tier services wherever possible.
 
 ---
 
@@ -63,7 +63,7 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 
 #### Hybrid LLM Strategy
 **What it is:** Three model tiers — `LOCAL_MODEL` (free, runs on your local machine via Ollama), `FAST_MODEL` (Gemini Flash, fast and cheap), `DEEP_MODEL` (Gemini Pro, for serious reasoning). All three are referenced by alias in `settings.yaml`; no version strings appear in code.
-**Why it exists:** The majority of agent work is logging, formatting, and summarizing — tasks that a free local model handles perfectly. Reserving paid cloud models for genuine reasoning decisions cuts monthly costs from ~$50 to ~$1.50.
+**Why it exists:** The majority of agent work is logging, formatting, and summarizing — tasks that a free local model handles perfectly. Reserving paid cloud models for genuine reasoning decisions cuts monthly costs from ~$50 to ~$2.50.
 **Resources required:** Ollama (local machine), Google Gemini API, `config/settings.yaml`.
 
 #### A2A Communication Protocol
@@ -87,7 +87,7 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 **Resources required:** Google Apps Script, BigQuery, Ollama (for weekly summarization before deletion).
 
 #### Cost Strategy
-**What it is:** A four-tier decision hierarchy: Free First → Hybrid Second → Paid Only When Necessary → Never Pay for Idle. Every infrastructure choice is evaluated against this before committing. Estimated monthly cost for a single operator during Phases 1–4 is ≈ $1.50.
+**What it is:** A four-tier decision hierarchy: Free First → Hybrid Second → Paid Only When Necessary → Never Pay for Idle. Every infrastructure choice is evaluated against this before committing. Estimated monthly cost for a single operator during Phases 1–4 is ≈ $2.50.
 **Why it exists:** Small business operators cannot justify $50–$200/month for an AI system that mostly does routine logging. The architecture is explicitly designed to stay within Google's free tiers for everything except actual reasoning work.
 **Resources required:** Cloud Run (scale-to-zero), Ollama (local), Cloud Scheduler, all free-tier Google services.
 
