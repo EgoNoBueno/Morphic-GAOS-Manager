@@ -364,55 +364,57 @@ The script creates the tab and header row. Add your owner row manually in row 2:
 your@email.com | Your Name | 5 | TRUE | <today> | Owner
 ```
 
-### 4.4 Deploy Apps Script
+### 4.4 Deploy Apps Script (Automated)
 
-1. In the Sheet: **Extensions → Apps Script**
-2. Create three script files. Paste in the full implementations from `GAOS-Manager-Spec.md`:
-   - `doPost.gs` — from §14 (HMAC webhook handler)
-   - `onChangeApproval.gs` — from §14 (RBAC approval handler)
-   - `syncSkillsToVertex.gs` — from §14 (three-gate code deploy)
-   - `setup_protection.gs` — from §14 (run once to lock columns)
-3. Add `WEBHOOK_HMAC_SECRET` to **Script Properties** (Project Settings → Script Properties):
-   - Key: `WEBHOOK_HMAC_SECRET`
-   - Value: the same 32-byte hex value stored in Secret Manager
-4. Add `VERTEX_AGENT_ENDPOINT` to Script Properties:
-   - Value: placeholder for now — fill in after Cloud Run deploy in §8
+Run the setup script — it creates the bound project, uploads all `.gs` files,
+deploys the Web App, and stores `WEBHOOK_URL` in Secret Manager:
+
+```powershell
+python scripts/setup_apps_script.py
+```
+
+**Phase 1** (create + upload + deploy) runs fully. At the end it opens the
+Apps Script editor in your browser for a **one-time OAuth consent click**.
+After clicking Allow, run Phase 2:
+
+```powershell
+python scripts/setup_apps_script.py --post-auth
+```
+
+**Phase 2** sets all Script Properties (`WEBHOOK_HMAC_SECRET`, `WEBHOOK_URL`,
+`VERTEX_AGENT_ENDPOINT` placeholder, `GCP_PROJECT`), installs the `onChange`
+trigger, and runs `setupProtections` — all via the Apps Script API.
+
+> **Note:** `VERTEX_AGENT_ENDPOINT` is stored as an empty string placeholder.
+> Update it after Cloud Run deploy in §8:
+> Apps Script → Project Settings → Script Properties → `VERTEX_AGENT_ENDPOINT`
 
 ### 4.5 Run Protection Setup
 
-In the Apps Script editor, select `setupProtections` and click **Run**. This locks:
+Handled automatically by `--post-auth`. The script calls `setupProtections`,
+which locks:
 - Column I (Status) on `Agent_Approvals` → owner only
 - Column H (Proposed Code) on `Agent_Approvals` → owner only
 - Column M (code_sha256) on `Agent_Approvals` → owner only
 - Entire `Authorized Approvers` tab → owner only
 
+If it fails remotely, run manually: Apps Script editor → select
+`setupProtections` → **Run**.
+
 ### 4.6 Install the `onChange` Trigger
 
-Apps Script → **Triggers** (clock icon) → Add Trigger:
-- Function: `onChangeApproval`
-- Event source: From spreadsheet
-- Event type: On change
-- Save
+Handled automatically by `--post-auth`. The script calls `setupTrigger_()`,
+which installs the `onChangeApproval` onChange trigger idempotently.
+
+If it fails remotely, install manually: Apps Script → **Triggers** →
+Add Trigger → Function: `onChangeApproval` | Event type: On change.
 
 ### 4.7 Deploy the Webhook as a Web App
 
-Apps Script → **Deploy → New deployment**:
-- Type: Web app
-- Execute as: **Me**
-- Who has access: **Anyone**
-- Click Deploy — copy the Web App URL
+Handled automatically by Phase 1. The Web App URL is stored in Secret Manager
+as `WEBHOOK_URL` and in `config/settings.yaml` under `apps_script.webhook_url`.
 
-Store the URL in Secret Manager:
-```bash
-echo -n "<web-app-url>" | \
-  gcloud secrets versions add WEBHOOK_URL --data-file=- --project=morphic-gaos-prod
-```
-
-Also store it in Script Properties:
-- Key: `WEBHOOK_URL`
-- Value: the same URL
-
-**Verification (Sheet):**
+**Verification (Sheet):
 - Manually change a `Status` cell in `Agent_Approvals` to `Approved` — an entry should appear in the `Logs` tab (from `logApprovalEvent_`).
 - Change a cell without being in the `Authorized Approvers` tab — the cell should revert to `Pending` and a `NOT_IN_APPROVERS_LIST` entry should appear.
 

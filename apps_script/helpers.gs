@@ -1,4 +1,8 @@
 // apps_script/helpers.gs — shared utilities used by all other script files
+//
+// Also contains setup helpers called remotely by scripts/setup_apps_script.py:
+//   setupPropertiesFromApi_(props)  — sets Script Properties from a key/value object
+//   setupTrigger_()                 — installs the onChange trigger programmatically
 // All functions in this file are available to every other .gs file in the project.
 
 /**
@@ -158,4 +162,43 @@ function publishCriticalAlert_(proposalId, priority, alertType, message) {
   } catch (err) {
     logSecurityEvent_('PUBLISH_CRITICAL_ALERT_ERROR', err.message);
   }
+}
+
+// ── Remote setup helpers (called by scripts/setup_apps_script.py) ─────────────
+
+/**
+ * Sets Script Properties from a plain key/value object.
+ * Called remotely via the Apps Script API during automated setup.
+ * Empty string values are stored as-is (placeholder for later).
+ */
+function setupPropertiesFromApi_(props) {
+  const sp = PropertiesService.getScriptProperties();
+  for (const key in props) {
+    if (Object.prototype.hasOwnProperty.call(props, key)) {
+      sp.setProperty(key, String(props[key]));
+    }
+  }
+  Logger.log('Script Properties set: ' + Object.keys(props).join(', '));
+}
+
+/**
+ * Installs the onChangeApproval trigger programmatically.
+ * Idempotent — skips installation if an onChange trigger already exists.
+ * Called remotely via the Apps Script API during automated setup.
+ */
+function setupTrigger_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const triggers = ScriptApp.getUserTriggers(ss);
+  for (const t of triggers) {
+    if (t.getHandlerFunction() === 'onChangeApproval' &&
+        t.getEventType() === ScriptApp.EventType.ON_CHANGE) {
+      Logger.log('onChange trigger already installed — skipping');
+      return;
+    }
+  }
+  ScriptApp.newTrigger('onChangeApproval')
+    .forSpreadsheet(ss)
+    .onChange()
+    .create();
+  Logger.log('onChange trigger installed for onChangeApproval');
 }
