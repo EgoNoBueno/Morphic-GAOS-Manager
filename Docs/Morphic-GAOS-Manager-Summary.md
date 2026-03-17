@@ -28,7 +28,7 @@ The system is designed to run for roughly **$2.50 per month** in cloud costs by 
 
 6. **Layered Memory** — Scratchpad → BigQuery (episodic) → Sheets staging buffer → Vertex AI Memory Bank (long-term). Agents propose learnings; Nexus-Prime promotes them to permanent memory only after owner approval.
 
-**Current State (Phase 1 complete):** All 7 orchestrators, the full tool layer, and a 151-test suite are built. Phases 2–4 cover Ollama observability, the full Gemini + approval loop, and production validation.
+**Current State (Phase 2.5 Steps 1+2 complete):** All 7 orchestrators, the full tool layer (including `google_chat.py` and `web_search.py`), and a 215-test suite are built. Phase 2.5 Step 1 (`POST /chat` + Chat tools) and Step 2 (`POST /daily-sync` + morning briefing) are deployed. Steps 3–7 (Vertex Search, Google Docs, AppSheet, Scout research, ITERATE_PLAN) remain.
 
 ---
 
@@ -91,7 +91,7 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 **Resources required:** Ollama (local machine), Google Gemini API, `config/settings.yaml`.
 
 #### A2A Communication Protocol
-**What it is:** A standardized message envelope (`A2AMessage`) with typed fields — source agent, target agent, message type, priority, payload, project ID, correlation ID. All agent-to-agent communication goes through this envelope on Cloud Pub/Sub. The `MessageType` enum has 14 values covering the full operational surface: status updates, task routing, data exchange, alerts, escalation, approval flow (`APPROVAL_REQUEST` / `APPROVAL_RESULT`), knowledge promotion, self-evolution, project registry changes, system broadcasts, and the Cloud Scheduler TTL sweep (`TTL_SWEEP`).
+**What it is:** A standardized message envelope (`A2AMessage`) with typed fields — source agent, target agent, message type, priority, payload, project ID, correlation ID. All agent-to-agent communication goes through this envelope on Cloud Pub/Sub. The `MessageType` enum has 22 values covering the full operational surface: status updates, task routing, data exchange, alerts, escalation, approval flow (`APPROVAL_REQUEST` / `APPROVAL_RESULT`), knowledge promotion, self-evolution, project registry changes, system broadcasts, the Cloud Scheduler TTL sweep (`TTL_SWEEP`) and nightly archive (`NIGHTLY_ARCHIVE`), and 8 Phase 2.5 conversation and intelligence types (`CHAT_MESSAGE`, `DAILY_SYNC`, `VISION_SUBMITTED`, `PLAN_REVIEW`, `COMMENT_RECEIVED`, `RESEARCH_MANDATE`, `SKILL_REQUEST`, `KNOWLEDGE_INJECTION`).
 **Why it exists:** Standardization means any agent can be replaced or updated without changing the messaging layer. The `correlation_id` links related messages across a multi-step workflow for audit traceability.
 **Resources required:** Cloud Pub/Sub, Pydantic.
 
@@ -121,7 +121,9 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 **Resources required:** Google Secret Manager, Google Apps Script (protected ranges, `onChange` trigger, `syncSkillsToVertex`), Vertex AI sandbox, Cloud Logging.
 
 #### Development Roadmap (5 Phases)
-**What it is:** A phased build plan. **Phase 1 is complete** — all 7 orchestrators, the `main.py` Cloud Run entry point, the full tool layer (`bigquery`, `webhook_sender`, `memory`, `project_registry`, `google_sheets`, `pubsub`, `secrets`), and a 151-test suite covering U1–U5 unit specs and S1–S4 static analysis gate. Phase 2 (Ollama observability), Phase 3 (Gemini + full approval loop), Phase 4 (full validation, exit criteria), Phase 5 (Grafana CEO dashboard, future).
+**What it is:** A phased build plan. **Phase 1 is complete** — all 7 orchestrators, the `main.py` Cloud Run entry point, the full tool layer (`bigquery`, `webhook_sender`, `memory`, `project_registry`, `google_sheets`, `pubsub`, `secrets`), and a 215-test suite covering U1–U5 unit specs and S1–S4 static analysis gate.
+**Phase 2.5 Steps 1+2 are complete** — `tools/google_chat.py` + `POST /chat` (25 tests; commit `551f0ca`); `handle_daily_sync()` + `POST /daily-sync` + `ChatConfig` (13 tests; commit `ed6140b`).
+Phase 2 (Ollama observability), Phase 3 (Gemini + full approval loop), Phase 4 (full validation, exit criteria), Phase 5 (Grafana CEO dashboard, future).
 **Why it exists:** Building everything at once is how you end up with a broken system that is impossible to debug. Each phase has explicit exit criteria that must all be true before moving to the next.
 **Resources required:** Phases 1–4: Cloud Run, Cloud Pub/Sub, Sheets, Ollama, Gemini. Phase 5 (future): Grafana on Cloud Run, Vertex AI Agent Engine (optional upgrade).
 
@@ -202,7 +204,7 @@ While the master spec defines what the system does, this document defines how ea
 
 *The API reference for every shared function agents are allowed to call. No agent touches a Google SDK directly — it goes through these wrappers.*
 
-This document defines the public interface for six tool modules. The design enforces consistent `project_id` scoping, batching, and error handling across the whole system.
+This document defines the public interface for eight tool modules. The design enforces consistent `project_id` scoping, batching, and error handling across the whole system.
 
 #### `tools/secrets.py`
 **What it does:** Fetches secrets from Google Secret Manager by name. The only module allowed to touch Secret Manager directly.

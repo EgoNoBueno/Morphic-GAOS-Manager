@@ -711,7 +711,164 @@ class ModelResponse:
 
 ---
 
-## 11. Tool Usage Rules Summary
+## 11. `tools/google_chat.py`
+
+Google Chat integration for human↔agent communication. Added in Phase 2.5 Step 1.
+
+> **Spec reference:** `GAOS-Manager-Spec.md §2.5 (Phase 2.5 — Conversation Layer)`
+
+```python
+from googleapiclient.discovery import build
+
+def send_message(space_name: str, text: str) -> dict:
+    """
+    Send a plain-text message to a Google Chat space.
+
+    Args:
+        space_name: The Chat space resource name, e.g. ``spaces/XXXXXXXXX``.
+        text:       Plain-text body (≤ 4096 characters; truncated automatically).
+
+    Returns:
+        The Chat API Message resource dict.
+
+    Raises:
+        ChatConfigError:   space_name is empty.
+        ChatDeliveryError: Chat API returned a non-2xx response.
+    """
+
+def send_card(space_name: str, card: dict) -> dict:
+    """
+    Send a Card v2 message to a Chat space.
+
+    Args:
+        space_name: Chat space resource name.
+        card:       Fully-formed Card v2 dict (must have ``header`` and at least one ``section``).
+
+    Returns:
+        The Chat API Message resource dict.
+
+    Raises:
+        ChatConfigError, ChatDeliveryError.
+    """
+
+def send_approval_card(
+    space_name: str,
+    proposal_id: str,
+    agent_id: str,
+    issue_summary: str,
+    proposed_action: str,
+    priority: int,
+    cost_usd: float,
+    doc_url: str = "",
+) -> dict:
+    """
+    Post an Approve / Reject interactive card to the owner's Chat space.
+
+    Button clicks return CARD_CLICKED events to ``POST /chat`` with
+    ``action.actionMethodName`` set to ``"approve"`` or ``"reject"``.
+
+    Raises:
+        ChatConfigError:   space_name or proposal_id is empty.
+        ChatDeliveryError: Chat API returned an error.
+    """
+
+def send_skill_import_card(
+    space_name: str,
+    proposal_id: str,
+    agent_id: str,
+    package_name: str,
+    reason: str,
+    pypi_url: str = "",
+) -> dict:
+    """
+    Post a Skill Import approval card requesting permission to ``pip install`` a package.
+
+    Button clicks return CARD_CLICKED events with ``action_name`` set to
+    ``"skill_approve"`` or ``"skill_reject"``.
+
+    Raises:
+        ChatConfigError, ChatDeliveryError.
+    """
+
+def parse_chat_event(payload: dict) -> dict:
+    """
+    Validate and parse an inbound Google Chat push payload.
+
+    Chat delivers event types: ``MESSAGE``, ``CARD_CLICKED``,
+    ``ADDED_TO_SPACE``, ``REMOVED_FROM_SPACE``.
+
+    Returns:
+        Normalised dict with keys: ``event_type``, ``space_name``,
+        ``sender_email``, ``text`` (or empty str), ``action_name``
+        (for CARD_CLICKED), ``parameters`` (list of {key, value}).
+
+    Raises:
+        ChatEventParseError: Payload is missing required fields.
+    """
+```
+
+### Authentication
+
+Uses a Google service account with `chat.bot` scope. Key path is loaded from `settings.chat.service_account_key`; falls back to ADC (used automatically on Cloud Run).
+
+### Error Types
+
+```python
+class ChatDeliveryError(Exception):
+    """Chat API returned a non-2xx response."""
+
+class ChatConfigError(Exception):
+    """Chat is not configured (missing space or credentials)."""
+
+class ChatEventParseError(Exception):
+    """Inbound Chat push payload is missing required fields."""
+```
+
+### Settings Required
+
+Add to `config/settings.yaml` under the `chat:` key:
+
+```yaml
+chat:
+  owner_space: "spaces/XXXXXXXXX"   # Owner's DM space resource name
+  service_account_key: ""           # Optional path to SA key JSON; leave blank for ADC
+```
+
+### Usage Rule
+
+Only Nexus-Prime calls `send_approval_card()` or `send_skill_import_card()`. Domain orchestrators may not post Chat messages directly.
+
+---
+
+## 12. `tools/web_search.py`
+
+Lightweight DuckDuckGo Instant Answer API wrapper for prepending real-world context to `LOCAL_MODEL` (Ollama) prompts. No API key required; no cost.
+
+> **Used internally by:** `agents/__init__.py` `_call_model()` when `web_access=True`.
+
+```python
+def web_search(query: str, max_results: int = 5) -> str:
+    """
+    Query DuckDuckGo Instant Answer API and return a formatted snippet string.
+
+    Args:
+        query:       Natural-language search query.
+        max_results: Maximum related-topic snippets to include (default 5).
+
+    Returns:
+        Multi-line string of AbstractText + up to max_results RelatedTopics.
+        Returns empty string on any failure — this function never raises.
+    """
+```
+
+### Behaviour
+- Returns `""` on network timeout (5-second limit), HTTP error, or empty results — the caller always gets a string.
+- `web_access=True` is silently ignored for Gemini models (they have live knowledge).
+- **Never use** `web_access=True` in high-frequency loops or with prompts containing customer PII (the query is sent to DuckDuckGo's public API).
+
+---
+
+## 13. Tool Usage Rules Summary
 
 | Rule | Detail |
 |------|--------|
@@ -725,11 +882,12 @@ class ModelResponse:
 
 ---
 
-## 12. Reference Index
+## 14. Reference Index
 
 | Topic | Location |
 |-------|----------|
 | A2AMessage schema | `GAOS-Manager-Spec.md` §10.2 |
+| MessageType registry (all 22 types) | `GAOS-Manager-Spec.md` §10.2 |
 | Webhook HMAC threat model and test matrix | `GAOS-Manager-Spec.md` §15.2 |
 | Approval Gate column definitions | `GAOS-Manager-Spec.md` §14 |
 | Secret inventory | `GAOS-Manager-Spec.md` §15.1 |
@@ -738,3 +896,4 @@ class ModelResponse:
 | Agent boot sequence (tool call order) | `GAOS-Agent-Spec.md` §7 |
 | Project Registry tab schema | `GAOS-Manager-Spec.md` §2 |
 | Drive Knowledge/ folder structure | `GAOS-Memory-Spec.md` §7 |
+| Chat settings (`chat.owner_space`, `chat.service_account_key`) | `GAOS-Deploy-Spec.md` §10.3 |

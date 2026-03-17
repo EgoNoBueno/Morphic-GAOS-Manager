@@ -204,7 +204,8 @@ gcloud services enable \
   logging.googleapis.com \
   monitoring.googleapis.com \
   aiplatform.googleapis.com \
-  cloudresourcemanager.googleapis.com
+  cloudresourcemanager.googleapis.com \
+  chat.googleapis.com
 ```
 
 **Verification:** `gcloud services list --enabled` — all 11 services must appear.
@@ -898,13 +899,16 @@ done
 
 > **Note:** Secrets (`GEMINI_API_KEY`, etc.) are **not** injected as environment variables. Each agent fetches secrets at boot via the Secret Manager API using its service account identity. `--set-secrets` is not needed.
 
-Each service exposes four endpoints:
+Each service exposes seven endpoints:
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/pubsub` | POST | Pub/Sub push subscription delivery |
 | `/ttl-sweep` | POST | Cloud Scheduler hourly TTL sweep (Nexus-Prime only) |
 | `/sync` | POST | Apps Script approval callback (Nexus-Prime only) |
+| `/archive` | POST | Cloud Scheduler nightly archive sweep (Nexus-Prime only) |
+| `/daily-sync` | POST | Cloud Scheduler 6 AM morning briefing (Nexus-Prime only) |
+| `/chat` | POST | Google Chat push events — messages and card callbacks (Nexus-Prime only) |
 | `/health` | GET | Liveness probe — always returns `{"status":"ok"}` |
 
 All POST endpoints require a `Bearer` token in the `Authorization` header. Cloud Run ingress validates the OIDC token before the request reaches the handler; the handler check is defense-in-depth only.
@@ -1015,8 +1019,6 @@ gcloud scheduler jobs create http daily-kickoff \
   --schedule="0 6 * * *" \
   --uri="${NP_URL}/daily-sync" \
   --oidc-service-account-email="nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com" \
-  --project=morphic-gaos-prod
-```
   --project=morphic-gaos-prod
 ```
 

@@ -450,7 +450,7 @@ Volume includes the `think` node (`GAOS-Persona-Spec.md` §4) and weekly frictio
 |---------|-----------|---------------------|-------------------|
 | **Cloud Pub/Sub** | $0.04/GB after 10 GB free | ~50 MB messages | **$0.00** (under free tier) |
 | **Cloud Run** (agent runtime + triggers) | $0.000024/vCPU-sec + $0.0000025/GB-sec | ~500 agent invocations × 2 s × 0.25 vCPU + 2 scheduled jobs | **~$0.01** |
-| **Cloud Scheduler** | $0.10/job/month (first 3 free) | 2 jobs (TTL sweep + archive) | **$0.00** (within free tier) |
+| **Cloud Scheduler** | $0.10/job/month (first 3 free) | 3 jobs (TTL sweep + archive + daily-kickoff); 4th job `doc-comment-poll` = $0.10/month (Phase 2.5 Step 5) | **$0.00** (3 jobs within free tier); **$0.10** when Phase 2.5 Step 5 is deployed |
 | **Gemini Flash (`FAST_MODEL`)** | ~$0.075/1M input + ~$0.30/1M output tokens | ~700K in + 150K out (routing, Scout synthesis, fallback tasks) | **~$0.10** |
 | **Gemini Pro (`DEEP_MODEL`)** | ~$1.25/1M input + ~$5.00/1M output tokens | ~400K in + 100K out (approvals, think node, diagnostics, weekly review) | **~$1.00** |
 | **Vertex AI Code Execution** | ~$0.001/session | ~10 sessions (evolution tasks) | **~$0.01** |
@@ -563,11 +563,28 @@ class A2AMessage(BaseModel):
 |----------------|-----------|--------|
 | `STATUS_UPDATE` | Any → Nexus-Prime | Routine heartbeat / objective update |
 | `TASK_HANDOFF` | Any → Any | Passing a unit of work to another orchestrator |
+| `TASK_COMPLETE` | Any → Nexus-Prime | Task finished; no further action needed |
 | `DATA_REQUEST` | Any → Any | Requesting a data payload (awaits `DATA_RESPONSE`) |
 | `DATA_RESPONSE` | Any → Requester | Reply to a `DATA_REQUEST` |
 | `ALERT` | Any → Nexus-Prime | Anomaly or error requiring manager awareness |
 | `ESCALATION` | Any → Nexus-Prime | Requires human decision via Approval Gate |
+| `EVOLUTION_REQUEST` | Any → Nexus-Prime | Code evolution cycle initiated by an orchestrator |
+| `APPROVAL_REQUEST` | Any → Nexus-Prime | Agent requests human approval via Approval Gate |
+| `APPROVAL_RESULT` | Apps Script → Nexus-Prime | Human responded to a proposal (`Approved` / `Rejected`) |
+| `KNOWLEDGE_CANDIDATE` | Any → Nexus-Prime | New observation promoted to human review |
+| `NEW_PROJECT` | Nexus-Prime internal | Project Registry change detected — initialize namespace |
 | `BROADCAST` | Nexus-Prime → All | System-wide directive or config change |
+| `TTL_SWEEP` | Cloud Scheduler → Nexus-Prime | Hourly scan for proposals past their TTL |
+| `NIGHTLY_ARCHIVE` | Cloud Scheduler → Nexus-Prime | 2 AM archive of aged Sheet rows to BigQuery |
+| — *Phase 2.5* — | | |
+| `CHAT_MESSAGE` | Google Chat → Nexus-Prime | Inbound owner message via Google Chat |
+| `DAILY_SYNC` | Cloud Scheduler → Nexus-Prime | 6 AM morning briefing trigger |
+| `VISION_SUBMITTED` | Owner → Nexus-Prime | Owner submitted a project vision (Chat or AppSheet) |
+| `PLAN_REVIEW` | Owner → Nexus-Prime | Owner commented on a Blueprint Doc constraint |
+| `COMMENT_RECEIVED` | Poll job → Nexus-Prime | Doc comment poll detected a new owner comment |
+| `RESEARCH_MANDATE` | Nexus-Prime → Scout | Deep structured research request |
+| `SKILL_REQUEST` | Any → Nexus-Prime | Agent requests approval to install a Python package |
+| `KNOWLEDGE_INJECTION` | Scout → Nexus-Prime | Corroborated market intelligence (≥ 5 sources) |
 
 ### 10.3 Cross-Domain Workflow Policies
 
@@ -1536,7 +1553,7 @@ Inserted between Phase 2 and Phase 3. All items below must be deployed and verif
 #### Goals
 - Replace Sheet-dropdown approval with a Google Chat card (Option A: Chat is the single source of truth for approval events).
 - Add a conversational `POST /chat` endpoint so the owner can interact with Nexus-Prime directly.
-- Introduce a daily morning briefing via `POST /sync` (Cloud Scheduler, 6 AM daily).
+- Introduce a daily morning briefing via `POST /daily-sync` (Cloud Scheduler, 6 AM daily).
 - Add a **Blueprint Factory** — Nexus-Prime converts Chat Vision submissions into structured Google Docs project blueprints.
 - Integrate **Vertex AI Search** over the Drive `Knowledge/` corpus so agents can retrieve procedural memory (Layer 5 was write-only before this step).
 - Add an **AppSheet** Vision Hub UI as a structured alternative submission path (merged into this step).
@@ -1549,8 +1566,8 @@ Inserted between Phase 2 and Phase 3. All items below must be deployed and verif
 |------|------------|-------------|--------|
 | 1 | `tools/google_chat.py` + `POST /chat` endpoint + Skill Import card | `tools/google_chat.py`, `tests/test_google_chat.py` | ✅ Complete |
 | 2 | `POST /daily-sync` endpoint + daily morning briefing card + `daily-kickoff` Scheduler job | `tests/test_daily_sync.py` | ✅ Complete |
-| 3 | `tools/google_docs.py` + Blueprint Factory (Nexus-Prime `ITERATE_PLAN` node) | `tools/google_docs.py` | — |
-| 4 | `tools/vertex_search.py` + Layer 5b retrieval wired to agent boot context | `tools/vertex_search.py` | — |
+| 3 | `tools/vertex_search.py` + Playbook schema + `write_playbook` node (all 6 orchestrators) | `tools/vertex_search.py` | — |
+| 4 | `tools/google_docs.py` + Blueprint Factory (Nexus-Prime `ITERATE_PLAN` node) | `tools/google_docs.py` | — |
 | 5 | AppSheet Vision Hub + `VISION_SUBMITTED` handler + `doc-comment-poll` Scheduler job | — | — |
 | 6 | Scout `_discover` recursive node + `tools/google_search.py` + `KNOWLEDGE_INJECTION` | `tools/google_search.py` | — |
 | 7 | `ITERATE_PLAN` constraint compaction node + `SKILL_REQUEST` approval flow | — | — |
