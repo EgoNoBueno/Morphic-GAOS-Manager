@@ -5,6 +5,32 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-16 — Phase 2.5 Step 4: Google Docs Tool (Blueprint Factory wrapper) COMPLETE ✅
+
+**266 / 266 tests passing. Zero regressions.**
+
+| File | Change |
+|------|--------|
+| `tools/google_docs.py` | NEW — Google Docs + Drive API wrapper. `create_document`, `read_document`, `append_content`, `list_comments`. SA key or ADC auth. `DocsApiError`, `DocumentNotFoundError` error types. |
+| `config/__init__.py` | Added `DocsConfig(service_account_key, blueprints_folder_id)`; added `docs: DocsConfig` field to `Settings`. |
+| `config/settings.yaml.template` | Added `docs:` block with `service_account_key` and `blueprints_folder_id` keys. |
+| `tests/test_google_docs.py` | NEW — 29 tests across 6 classes (`TestExtractText` × 4, `TestCreateDocument` × 7, `TestReadDocument` × 5, `TestAppendContent` × 5, `TestListComments` × 6, `TestCredentials` × 2). All passing. |
+| `Docs/GAOS-Tools-Spec.md` | Added §15 (`tools/vertex_search.py`) and §16 (`tools/google_docs.py`). Updated §14 Reference Index with Vertex Search + Docs entries. |
+| `SCRATCH.md` | Marked Step 3 (vertex_search) and Step 4 (google_docs) ✅ in build sequence tree and component table. |
+| `Docs/GAOS-Manager-Spec.md` | Updated Phase 2.5 roadmap table — Steps 3 and 4 marked ✅. |
+
+**Step 3 note:** `vertex_search.py` was already implemented (22 tests) but undocumented in GAOS-Tools-Spec.md. §15 closes that gap. `write_playbook` in orchestrators remains ⏳ — deferred to Phase 3 (Approval Gate) when the Playbook Drive folder is live and the approval loop is wired.
+
+**Next up:** Phase 2.5 Step 5 — Vision workflow (`Project_Incubator` tab + `VISION_SUBMITTED` handler + Blueprint Doc generator in Nexus-Prime + `ITERATE_PLAN` node).
+
+---
+
+## 2026-03-16 — Phase 2.5 Step 4: Google Docs Tool (Blueprint Factory wrapper) — Started
+
+**Scope:** `tools/google_docs.py` — Google Docs API wrapper (create, read, append, list comments). Feeds the Blueprint Factory in Nexus-Prime's `VISION_SUBMITTED` handler and the `ITERATE_PLAN` node. Config: `DocsConfig` + `docs:` settings block.
+
+---
+
 ## 2026-03-16 — Phase 2.5 Step 2: Morning Briefing + POST /daily-sync COMPLETE ✅
 
 **215 / 215 tests passing. Zero regressions.**

@@ -67,6 +67,11 @@ class VertexSearchConfig(BaseModel):
     knowledge_datastore_id: str = ""   # Vertex AI Search datastore for general Knowledge/
 
 
+class DocsConfig(BaseModel):
+    service_account_key: str = ""        # Path to SA key JSON; leave empty to use ADC
+    blueprints_folder_id: str = ""       # Default Drive folder ID for Blueprint Docs
+
+
 class Settings(BaseModel):
     gcp: GCPConfig
     sheet: SheetConfig
@@ -77,6 +82,7 @@ class Settings(BaseModel):
     apps_script: AppsScriptConfig = Field(default_factory=AppsScriptConfig)
     chat: ChatConfig = Field(default_factory=ChatConfig)
     vertex_search: VertexSearchConfig = Field(default_factory=VertexSearchConfig)
+    docs: DocsConfig = Field(default_factory=DocsConfig)
 
     @property
     def GCP_PROJECT_ID(self) -> str:

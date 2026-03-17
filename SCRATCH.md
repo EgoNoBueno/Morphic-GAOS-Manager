@@ -78,12 +78,15 @@ Phase 3 additions (Human Interface Layer)
 │                Chat Card v2 briefing, sends to settings.chat.owner_space. ChatConfig added
 │                to config/__init__.py + settings.yaml.template. NOTE: separate endpoint
 │                /daily-sync (not /sync) — docs corrected in commit a988dc6.
-└── Step 3 ► NEXT: tools/vertex_search.py + Playbook schema + write_playbook ritual in all orchestrators
-             └── Enables: Institutional context for every Blueprint Doc; Layer 5 retrieval gap closed
+├── ✅ Step 3 ► DONE: tools/vertex_search.py + Playbook schema + write_playbook ritual in all orchestrators
+│            └── 22 tests passing. search_knowledge, query_playbooks, query_domain_knowledge. VertexSearchConfig
+│                added to config/__init__.py + settings.yaml.template. NOTE: write_playbook in orchestrators
+│                deferred to Phase 3 (Approval Gate) when the Playbook Drive folder is live.
+└── ✅ Step 4 ► DONE: tools/google_docs.py (Docs API wrapper — create, read, append, list comments)
+             └── 29 tests passing. create_document, read_document, append_content, list_comments. DocsConfig
+                 added to config/__init__.py + settings.yaml.template. §15 + §16 added to GAOS-Tools-Spec.md.
 
 Phase 3.5 additions (Innovation Interface Layer)
-├── Step 4: tools/google_docs.py (Docs API wrapper — create, read, list comments)
-│            └── Depends on: Step 3 (Vertex Search results populate Blueprint Section B)
 ├── Step 5: Vision workflow — Project_Incubator tab + VISION_SUBMITTED + PLAN_REVIEW +
 │            │   COMMENT_RECEIVED + Blueprint Doc generator in Nexus-Prime +
 │            │   ITERATE_PLAN node + Doc comment polling (Cloud Scheduler 5-min job)
@@ -113,11 +116,11 @@ Phase 3.5 additions (Innovation Interface Layer)
 | 2 | `ChatConfig` + `chat.owner_space` in settings | Config | $0 | ✅ |
 | 2 | `DAILY_SYNC` in `MessageType` enum | Enum value | $0 | ✅ |
 | 2 | `daily-kickoff` Cloud Scheduler job | GCP resource | $0 (3rd free job) | ⏳ wire in GCP |
-| 3 | `tools/vertex_search.py` | Python tool | $0 (≤1,000 queries/month free) | — |
-| 3 | Playbook Markdown schema | Template | $0 | — |
-| 3 | `write_playbook` node in all 6 orchestrators | Logic change | $0 | — |
-| 3 | 2× Vertex AI Search datastores | GCP resource | $0 free tier | — |
-| 4 | `tools/google_docs.py` | Python tool | $0 — Workspace included | — |
+| 3 | `tools/vertex_search.py` | Python tool | $0 (≤1,000 queries/month free) | ✅ |
+| 3 | Playbook Markdown schema | Template | $0 | ✅ |
+| 3 | `write_playbook` node in all 6 orchestrators | Logic change | $0 | ⏳ Phase 3 |
+| 3 | 2× Vertex AI Search datastores | GCP resource | $0 free tier | ⏳ wire in GCP |
+| 4 | `tools/google_docs.py` | Python tool | $0 — Workspace included | ✅ |
 | 5 | `Project_Incubator` Sheet tab | Sheet tab | $0 | — |
 | 5 | `VISION_SUBMITTED` + `PLAN_REVIEW` + `COMMENT_RECEIVED` in `MessageType` | Enum values | $0 | — |
 | 5 | Blueprint Doc generator in Nexus-Prime | Logic | Minor LLM cost (Gemini Pro call per Blueprint) | — |

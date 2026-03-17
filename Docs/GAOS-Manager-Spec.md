@@ -1577,8 +1577,8 @@ Inserted between Phase 2 and Phase 3. All items below must be deployed and verif
 |------|------------|-------------|--------|
 | 1 | `tools/google_chat.py` + `POST /chat` endpoint + Skill Import card | `tools/google_chat.py`, `tests/test_google_chat.py` | ✅ Complete |
 | 2 | `POST /daily-sync` endpoint + daily morning briefing card + `daily-kickoff` Scheduler job | `tests/test_daily_sync.py` | ✅ Complete |
-| 3 | `tools/vertex_search.py` + Playbook schema + `write_playbook` node (all 6 orchestrators) | `tools/vertex_search.py` | — |
-| 4 | `tools/google_docs.py` + Blueprint Factory (Nexus-Prime `ITERATE_PLAN` node) | `tools/google_docs.py` | — |
+| 3 | `tools/vertex_search.py` + Playbook schema + `write_playbook` node (all 6 orchestrators) | `tools/vertex_search.py` | ✅ (`write_playbook` ⏳ Phase 3) |
+| 4 | `tools/google_docs.py` + Blueprint Factory (Nexus-Prime `ITERATE_PLAN` node) | `tools/google_docs.py` | ✅ |
 | 5 | AppSheet Vision Hub + `VISION_SUBMITTED` handler + `doc-comment-poll` Scheduler job | — | — |
 | 6 | Scout `_discover` recursive node + `tools/google_search.py` + `KNOWLEDGE_INJECTION` | `tools/google_search.py` | — |
 | 7 | `ITERATE_PLAN` constraint compaction node + `SKILL_REQUEST` approval flow | — | — |

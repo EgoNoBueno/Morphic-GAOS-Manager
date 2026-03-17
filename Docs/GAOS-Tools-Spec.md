@@ -897,3 +897,176 @@ def web_search(query: str, max_results: int = 5) -> str:
 | Project Registry tab schema | `GAOS-Manager-Spec.md` §2 |
 | Drive Knowledge/ folder structure | `GAOS-Memory-Spec.md` §7 |
 | Chat settings (`chat.owner_space`, `chat.service_account_key`) | `GAOS-Deploy-Spec.md` §10.3 |
+| Vertex AI Search settings (`vertex_search.*`) | `GAOS-Deploy-Spec.md` §10 |
+| Google Docs settings (`docs.*`) | `config/settings.yaml.template` — `docs:` block |
+| Blueprint Factory (Vision → Doc) | `Docs/agents/nexus-prime.md` — `VISION_SUBMITTED` handler |
+
+---
+
+## 15. `tools/vertex_search.py`
+
+Vertex AI Search (Discovery Engine) wrapper for Layer 5b semantic retrieval over the Drive Knowledge/ corpus. Added in Phase 2.5 Step 3.
+
+> **Spec reference:** `GAOS-Memory-Spec.md §3 (Layer 5b — Vertex AI Search retrieval layer)`
+
+```python
+def search_knowledge(
+    query: str,
+    project_id: str,
+    datastore_id: str,
+    max_results: int = 5,
+) -> list[dict[str, Any]]:
+    """
+    Run a semantic search against a Vertex AI Search datastore.
+
+    Returns:
+        List of dicts with keys: ``id``, ``title``, ``snippet``, ``link``.
+        Returns an empty list for blank queries or when the API returns no results.
+
+    Raises:
+        DatastoreNotConfiguredError: ``datastore_id`` is empty.
+        VertexSearchError:           Discovery Engine API failure.
+    """
+
+def query_playbooks(query: str, project_id: str, max_results: int = 5) -> list[dict[str, Any]]:
+    """Convenience wrapper: search the configured playbooks datastore.
+    Uses ``settings.vertex_search.playbook_datastore_id``."""
+
+def query_domain_knowledge(query: str, project_id: str, max_results: int = 5) -> list[dict[str, Any]]:
+    """Convenience wrapper: search the configured general-knowledge datastore.
+    Uses ``settings.vertex_search.knowledge_datastore_id``."""
+```
+
+### Error Types
+
+```python
+class VertexSearchError(Exception):
+    """Unrecoverable Vertex AI Search API error."""
+
+class DatastoreNotConfiguredError(Exception):
+    """Required datastore ID is missing from settings."""
+```
+
+### Settings Required
+
+```yaml
+vertex_search:
+  location: "global"
+  playbook_datastore_id: ""   # Short-form ID from Vertex AI Search console
+  knowledge_datastore_id: ""  # Second datastore for general Knowledge/ files
+```
+
+### Usage Rule
+
+Only Nexus-Prime and Scout call `query_playbooks()` / `query_domain_knowledge()`.
+Domain orchestrators receive retrieved context via Nexus-Prime task responses — they do
+not call Vertex Search directly.
+
+---
+
+## 16. `tools/google_docs.py`
+
+Google Docs + Drive API wrapper for the Blueprint Factory. Added in Phase 2.5 Step 4.
+
+> **Spec reference:** `GAOS-Memory-Spec.md §3 (Blueprint Factory)` · `Docs/agents/nexus-prime.md — VISION_SUBMITTED handler`
+
+```python
+def create_document(
+    title: str,
+    project_id: str,
+    folder_id: str | None = None,
+    initial_content: str = "",
+) -> str:
+    """
+    Create a new Google Doc and optionally place it in a Drive folder.
+
+    Args:
+        title:           Document title (required, non-empty).
+        project_id:      AOS project namespace.
+        folder_id:       Drive folder ID.  If ``None``, uses
+                         ``settings.docs.blueprints_folder_id``; if that is also
+                         empty, the document is created in the account root.
+        initial_content: Optional text inserted at index 1 immediately after creation.
+
+    Returns:
+        The document ID string.
+
+    Raises:
+        ValueError:   ``title`` is empty.
+        DocsApiError: Google Docs or Drive API failure.
+    """
+
+def read_document(doc_id: str, project_id: str) -> str:
+    """
+    Read the full plain-text content of a Google Doc.
+
+    Returns:
+        Document body as a plain-text string (newlines preserved).
+        Empty string if the document has no text.
+
+    Raises:
+        DocumentNotFoundError: Document does not exist or is inaccessible.
+        DocsApiError:          Google Docs API failure (non-404).
+    """
+
+def append_content(doc_id: str, content: str, project_id: str) -> None:
+    """
+    Append text to the end of an existing Google Doc.
+
+    No-op if ``content`` is empty.  Text is inserted at the last valid body index.
+
+    Raises:
+        DocumentNotFoundError: Document does not exist or is inaccessible.
+        DocsApiError:          Google Docs API failure.
+    """
+
+def list_comments(doc_id: str, project_id: str) -> list[dict[str, Any]]:
+    """
+    List all comments on a Google Doc (via the Drive API).
+
+    Used by the ``doc-comment-poll`` Cloud Scheduler job to feed owner comments
+    into the ``ITERATE_PLAN`` node in Nexus-Prime.
+
+    Returns:
+        List of dicts with keys:
+            ``id``         — comment resource ID
+            ``content``    — comment text
+            ``author``     — commenter's display name
+            ``created_at`` — ISO 8601 timestamp string
+            ``resolved``   — ``True`` if the thread is resolved
+
+    Raises:
+        DocumentNotFoundError: Document does not exist or is inaccessible.
+        DocsApiError:          Google Drive API failure.
+    """
+```
+
+### Error Types
+
+```python
+class DocsApiError(Exception):
+    """Unrecoverable Google Docs or Drive API error."""
+
+class DocumentNotFoundError(Exception):
+    """The requested document does not exist or is not accessible."""
+```
+
+### Authentication
+
+Uses a service account with `documents` + `drive` scopes. Key path is read from
+`settings.docs.service_account_key`; falls back to ADC (used automatically on Cloud Run
+and in local dev with `oauth-client.json`).
+
+### Settings Required
+
+```yaml
+docs:
+  service_account_key: ""      # Optional path to SA key JSON; leave empty for ADC
+  blueprints_folder_id: ""     # Default Drive folder ID for Blueprint Docs
+```
+
+### Usage Rule
+
+Only Nexus-Prime calls `create_document()`, `append_content()`, and `list_comments()`.
+Domain orchestrators do not interact with Google Docs directly — they submit task results
+to Nexus-Prime which applies Blueprint updates post-approval.

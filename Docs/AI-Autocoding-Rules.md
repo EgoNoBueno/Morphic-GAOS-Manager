@@ -1,4 +1,4 @@
-# AI Autocoding Rules — Morphic-G AOS
+# AI Autocoding Rules — Morphic-GAOS
 
 Hard rules for all development work on this codebase. These apply to human contributors and AI-assisted development sessions alike. Rules here are derived from painful lessons, spec decisions, and things that broke during Phase 1.
 
@@ -91,6 +91,8 @@ Code that fails either gate is a hard stop — log the failure, do not submit, d
 
 **Existing examples:** `tests/test_bigquery.py`, `tests/test_secrets.py`, `tests/test_webhook_sender.py`, `tests/test_memory.py`.
 
+**Mocking:** All GCP service calls must be patched using `unittest.mock.patch` or `pytest-mock`. Never make live API calls in the test suite. Mock at the SDK boundary (e.g., `google.cloud.bigquery.Client`), not at the tool-wrapper level, so the wrapper's logic is actually exercised.
+
 ---
 
 ## 9. Boot Sequence Is Ordered and Non-Negotiable
@@ -119,7 +121,7 @@ Do not reorder steps. Do not skip steps. Do not catch and swallow the `sys.exit(
 
 ## 11. Tests Must Stay Green
 
-**Rule:** Do not commit code that breaks the existing test suite. Run `pytest` before every commit. The current baseline is **65 tests, 0 failures**.
+**Rule:** Do not commit code that breaks the existing test suite. Run `pytest` before every commit and confirm zero failures. The test count grows as the project does — what matters is that the suite stays green, not what the number is.
 
 If a new feature legitimately makes an existing test incorrect (e.g., an interface change), update the test in the same commit — not in a follow-up.
 
@@ -137,6 +139,8 @@ pytest --tb=short
 New entries go at the **top** of WORKLOG.md (most recent first).
 
 **Timestamps must use the local system timezone — never UTC.** The project is operated from UTC−3. Do not stamp in UTC or any other zone.
+
+> **Enforcement:** Use `datetime.now(tz=datetime.timezone(datetime.timedelta(hours=-3))).isoformat(timespec='minutes')` or a helper that reads the local zone. CI runners and collaborators in other zones should not override this — WORKLOG entries are a human record, not a machine log.
 
 ---
 
@@ -184,6 +188,8 @@ Do not bury warnings in commit messages or the WORKLOG alone — they must be di
 - A blocker is encountered that genuinely requires human input, credentials, or a decision that cannot be inferred
 - The approach has failed in the same way more than once and a different strategy is needed
 - The task has revealed a scope change large enough that proceeding without alignment would waste significant effort
+
+> For the correct response when legitimately blocked, see the **Research** and **Tactical** modes in Rule 15.
 
 **What not to do:**
 - Do not stop at an arbitrary "seems like enough for one session" point and leave work half-done
@@ -256,7 +262,7 @@ def archive_rows(tab: str, rows: list[dict], project_id: str) -> int:
     msg = f"Archived {len(rows)} rows from {tab}"
 ```
 
-> **Tooling note:** `pyproject.toml` already configures `[tool.ruff]` with `line-length = 100` and `target-version = "py311"`. `.vscode/settings.json` is checked in with Format on Save enabled. A `.pre-commit-config.yaml` running `ruff check --fix` and `ruff format` would enforce this at commit time — recommended future setup task.
+> **Tooling note:** `pyproject.toml` already configures `[tool.ruff]` with `line-length = 100` and `target-version = "py311"`. `.vscode/settings.json` is checked in with Format on Save enabled. A `.pre-commit-config.yaml` running `ruff check --fix` and `ruff format` is not yet present — this is a tracked Phase 4 task. Until it exists, run `ruff check --fix . && ruff format .` manually before committing.
 
 ---
 
@@ -283,6 +289,8 @@ def get_secret(name: str, project_id: str) -> str:
 ```
 
 Private helpers (`_parse_ts`, `_log_cloud`, etc.) are exempt but encouraged.
+
+> ⚠️ **Exception — high-traffic private functions:** `_log_cloud` is called from every orchestrator and behaves as a public contract despite its underscore prefix. It **must** have a full docstring. Apply the same standard to any private function called from four or more distinct modules.
 
 > ⚠️ **Tech debt:** Existing public functions in `tools/` were written before this rule. Docstrings are required on all *new* public functions immediately. Backfilling existing functions is a known debt item tracked for Phase 4.
 
@@ -335,11 +343,26 @@ except Exception as exc:
 
 ## 20. Search Before Writing — No Duplicate Abstractions
 
-**Rule:** Before writing any new helper, tool wrapper, or utility function, search the codebase for an existing implementation. Use `Ctrl+Shift+F` in VS Code to search by function name, pattern, or behavior description.
+**Rule:** Before writing any new helper, tool wrapper, or utility function, search the codebase for an existing implementation. Use `Ctrl+Shift+F` (Windows/Linux) / `Cmd+Shift+F` (macOS) in VS Code to search by function name, pattern, or behavior description.
 
 If an abstraction already exists, it **must** be used — not re-implemented inline. If an existing abstraction is insufficient, extend it and update its spec entry rather than creating a parallel version.
 
 **Why this matters:** Parallel implementations silently diverge. One gets the retry logic update; the other doesn't. Two months later the codebase has two `delete_rows` functions with different behavior and no one knows which is authoritative.
+
+---
+
+---
+
+## 21. Commit and Branch Conventions
+
+**Rule:** Keep commits atomic — one logical change per commit. Do not bundle unrelated fixes, doc updates, and feature work into a single commit message.
+
+- **Commit messages:** Use the imperative mood: `Add X`, `Fix Y`, `Update Z spec`. Not `Added`, `Fixed`, or `I updated`.
+- **Branch naming:** `feature/<short-description>`, `fix/<short-description>`, `docs/<short-description>`. No spaces; use hyphens.
+- **Squash before merge:** Feature branches must be squashed to a clean commit history before merging to `master`. Intermediate WIP commits are acceptable on feature branches only.
+- **Doc + code in the same commit:** Per Rule 13, documentation updates required by a completed task must be in the same commit as the implementation — not a follow-up commit.
+
+**Why:** A commit log that mixes doc cleanups, bug fixes, and new features in a single entry makes `git bisect` unreliable and blame history unreadable.
 
 ---
 

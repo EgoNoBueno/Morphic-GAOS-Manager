@@ -71,3 +71,10 @@ vertex_search:
   location: "global"
   playbook_datastore_id: ""   # Short-form ID from Vertex AI Search console
   knowledge_datastore_id: ""  # Second datastore for non-playbook Knowledge/ files
+
+# Google Docs — Blueprint Factory (Phase 2.5 Step 4)
+# service_account_key: optional path to a SA key JSON with Docs + Drive scopes.
+# Leave empty to use ADC (recommended for Cloud Run and local dev with oauth-client.json).
+docs:
+  service_account_key: ""      # e.g. config/keys/nexus-prime-sa.json
+  blueprints_folder_id: ""     # Drive folder ID for Blueprint Docs (Project_Incubator/)
