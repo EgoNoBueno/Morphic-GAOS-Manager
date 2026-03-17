@@ -5,6 +5,22 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-16T15:30 — Glossary expansion COMPLETE ✅
+
+**`Docs/GAOS-Project-Glossary.md` fully rebuilt.** Commit `2df1898`.
+
+**What changed:**
+
+| File | Change |
+|------|--------|
+| `Docs/GAOS-Project-Glossary.md` | Replaced 11-entry stub with a full A–Y alphabetical glossary of 68 abbreviations/acronyms. Plain-English definitions written for a non-technical business owner. Google Tool Stack reference table updated to 10 services. |
+
+**Coverage added:** A2A, ADC, ADK, AGPL, AP, API, AR, AST, Base64, CI/CD, CLI, CMEK, cold-start, CPL, CRM, CVE, DPA, EDI, EOL, FastAPI, GCE, GCP, GDPR, Gemma, GMEK, GPU, Grafana, gspread, HMAC, HRIS, HSM, IAM, JSON, KMS, KPI, LangGraph, Llama, LLM, MCP, Mistral, Mypy, NER, NSSM, OAuth, OIDC, Ollama, P&L, PEP 8, PII, Pydantic, PyPI, pytest, RBAC, RFC 1918, ROAS, ROI, Ruff, SA, SDK, serverless, SHA-256, SKU, SLA, SQL, SSRF, TLS, TTL, UUID, uv, VPC, VRAM, winget, Write-Test-Refine, YAML.
+
+**Next up:** Phase 2 Item 2 — Apps Script manual setup (Script Properties, `setupProtections`, `onChange` trigger). Requires browser session.
+
+---
+
 ## 2026-03-16T15:00 — Phase 2 Item 3 COMPLETE ✅
 
 **All 62 tests pass (0 failures, 0 errors).**
