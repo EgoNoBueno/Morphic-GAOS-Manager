@@ -63,3 +63,11 @@ apps_script:
 # Discover the space name from an incoming Chat event (event.space.name)
 chat:
   owner_space: ""  # e.g. spaces/AAAAXXXXXXX
+
+# Vertex AI Search — Layer 5b semantic retrieval over Drive Knowledge/ corpus
+# Datastore IDs are provisioned by setup_workspace.py (Phase 2.5 Step 3)
+# Leave empty until datastores are created — tools gracefully raise DatastoreNotConfiguredError
+vertex_search:
+  location: "global"
+  playbook_datastore_id: ""   # Short-form ID from Vertex AI Search console
+  knowledge_datastore_id: ""  # Second datastore for non-playbook Knowledge/ files

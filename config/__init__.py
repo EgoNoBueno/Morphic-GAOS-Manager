@@ -61,6 +61,12 @@ class ChatConfig(BaseModel):
     owner_space: str = ""  # spaces/<id> — owner DM for morning briefings
 
 
+class VertexSearchConfig(BaseModel):
+    location: str = "global"
+    playbook_datastore_id: str = ""    # Vertex AI Search datastore for Knowledge/playbooks/
+    knowledge_datastore_id: str = ""   # Vertex AI Search datastore for general Knowledge/
+
+
 class Settings(BaseModel):
     gcp: GCPConfig
     sheet: SheetConfig
@@ -70,6 +76,7 @@ class Settings(BaseModel):
     projects: dict[str, ProjectConfig] = Field(default_factory=dict)
     apps_script: AppsScriptConfig = Field(default_factory=AppsScriptConfig)
     chat: ChatConfig = Field(default_factory=ChatConfig)
+    vertex_search: VertexSearchConfig = Field(default_factory=VertexSearchConfig)
 
     @property
     def GCP_PROJECT_ID(self) -> str:

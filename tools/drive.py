@@ -305,6 +305,49 @@ def list_folder(folder_path: str, project_id: str) -> list[str]:
     return results
 
 
+def write_playbook(doc: "Any", body: str, project_id: str) -> str:
+    """
+    Write a Playbook Markdown document to Knowledge/playbooks/ in Drive.
+
+    Generates YAML front-matter from ``doc`` (a PlaybookDoc instance) and
+    prepends it to ``body`` before calling write_file().  The filename is
+    derived from the project_id and a URL-safe slug of the title.
+
+    Args:
+        doc:        PlaybookDoc instance — provides all front-matter fields.
+        body:       Markdown body text (Objective, Milestones, Constraints …).
+        project_id: AOS project namespace.
+
+    Returns:
+        drive_file_id: The Google Drive file ID of the written playbook.
+
+    Raises:
+        DriveWriteError, DrivePermissionError.
+    """
+    import re
+
+    slug = re.sub(r"[^a-z0-9_-]", "_", doc.title.lower())[:60].strip("_")
+    filename = f"playbooks/{doc.project_id}_{slug}.md"
+
+    tag_list = "[" + ", ".join(str(t) for t in doc.tags) + "]" if doc.tags else "[]"
+    front_matter = (
+        "---\n"
+        f'title: "{doc.title}"\n'
+        "type: playbook\n"
+        f"domain: {doc.domain}\n"
+        f"owner_agent: {doc.owner_agent}\n"
+        f"version: {doc.version}\n"
+        f'project_id: "{doc.project_id}"\n'
+        f'created_from_vision: "{doc.created_from_vision}"\n'
+        f'last_updated: "{doc.last_updated}"\n'
+        f'approved_by: "{doc.approved_by}"\n'
+        f"status: {doc.status}\n"
+        f"tags: {tag_list}\n"
+        "---\n\n"
+    )
+    return write_file(filename, front_matter + body, project_id)
+
+
 def _collect_files(service: Any, folder_id: str, prefix: str, out: list[str]) -> None:
     """Recursively collect relative file paths under folder_id."""
     query = f"'{folder_id}' in parents and trashed = false"

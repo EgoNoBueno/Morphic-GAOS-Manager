@@ -256,10 +256,57 @@ def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
 # ── Graph assembly ────────────────────────────────────────────────────────────
 
+
+def _write_playbook(state: AgentWorkingMemory) -> AgentWorkingMemory:
+    """
+    Write a playbook to Drive if this task was triggered by VISION_SUBMITTED.
+    No-op for all other message types.
+    Phase 2.5 — GAOS-Memory-Spec.md §7.4 + write_playbook completion requirement.
+    """
+    msg = state.get("incoming_message")
+    if not (msg and msg.message_type == MessageType.VISION_SUBMITTED):
+        return state
+
+    from models import PlaybookDoc
+    from tools.drive import write_playbook as _drive_write_playbook
+
+    pid = state["project_id"]
+    try:
+        payload = msg.payload or {}
+        doc = PlaybookDoc(
+            title=payload.get("vision_title", "Untitled Playbook"),
+            domain=_AGENT_ID,
+            owner_agent=_AGENT_ID,
+            project_id=pid,
+            created_from_vision=msg.task_id or "",
+        )
+        results = state.get("sub_task_results", [])
+        body = (
+            f"## Objective\n{payload.get('vision_text', '')}\n\n"
+            f"## Agents Involved\n- {_AGENT_ID}\n\n"
+            "## Milestones\n"
+            + "\n".join(
+                f"- {r.get('task_type', '?')}: {r.get('status', '?')}"
+                for r in results[:10]
+            )
+            + "\n\n## Constraints\n_None recorded._\n\n## Open Questions\n_None._\n"
+        )
+        _drive_write_playbook(doc, body, pid)
+        state["messages"].append({
+            "role": "system",
+            "content": f"Playbook written: {doc.title}",
+        })
+    except Exception as exc:
+        _log_cloud(_AGENT_ID, pid, "task", state.get("task_id", ""),
+                   f"write_playbook failed: {exc}", "WARNING")
+    return state
+
+
 def build_beacon_graph() -> Any:
     graph: StateGraph = StateGraph(AgentWorkingMemory)
     for name, fn in [("boot", _boot), ("plan", _plan), ("dispatch", _dispatch),
-                     ("collect", _collect), ("report", _report), ("park", _park),
+                     ("collect", _collect), ("report", _report),
+                     ("write_playbook", _write_playbook), ("park", _park),
                      ("resume", _resume), ("escalate", _escalate)]:
         graph.add_node(name, fn)
     graph.set_entry_point("boot")
@@ -268,7 +315,8 @@ def build_beacon_graph() -> Any:
     graph.add_edge("dispatch", "collect")
     graph.add_conditional_edges("collect", _should_escalate,
                                 {"escalate": "escalate", "report": "report"})
-    graph.add_edge("report", END)
+    graph.add_edge("report", "write_playbook")
+    graph.add_edge("write_playbook", END)
     graph.add_edge("park", END)
     graph.add_edge("resume", "plan")
     graph.add_edge("escalate", END)
