@@ -72,7 +72,11 @@ $env:GOOGLE_APPLICATION_CREDENTIALS   # should return nothing
 # Do NOT use --no-browser — Desktop clients require a redirect_uri which only
 # the browser flow provides. Without it Google returns: Error 400 invalid_request.
 # The DEFAULT gcloud client ID BLOCKS the spreadsheets scope — you MUST use your own.
-gcloud auth application-default login --client-id-file=oauth-client.json --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/script.projects,https://www.googleapis.com/auth/script.deployments,https://www.googleapis.com/auth/cloud-platform"
+_G="https://www.googleapis.com"
+SCOPES="${_G}/auth/spreadsheets,${_G}/auth/drive"
+SCOPES="${SCOPES},${_G}/auth/script.projects,${_G}/auth/script.deployments"
+SCOPES="${SCOPES},${_G}/auth/cloud-platform"
+gcloud auth application-default login --client-id-file=oauth-client.json --scopes="$SCOPES"
 
 # Step 4: Set the quota project (gcloud login drops this field every time)
 # The credentials file is at:
@@ -82,7 +86,7 @@ gcloud auth application-default login --client-id-file=oauth-client.json --scope
 gcloud auth application-default set-quota-project morphic-gaos-prod
 
 # Step 5: Verify ADC is working
-python -c "import google.auth; from google.auth.transport.requests import Request; creds, proj = google.auth.default(scopes=['https://www.googleapis.com/auth/spreadsheets']); creds.refresh(Request()); print('ADC OK — project:', proj)"
+python -c "import google.auth; from google.auth.transport.requests import Request; creds, proj = google.auth.default(scopes=['https://www.googleapis.com' + '/auth/spreadsheets']); creds.refresh(Request()); print('ADC OK — project:', proj)"
 ```
 
 > **Note:** Every time you re-run `gcloud auth application-default login`, it overwrites the credentials file and drops `quota_project_id`. Re-run Step 4 after any re-login.
