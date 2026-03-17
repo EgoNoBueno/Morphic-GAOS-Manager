@@ -63,6 +63,15 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
     # Internal timing
     _started_at: float
 
+    # Vision workflow (Phase 2.5 Step 5)
+    active_blueprints: dict           # maps blueprint_id → doc_id
+    blueprint_constraints: list[dict] # active constraint stack per blueprint
+
+
+# ── Constraint compaction threshold ──────────────────────────────────────────
+
+_COMPACTION_THRESHOLD = 5
+
 
 # ── Decision / format model selection ────────────────────────────────────────
 
@@ -249,6 +258,8 @@ def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     state.setdefault("safety_check_passed", False)
     state.setdefault("system_state_summary", {})
     state.setdefault("current_objective", "Booting")
+    state.setdefault("active_blueprints", {})
+    state.setdefault("blueprint_constraints", [])
 
     settings = get_settings()
     pid = state.get("project_id", settings.GCP_PROJECT_ID)
@@ -317,6 +328,9 @@ def route(state: NexusPrimeWorkingMemory) -> str:
         MessageType.KNOWLEDGE_CANDIDATE: "knowledge_review",
         MessageType.BROADCAST:           "conflict_resolve",
         MessageType.NEW_PROJECT:         "init_project",
+        MessageType.VISION_SUBMITTED:    "vision_blueprint",
+        MessageType.PLAN_REVIEW:         "iterate_plan",
+        MessageType.COMMENT_RECEIVED:    "iterate_plan",
     }
     return routing_table.get(msg.message_type, "record")
 
@@ -1120,6 +1134,370 @@ async def handle_daily_sync(project_id: str) -> dict[str, Any]:
     }
 
 
+# ── Vision workflow helpers ───────────────────────────────────────────────────
+
+
+def _build_vision_prompt(vision_text: str, project_id: str) -> str:
+    """Build the Blueprint Doc generation prompt from a raw vision statement."""
+    return (
+        f"You are Nexus-Prime, the AOS general manager. The owner has submitted the following "
+        f"business vision:\n\n"
+        f"\"{vision_text}\"\n\n"
+        f"Generate a structured project blueprint in Markdown with the following sections:\n"
+        f"## Objective\n"
+        f"## Success Criteria\n"
+        f"## Agents Involved\n"
+        f"## Milestones\n"
+        f"## Constraints\n"
+        f"## Open Questions\n\n"
+        f"The blueprint should be actionable, concise, and reference the AOS agent capabilities "
+        f"(Beacon, Foreman, Scout, Steward, Ledger, Pursuit) where relevant. "
+        f"Return ONLY the Markdown text — no code fences, no preamble."
+    )
+
+
+def _build_compaction_prompt(constraints: list[dict]) -> str:
+    """Build the constraint compaction prompt for Gemini Flash."""
+    lines = "\n".join(
+        f"C{i + 1}: \"{c.get('text', c.get('constraint_text', ''))}\""
+        for i, c in enumerate(constraints)
+    )
+    return (
+        f"Compress these {len(constraints)} design constraints into one concise "
+        f"'Design Constraints' paragraph without losing any requirement:\n\n"
+        f"{lines}\n\n"
+        f"Return ONLY the paragraph text — no headings, no preamble."
+    )
+
+
+def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    """
+    Handle a VISION_SUBMITTED message.
+
+    1. Read vision_text and submitter info from the incoming message payload.
+    2. Call Gemini Pro to generate Blueprint Doc Markdown content.
+    3. Create the Google Doc in the blueprints folder.
+    4. Append a row to the Project_Incubator Sheet tab.
+    5. Send an approval card to the owner's Chat space with a link to the Doc.
+    6. Log success.
+
+    Spec: GAOS-Manager-Spec.md §2.5 Step 5
+    """
+    from config import get_settings
+    from tools.google_docs import create_document
+    from tools.google_sheets import append_row
+    from tools.google_chat import send_approval_card
+
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+
+    payload = msg.payload or {}
+    vision_text: str = payload.get("vision_text", "")
+    submitted_by: str = payload.get("submitted_by", msg.source_agent)
+    space_name: str = payload.get("space_name", "")
+    project_id = state["project_id"]
+    task_id = state.get("task_id", str(uuid.uuid4()))
+
+    if not vision_text:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   "vision_blueprint: empty vision_text — skipping", "WARNING")
+        return state
+
+    settings = get_settings()
+
+    # ── 1. Generate blueprint content via Gemini ──────────────────────────────
+    prompt = _build_vision_prompt(vision_text, project_id)
+    resp = _call_model(prompt, model=settings.models.DEEP_MODEL, parse_json=False)
+    state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+    state["tokens_used"] = state.get("tokens_used", 0) + resp.tokens_used
+    blueprint_content = resp.text.strip()
+
+    # ── 2. Create the Google Doc ──────────────────────────────────────────────
+    doc_title = f"Blueprint — {vision_text[:60]}"
+    blueprint_id = task_id  # use task_id as stable blueprint identifier
+    doc_id = ""
+    doc_url = ""
+    try:
+        doc_id = create_document(
+            title=doc_title,
+            project_id=project_id,
+            folder_id=settings.docs.blueprints_folder_id,
+            initial_content=blueprint_content,
+        )
+        doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"vision_blueprint: created doc {doc_id}")
+    except Exception as exc:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"vision_blueprint: doc creation failed: {exc}", "ERROR")
+
+    # ── 3. Register blueprint in working memory ───────────────────────────────
+    active: dict = state.get("active_blueprints") or {}  # type: ignore[assignment]
+    active[blueprint_id] = doc_id
+    state["active_blueprints"] = active
+    state["blueprint_constraints"] = state.get("blueprint_constraints") or []  # type: ignore[assignment]
+
+    # ── 4. Append row to Project_Incubator Sheet tab ──────────────────────────
+    incubator_row = {
+        "id": blueprint_id,
+        "vision_text": vision_text[:500],
+        "submitted_by": submitted_by,
+        "submitted_at": utcnow_iso(),
+        "status": "Pending Review",
+        "doc_id": doc_id,
+        "project_id": project_id,
+    }
+    try:
+        append_row("Project_Incubator", incubator_row, project_id)
+    except Exception as exc:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"vision_blueprint: Sheet append failed: {exc}", "WARNING")
+
+    # ── 5. Send approval card to owner's Chat space ───────────────────────────
+    owner_space = settings.chat.owner_space if settings.chat.owner_space else space_name
+    if owner_space:
+        try:
+            send_approval_card(
+                space_name=owner_space,
+                proposal_id=blueprint_id,
+                agent_id="nexus-prime",
+                issue_summary=f"New vision submitted by {submitted_by}: {vision_text[:120]}",
+                proposed_action=f"Blueprint Doc created. Review and approve to proceed.",
+                priority=3,
+                cost_usd=state.get("cost_usd", 0.0),
+                doc_url=doc_url,
+            )
+        except Exception as exc:
+            _log_cloud("nexus-prime", project_id, "task", task_id,
+                       f"vision_blueprint: Chat card failed: {exc}", "WARNING")
+
+    _log_cloud("nexus-prime", project_id, "task", task_id,
+               f"vision_blueprint complete: blueprint_id={blueprint_id} doc_id={doc_id}")
+    return state
+
+
+# ── Constraint compaction ─────────────────────────────────────────────────────
+
+
+def _run_compaction(
+    state: NexusPrimeWorkingMemory,
+    blueprint_id: str,
+    constraints: list[dict],
+) -> str:
+    """
+    Compact *constraints* into a single paragraph using Gemini Flash.
+    Archives originals to BigQuery and returns the compacted paragraph text.
+
+    Spec: SCRATCH.md §ITERATE_PLAN Constraint Compaction Scheme
+    """
+    from config import get_settings
+    from tools.bigquery import insert_rows
+
+    settings = get_settings()
+    project_id = state["project_id"]
+    task_id = state.get("task_id", "")
+    compacted_at = utcnow_iso()
+
+    prompt = _build_compaction_prompt(constraints)
+    resp = _call_model(prompt, model=settings.models.FAST_MODEL, parse_json=False)
+    state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+    compacted_text = resp.text.strip()
+
+    # Archive originals to BigQuery
+    bq_rows = [
+        {
+            "blueprint_id": blueprint_id,
+            "constraint_text": c.get("text", c.get("constraint_text", "")),
+            "comment_author": c.get("comment_author", ""),
+            "comment_timestamp": c.get("comment_timestamp", compacted_at),
+            "compacted_at": compacted_at,
+        }
+        for c in constraints
+    ]
+    try:
+        insert_rows("aos_logs.blueprint_constraints", bq_rows, project_id)
+    except Exception as exc:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"_run_compaction: BQ archive failed: {exc}", "WARNING")
+
+    _log_cloud("nexus-prime", project_id, "task", task_id,
+               f"_run_compaction: compacted {len(constraints)} constraints for blueprint {blueprint_id}")
+    return compacted_text
+
+
+def iterate_plan(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    """
+    Handle PLAN_REVIEW or COMMENT_RECEIVED messages.
+
+    1. Extract constraint/comment text from the payload.
+    2. Append to the active blueprint_constraints list.
+    3. If count reaches _COMPACTION_THRESHOLD: compact → single paragraph
+       and archive originals to BigQuery.
+    4. Append the new/compacted constraint paragraph to the Blueprint Doc.
+
+    Spec: GAOS-Manager-Spec.md §2.5 Step 5, SCRATCH.md §ITERATE_PLAN
+    """
+    from tools.google_docs import append_content
+
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+
+    payload = msg.payload or {}
+    blueprint_id: str = payload.get("blueprint_id", "")
+    constraint_text: str = payload.get("constraint_text", payload.get("comment_text", ""))
+    comment_author: str = payload.get("comment_author", msg.source_agent)
+    comment_timestamp: str = payload.get("comment_timestamp", utcnow_iso())
+    project_id = state["project_id"]
+    task_id = state.get("task_id", str(uuid.uuid4()))
+
+    if not constraint_text:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   "iterate_plan: empty constraint_text — skipping", "WARNING")
+        return state
+
+    constraints: list[dict] = list(state.get("blueprint_constraints") or [])  # type: ignore[assignment]
+    constraints.append({
+        "blueprint_id": blueprint_id,
+        "text": constraint_text,
+        "comment_author": comment_author,
+        "comment_timestamp": comment_timestamp,
+    })
+
+    doc_content_to_append = constraint_text
+
+    # ── Compaction check ──────────────────────────────────────────────────────
+    blueprint_constraints = [c for c in constraints if c.get("blueprint_id") == blueprint_id]
+    if len(blueprint_constraints) >= _COMPACTION_THRESHOLD:
+        compacted = _run_compaction(state, blueprint_id, blueprint_constraints)
+        # Replace blueprint-specific constraints with the compacted entry
+        other_constraints = [c for c in constraints if c.get("blueprint_id") != blueprint_id]
+        n = len(blueprint_constraints)
+        compacted_entry = {
+            "blueprint_id": blueprint_id,
+            "text": f"COMPACTED_CONSTRAINTS (from {n} reviewed comments): {compacted}",
+            "comment_author": "nexus-prime",
+            "comment_timestamp": utcnow_iso(),
+        }
+        constraints = other_constraints + [compacted_entry]
+        doc_content_to_append = compacted_entry["text"]
+
+    state["blueprint_constraints"] = constraints
+
+    # ── Append to Blueprint Doc ───────────────────────────────────────────────
+    active_blueprints: dict = state.get("active_blueprints") or {}  # type: ignore[assignment]
+    doc_id = active_blueprints.get(blueprint_id, "")
+    if doc_id:
+        try:
+            append_content(
+                doc_id=doc_id,
+                content=f"\n\n**Constraint ({utcnow_date()}):** {doc_content_to_append}",
+                project_id=project_id,
+            )
+        except Exception as exc:
+            _log_cloud("nexus-prime", project_id, "task", task_id,
+                       f"iterate_plan: append_content failed for doc {doc_id}: {exc}", "WARNING")
+
+    _log_cloud("nexus-prime", project_id, "task", task_id,
+               f"iterate_plan complete: blueprint_id={blueprint_id} "
+               f"total_constraints={len(constraints)}")
+    return state
+
+
+# ── Doc-comment poll standalone handler ──────────────────────────────────────
+
+
+async def handle_poll_comments(project_id: str) -> dict[str, Any]:
+    """
+    Cloud Scheduler job handler — polls ``list_comments()`` for all active
+    Blueprint Docs and publishes a ``COMMENT_RECEIVED`` Pub/Sub message for
+    each new unresolved comment.
+
+    Called every 5 minutes by the ``doc-comment-poll`` Scheduler job via
+    ``POST /poll-comments``.
+
+    Spec: GAOS-Manager-Spec.md §2.5 Step 5
+    """
+    from config import get_settings
+    from tools.google_docs import list_comments
+    from tools.pubsub import publish
+
+    get_settings()  # validate config is loadable
+    task_id = str(uuid.uuid4())
+    published = 0
+    errors = 0
+
+    # Retrieve active blueprints from the Project_Incubator tab
+    incubator_rows: list[dict] = []
+    try:
+        from tools.google_sheets import get_all_records
+        incubator_rows = get_all_records("Project_Incubator", project_id)
+    except Exception as exc:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"poll_comments: failed to read Project_Incubator: {exc}", "WARNING")
+
+    active_docs = [
+        (row.get("id", ""), row.get("doc_id", ""))
+        for row in incubator_rows
+        if row.get("doc_id") and row.get("status", "") not in ("Archived", "Rejected")
+    ]
+
+    for blueprint_id, doc_id in active_docs:
+        try:
+            comments = list_comments(doc_id=doc_id, project_id=project_id)
+        except Exception as exc:
+            _log_cloud("nexus-prime", project_id, "task", task_id,
+                       f"poll_comments: list_comments failed for doc {doc_id}: {exc}", "WARNING")
+            errors += 1
+            continue
+
+        for comment in comments:
+            if comment.get("resolved"):
+                continue
+
+            from models import A2AMessage, MessageType
+            msg = A2AMessage(
+                source_agent="doc-comment-poll",
+                target_agent="nexus-prime",
+                project_id=project_id,
+                task_id=str(uuid.uuid4()),
+                message_type=MessageType.COMMENT_RECEIVED,
+                priority=2,
+                payload={
+                    "blueprint_id": blueprint_id,
+                    "doc_id": doc_id,
+                    "comment_id": comment.get("id", ""),
+                    "constraint_text": comment.get("content", ""),
+                    "comment_author": comment.get("author", ""),
+                    "comment_timestamp": comment.get("created_time", utcnow_iso()),
+                },
+            )
+            try:
+                publish(
+                    "agent.nexus-prime.events",
+                    msg,
+                    project_id,
+                )
+                published += 1
+            except Exception as exc:
+                _log_cloud("nexus-prime", project_id, "task", task_id,
+                           f"poll_comments: publish failed for comment {comment.get('id')}: {exc}",
+                           "WARNING")
+                errors += 1
+
+    _log_cloud("nexus-prime", project_id, "task", task_id,
+               f"poll_comments complete: {published} published, {errors} errors, "
+               f"{len(active_docs)} docs polled")
+
+    return {
+        "docs_polled": len(active_docs),
+        "comments_published": published,
+        "errors": errors,
+        "task_id": task_id,
+    }
+
+
 # ── Graph assembly ────────────────────────────────────────────────────────────
 
 def build_nexus_prime_graph() -> Any:
@@ -1141,6 +1519,8 @@ def build_nexus_prime_graph() -> Any:
     graph.add_node("conflict_resolve",  conflict_resolve)
     graph.add_node("park_or_broadcast", park_or_broadcast)
     graph.add_node("record",            record)
+    graph.add_node("vision_blueprint",  vision_blueprint)
+    graph.add_node("iterate_plan",      iterate_plan)
 
     graph.set_entry_point("boot")
     graph.add_edge("boot",    "monitor")
@@ -1157,6 +1537,8 @@ def build_nexus_prime_graph() -> Any:
             "promote":           "promote",
             "park_or_broadcast": "park_or_broadcast",
             "record":            "record",
+            "vision_blueprint":  "vision_blueprint",
+            "iterate_plan":      "iterate_plan",
         },
     )
 
@@ -1168,6 +1550,8 @@ def build_nexus_prime_graph() -> Any:
     graph.add_edge("notify_agents",     "record")
     graph.add_edge("conflict_resolve",  "record")
     graph.add_edge("park_or_broadcast", "record")
+    graph.add_edge("vision_blueprint",  "record")
+    graph.add_edge("iterate_plan",      "record")
     graph.add_edge("record",            END)
 
     return graph.compile(checkpointer=MemorySaver())
@@ -1245,6 +1629,8 @@ if _HAS_ADK:
                 "candidate_agent_id": None,
                 "candidate_sha256": None,
                 "_started_at": time.time(),
+                "active_blueprints": {},
+                "blueprint_constraints": [],
             }
 
             try:

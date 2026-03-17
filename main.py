@@ -11,6 +11,8 @@ Endpoints:
   POST /archive       Cloud Scheduler nightly archive sweep (Nexus-Prime only)
   POST /daily-sync    Cloud Scheduler 6 AM morning briefing (Nexus-Prime only)
   POST /chat          Google Chat push events — text messages and card callbacks
+  POST /vision        Owner vision submission → Blueprint Doc generator (Nexus-Prime only)
+  POST /poll-comments Cloud Scheduler 5-min doc-comment poll (Nexus-Prime only)
   GET  /health        Cloud Run health check (always 200)
 
 All POST endpoints verify the OIDC token in the Authorization header before
@@ -440,6 +442,121 @@ async def chat(request: Request) -> JSONResponse:
         raise HTTPException(status_code=500, detail=str(exc))
 
     return JSONResponse(content={"status": "ok"})
+
+
+@app.post("/vision")
+async def vision(request: Request) -> JSONResponse:
+    """
+    Owner submits a free-text vision statement via Chat, AppSheet, or direct POST.
+    Nexus-Prime generates a Blueprint Google Doc and sends an approval card.
+
+    Expected body:
+    {
+      "vision_text": "I want to build a loyalty programme for top clients.",
+      "submitted_by": "owner@example.com",   // optional
+      "space_name":   "spaces/XXXXXXX",       // optional — override for Chat card
+      "project_id":   "my-gcp-project"        // optional — falls back to env var
+    }
+
+    Returns 200 with task_id on success.
+    Nexus-Prime only.
+
+    Spec: GAOS-Manager-Spec.md §2.5 Step 5
+    """
+    _verify_pubsub_audience(request)
+
+    if _AGENT_NAME != "nexus-prime":
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{_AGENT_NAME}' does not support /vision.",
+        )
+
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
+
+    vision_text: str = body.get("vision_text", "")
+    if not vision_text:
+        raise HTTPException(status_code=400, detail="vision_text is required.")
+
+    from models import A2AMessage, MessageType
+    import uuid, base64
+
+    project_id = body.get("project_id") or os.environ.get("GCP_PROJECT_ID", "")
+    synthetic_msg = A2AMessage(
+        source_agent=body.get("submitted_by", "owner"),
+        target_agent="nexus-prime",
+        project_id=project_id,
+        task_id=str(uuid.uuid4()),
+        message_type=MessageType.VISION_SUBMITTED,
+        priority=3,
+        payload={
+            "vision_text": vision_text,
+            "submitted_by": body.get("submitted_by", "owner"),
+            "space_name": body.get("space_name", ""),
+        },
+    )
+    envelope = {
+        "message": {
+            "data": base64.b64encode(
+                synthetic_msg.model_dump_json().encode()
+            ).decode(),
+            "messageId": synthetic_msg.task_id,
+        },
+        "subscription": "http/vision",
+    }
+
+    agent = _get_agent()
+    try:
+        result = await agent.run(envelope)
+        log.info("Vision submitted: task_id=%s", getattr(result, "task_id", "?"))
+    except Exception as exc:
+        log.exception("Vision handler failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return JSONResponse(content={
+        "status": "ok",
+        "task_id": getattr(result, "task_id", synthetic_msg.task_id),
+    })
+
+
+@app.post("/poll-comments")
+async def poll_comments(request: Request) -> JSONResponse:
+    """
+    Cloud Scheduler hits this endpoint every 5 minutes (Nexus-Prime only).
+    Polls ``list_comments()`` for all active Blueprint Docs and publishes a
+    ``COMMENT_RECEIVED`` Pub/Sub message for each new unresolved comment.
+
+    This is a standalone handler (not routed through the LangGraph graph)
+    because it fans out across multiple docs and uses async iteration.
+
+    Spec: GAOS-Manager-Spec.md §2.5 Step 5
+    """
+    _verify_pubsub_audience(request)
+
+    if _AGENT_NAME != "nexus-prime":
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{_AGENT_NAME}' does not support /poll-comments.",
+        )
+
+    from agents.nexus_prime.orchestrator import handle_poll_comments
+
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    try:
+        result = await handle_poll_comments(project_id)
+        log.info(
+            "poll-comments complete: %d docs, %d published, %d errors",
+            result.get("docs_polled", 0),
+            result.get("comments_published", 0),
+            result.get("errors", 0),
+        )
+    except Exception as exc:
+        log.exception("poll-comments handler failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return JSONResponse(content={"status": "ok", **result})
 
 
 # ── Cloud Run startup ─────────────────────────────────────────────────────────

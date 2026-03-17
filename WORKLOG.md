@@ -5,6 +5,40 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-16 — Phase 2.5 Step 5: Vision Workflow COMPLETE ✅
+
+**296 / 296 tests passing. Zero regressions. +30 new tests.**
+
+| File | Change |
+|------|--------|
+| `agents/nexus_prime/orchestrator.py` | `NexusPrimeWorkingMemory`: added `active_blueprints: dict` and `blueprint_constraints: list[dict]` fields. `_COMPACTION_THRESHOLD = 5` constant. New prompt builders: `_build_vision_prompt`, `_build_compaction_prompt`. New nodes: `vision_blueprint` (VISION_SUBMITTED handler — Gemini Pro blueprint generation, Docs create, Sheet append, Chat approval card) and `iterate_plan` (PLAN_REVIEW / COMMENT_RECEIVED handler — constraint accumulation + compaction). New `_run_compaction` helper (Gemini Flash compaction, BQ archive). New `handle_poll_comments` standalone async handler (polls all active Blueprint Docs every 5 min, publishes `COMMENT_RECEIVED`). `route()` routing table updated for VISION_SUBMITTED, PLAN_REVIEW, COMMENT_RECEIVED. `build_nexus_prime_graph()` updated with `vision_blueprint` + `iterate_plan` nodes and edges. `NexusPrimeAgent.run()` initial state includes new fields. `boot()` setdefaults for new fields. |
+| `main.py` | Added `POST /vision` endpoint (Nexus-Prime only; body: `vision_text`, `submitted_by`, `space_name`, `project_id`; wraps VISION_SUBMITTED synthetic A2AMessage). Added `POST /poll-comments` endpoint (Nexus-Prime only; calls `handle_poll_comments()` directly). Updated module docstring endpoint list. |
+| `tests/test_vision_workflow.py` | NEW — 30 tests across 6 classes: `TestVisionBlueprintNode` (8), `TestIteratePlanNode` (6), `TestRunCompaction` (3), `TestHandlePollComments` (4), `TestVisionEndpoint` (5), `TestPollCommentsEndpoint` (4). All passing. |
+| `SCRATCH.md` | Marked Step 5 ✅ in build sequence tree and component table. |
+| `Docs/GAOS-Manager-Spec.md` | Updated Phase 2.5 roadmap table — Step 5 marked ✅ Complete. |
+
+**Step 5 note:** AppSheet UI (visual front-end for `Project_Incubator` tab) is a no-code config step with no backend changes — deferred to Step 7 slot as originally planned. `doc-comment-poll` Scheduler job (wire in GCP) and `POST /poll-comments` endpoint (code complete) are production-ready.
+
+**Next up:** Phase 2.5 Step 6 — `tools/google_search.py` + Scout `_discover` recursive node + `KNOWLEDGE_INJECTION` protocol.
+
+---
+
+## 2026-03-16 — Phase 2.5 Step 5: Vision Workflow — Started
+
+**Scope:**
+- `Project_Incubator` Google Sheet tab (schema wired into `vision_blueprint` node)
+- `VISION_SUBMITTED` → `vision_blueprint` LangGraph node: Gemini Pro generates Blueprint Doc via `tools/google_docs.py`; Chat approval card sent; `Project_Incubator` row updated
+- `PLAN_REVIEW` / `COMMENT_RECEIVED` → `iterate_plan` node: appends constraint, triggers compaction at 5
+- `ITERATE_PLAN` constraint compaction: Gemini Flash summarises 5 constraints → 1 paragraph; originals archived to BigQuery `aos_logs.blueprint_constraints`
+- `handle_poll_comments()` standalone async handler: polls `list_comments()` for all active Blueprint Docs; publishes `COMMENT_RECEIVED` for new unresolved comments
+- `POST /vision` endpoint in `main.py`
+- `POST /poll-comments` endpoint in `main.py`
+- `tests/test_vision_workflow.py` (~15–20 new tests)
+
+**Baseline:** 266 tests passing.
+
+---
+
 ## 2026-03-16 — Phase 2.5 Step 4: Google Docs Tool (Blueprint Factory wrapper) COMPLETE ✅
 
 **266 / 266 tests passing. Zero regressions.**

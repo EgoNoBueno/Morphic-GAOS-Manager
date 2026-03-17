@@ -90,7 +90,11 @@ Phase 3.5 additions (Innovation Interface Layer)
 ├── Step 5: Vision workflow — Project_Incubator tab + VISION_SUBMITTED + PLAN_REVIEW +
 │            │   COMMENT_RECEIVED + Blueprint Doc generator in Nexus-Prime +
 │            │   ITERATE_PLAN node + Doc comment polling (Cloud Scheduler 5-min job)
-│            └── Depends on: Steps 1, 3, 4
+│            └── ✅ DONE: 30 tests passing. vision_blueprint node, iterate_plan node,
+│                _run_compaction, handle_poll_comments. POST /vision + /poll-comments.
+│                NexusPrimeWorkingMemory: active_blueprints, blueprint_constraints fields.
+│                Route table updated. build_nexus_prime_graph() updated.
+│                Depends on: Steps 1, 3, 4
 ├── Step 6: tools/google_search.py + RESEARCH_MANDATE + Scout _discover node (recursive loop)
 │            │   + Step 6.1: KNOWLEDGE_INJECTION — Scout writes Market Intelligence tags
 │            │               to Vertex AI Memory Bank (Layer 4) after every discovery loop
@@ -121,11 +125,11 @@ Phase 3.5 additions (Innovation Interface Layer)
 | 3 | `write_playbook` node in all 6 orchestrators | Logic change | $0 | ⏳ Phase 3 |
 | 3 | 2× Vertex AI Search datastores | GCP resource | $0 free tier | ⏳ wire in GCP |
 | 4 | `tools/google_docs.py` | Python tool | $0 — Workspace included | ✅ |
-| 5 | `Project_Incubator` Sheet tab | Sheet tab | $0 | — |
-| 5 | `VISION_SUBMITTED` + `PLAN_REVIEW` + `COMMENT_RECEIVED` in `MessageType` | Enum values | $0 | — |
-| 5 | Blueprint Doc generator in Nexus-Prime | Logic | Minor LLM cost (Gemini Pro call per Blueprint) | — |
-| 5 | **`ITERATE_PLAN` node in Nexus-Prime LangGraph** | Logic | Minor LLM cost (re-run on each comment batch) | — |
-| 5 | Doc comment polling Scheduler job | GCP resource | $0 (4th job = $0.10/month) | — |
+| 5 | `Project_Incubator` Sheet tab | Sheet tab | $0 | ✅ |
+| 5 | `VISION_SUBMITTED` + `PLAN_REVIEW` + `COMMENT_RECEIVED` in `MessageType` | Enum values | $0 | ✅ |
+| 5 | Blueprint Doc generator in Nexus-Prime | Logic | Minor LLM cost (Gemini Pro call per Blueprint) | ✅ |
+| 5 | **`ITERATE_PLAN` node in Nexus-Prime LangGraph** | Logic | Minor LLM cost (re-run on each comment batch) | ✅ |
+| 5 | Doc comment polling Scheduler job | GCP resource | $0 (4th job = $0.10/month) | ⏳ wire in GCP |
 | 6 | `tools/google_search.py` | Python tool | $0 free tier (≤100 queries/day) | — |
 | 6 | `RESEARCH_MANDATE` in `MessageType` | Enum value | $0 | — |
 | 6 | `_discover` node in Scout LangGraph | Logic change | Minor cost (~$0.13/mandate max) | — |
