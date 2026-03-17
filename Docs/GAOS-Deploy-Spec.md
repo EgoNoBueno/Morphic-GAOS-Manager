@@ -205,10 +205,12 @@ gcloud services enable \
   monitoring.googleapis.com \
   aiplatform.googleapis.com \
   cloudresourcemanager.googleapis.com \
-  chat.googleapis.com
+  chat.googleapis.com \
+  customsearch.googleapis.com \
+  discoveryengine.googleapis.com
 ```
 
-**Verification:** `gcloud services list --enabled` — all 11 services must appear.
+**Verification:** `gcloud services list --enabled` — all 14 services must appear.
 
 ---
 
@@ -327,6 +329,18 @@ python -c "import secrets; print(secrets.token_hex(32))" | \
 
 # WEBHOOK_URL — created automatically by scripts/setup_apps_script.py Phase 1
 # No manual step needed here; the script creates the secret and stores the URL.
+
+# Google Custom Search — Scout's KNOWLEDGE_INJECTION deep research (Phase 2.5 Step 6)
+# Get the API key from: console.cloud.google.com/apis/credentials
+# Get the CX (Search Engine ID) from: programmablesearchengine.google.com
+gcloud secrets create GOOGLE_SEARCH_API_KEY --project=$PROJECT
+# Save key to tmp_key.txt in VS Code editor, then:
+# gcloud secrets versions add GOOGLE_SEARCH_API_KEY --data-file=tmp_key.txt --project=$PROJECT
+# Remove-Item tmp_key.txt
+gcloud secrets create GOOGLE_SEARCH_CX --project=$PROJECT
+# Save CX to tmp_cx.txt in VS Code editor, then:
+# gcloud secrets versions add GOOGLE_SEARCH_CX --data-file=tmp_cx.txt --project=$PROJECT
+# Remove-Item tmp_cx.txt
 ```
 
 ### 3.2 Grant Per-Secret Access (Least-Privilege)
@@ -352,9 +366,16 @@ done
 gcloud secrets add-iam-policy-binding WEBHOOK_HMAC_SECRET \
   --member="serviceAccount:nexus-prime-sa@${PROJECT}.iam.gserviceaccount.com" \
   --role="roles/secretmanager.secretAccessor" --project=$PROJECT
+
+# GOOGLE_SEARCH_API_KEY / GOOGLE_SEARCH_CX — scout only (KNOWLEDGE_INJECTION research)
+for secret in GOOGLE_SEARCH_API_KEY GOOGLE_SEARCH_CX; do
+  gcloud secrets add-iam-policy-binding $secret \
+    --member="serviceAccount:scout-sa@${PROJECT}.iam.gserviceaccount.com" \
+    --role="roles/secretmanager.secretAccessor" --project=$PROJECT
+done
 ```
 
-**Verification:** `gcloud secrets list --project=$PROJECT` — 4 secrets listed (WEBHOOK_URL added by setup_apps_script.py Phase 1).
+**Verification:** `gcloud secrets list --project=$PROJECT` — 6 secrets listed (WEBHOOK_URL added by setup_apps_script.py Phase 1).
 
 ---
 
@@ -1087,7 +1108,7 @@ Phase 1 is complete when all of the following pass. Run them in order.
 
 | # | Test | How to run | Expected result |
 |---|------|-----------|-----------------|
-| 0 | Unit test suite | `pytest` | 151 tests pass, 0 failures |
+| 0 | Unit test suite | `pytest` | 320 tests pass, 0 failures |
 | 1 | Sheet write | `python -c "from tools.google_sheets import init_sheets_client, append_row; import datetime; init_sheets_client('default'); append_row('Logs', {'timestamp': datetime.datetime.utcnow().isoformat(), 'level': 'SMOKE_TEST', 'source': 'smoke', 'message': 'phase 1 test'}, 'default')"` | Row appears in `Logs` tab |
 | 2 | Sheet read | `python -c "from tools.google_sheets import init_sheets_client, get_all_records; init_sheets_client('default'); rows = get_all_records('Project Registry', 'default'); print(f'{len(rows)} rows')"` | Prints `0 rows` (or more once project rows are added) |
 | 3 | Pub/Sub publish | `python -c "from tools.pubsub import publish; from models import A2AMessage; ..."` sending a test message to `agent.nexus-prime.events` | Message ID returned; no exception |
@@ -1105,18 +1126,18 @@ Run all 8 webhook-specific tests from `GAOS-Manager-Spec.md §14` after test 7 p
 Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **every item** below is checked:
 
 - [ ] `tools/google_sheets.py` appends a row and reads a cell value without errors
-- [ ] All 151 unit tests pass (`pytest` — green, 0 failures)
+- [ ] All 320 unit tests pass (`pytest` — green, 0 failures)
 - [ ] Apps Script `onChange` trigger fires on Status cell change and publishes to `agent.approvals.events`
 - [ ] Local Python subscriber receives the Pub/Sub push and prints the proposal ID and new status
 - [ ] Cloud Scheduler TTL sweep job exists and can be triggered manually (HTTP 200 response)
 - [x] Cloud Scheduler nightly archive job exists with state `ENABLED` — `POST /archive` implemented in Phase 2 Item 3 (returns HTTP 200)
-- [ ] **[Phase 2.5]** Google Chat App created in Google Cloud console; Chat API enabled; bot token stored in Secret Manager as `GOOGLE_CHAT_BOT_TOKEN`
-- [ ] **[Phase 2.5]** Vertex AI Search datastore created and indexed against Drive `Knowledge/` folder; datastore ID stored in `settings.yaml`
-- [ ] **[Phase 2.5]** Google Custom Search Engine created; CSE ID and API key stored in Secret Manager as `GOOGLE_CSE_ID` and `GOOGLE_CSE_API_KEY`
+- [x] **[Phase 2.5]** Google Chat App created in Google Cloud console; Chat API enabled; `nexus-prime-sa` added to the Chat space as the bot identity (authenticated via service account ADC — no Secret Manager token required)
+- [x] **[Phase 2.5]** Vertex AI Search datastore created and indexed against Drive `Knowledge/` folder; datastore ID stored in `settings.yaml`
+- [x] **[Phase 2.5]** Google Custom Search Engine created; CSE ID and API key stored in Secret Manager as `GOOGLE_SEARCH_CX` and `GOOGLE_SEARCH_API_KEY`
 - [ ] **[Phase 2.5]** AppSheet app deployed and connected to the Google Sheets workbook (`Agent_Approvals` + `Project Registry` tabs at minimum)
-- [ ] **[Phase 2.5]** Cloud Scheduler `daily-kickoff` job created (6 AM daily, `POST /sync`, returns HTTP 200)
-- [ ] **[Phase 2.5]** Cloud Scheduler `doc-comment-poll` job created (every 5 minutes, `POST /poll-comments`, returns HTTP 200)
-- [ ] **[Phase 2.5]** `POST /chat` endpoint returns HTTP 200; Nexus-Prime responds in Chat thread within 10 seconds
+- [x] **[Phase 2.5]** Cloud Scheduler `daily-kickoff` job created (6 AM daily, `POST /sync`, returns HTTP 200)
+- [x] **[Phase 2.5]** Cloud Scheduler `doc-comment-poll` job created (every 5 minutes, `POST /poll-comments`, returns HTTP 200)
+- [x] **[Phase 2.5]** `POST /chat` endpoint returns HTTP 200; Nexus-Prime responds in Chat thread within 10 seconds
 - [ ] **[Phase 2.5]** Approval Gate Chat-path validated end-to-end: Chat card Approve tap → `APPROVAL_RESULT` published → Nexus-Prime resumes parked task → Sheet audit row written
 - [ ] All 7 smoke tests above are passing
 - [ ] All 8 webhook tests from `GAOS-Manager-Spec.md §14` are passing
