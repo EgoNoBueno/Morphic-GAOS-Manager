@@ -635,19 +635,19 @@ The Knowledge/ folder ID was printed by the setup script and is already in
 
 Create these placeholder files now — agents will reference them from day one. These can be brief initially; agents will propose updates as they learn.
 
-**`policies/expense_approval_policy.md`** — spending thresholds requiring approval  
-**`policies/vendor_payment_terms.md`** — standard vendor payment terms  
-**`policies/data_retention_policy.md`** — data handling rules  
-**`policies/communications_policy.md`** — outbound communication rules  
-**`policies/research_policy.md`** — allowed research methods and citation requirements  
-**`procedures/invoice_matching.md`** — how to match invoices to bank entries  
-**`procedures/lead_scoring_criteria.md`** — lead qualification criteria  
-**`procedures/inventory_reorder_trigger.md`** — reorder threshold definitions per SKU  
-**`procedures/document_filing.md`** — where different document types are filed  
-**`procedures/competitive_intelligence.md`** — competitor monitoring methodology  
-**`workflows/ap_reconciliation.md`** — month-end accounts payable reconciliation  
-**`workflows/order_fulfillment.md`** — deal-to-delivery sequence  
-**`workflows/weekly_reporting.md`** — weekly summary generation process  
+**`policies/expense_approval_policy.md`** — spending thresholds requiring approval
+**`policies/vendor_payment_terms.md`** — standard vendor payment terms
+**`policies/data_retention_policy.md`** — data handling rules
+**`policies/communications_policy.md`** — outbound communication rules
+**`policies/research_policy.md`** — allowed research methods and citation requirements
+**`procedures/invoice_matching.md`** — how to match invoices to bank entries
+**`procedures/lead_scoring_criteria.md`** — lead qualification criteria
+**`procedures/inventory_reorder_trigger.md`** — reorder threshold definitions per SKU
+**`procedures/document_filing.md`** — where different document types are filed
+**`procedures/competitive_intelligence.md`** — competitor monitoring methodology
+**`workflows/ap_reconciliation.md`** — month-end accounts payable reconciliation
+**`workflows/order_fulfillment.md`** — deal-to-delivery sequence
+**`workflows/weekly_reporting.md`** — weekly summary generation process
 
 ### 6.3 Service Account Access
 
@@ -1002,6 +1002,40 @@ gcloud scheduler jobs create http nightly-archive \
 
 **Verification:** In Cloud Scheduler console, both jobs appear with state `ENABLED`. Run each manually by clicking **Force run** — both should return HTTP 200. `ttl-sweep` hits `POST /ttl-sweep`; `nightly-archive` hits `POST /archive` (implemented in Phase 2 Item 3 — archives aged Sheet rows to BigQuery).
 
+### 10.3 Daily Kickoff Job (6:00 AM daily) — *Phase 2.5 Step 2*
+
+Triggers Nexus-Prime's morning briefing. Nexus-Prime queries overnight Logs, Error Logs, and pending Agent_Approvals rows, then posts a briefing Chat card to the owner's space configured in `settings.yaml` under `chat.owner_space`.
+
+**Prerequisite:** Set `chat.owner_space` in `settings.yaml` to the owner's DM space resource name (e.g. `spaces/AAAAXXXXXXX`). Find this value in any inbound `/chat` event payload under `event.space.name`, or in the Google Chat API console.
+
+```bash
+NP_URL="https://nexus-prime-975461050387.us-central1.run.app"
+gcloud scheduler jobs create http daily-kickoff \
+  --location=us-central1 \
+  --schedule="0 6 * * *" \
+  --uri="${NP_URL}/daily-sync" \
+  --oidc-service-account-email="nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com" \
+  --project=morphic-gaos-prod
+```
+  --project=morphic-gaos-prod
+```
+
+### 10.4 Doc Comment Poll Job (every 5 minutes) — *Phase 2.5*
+
+Polls open Blueprint Google Docs for new owner comments so Nexus-Prime can process `COMMENT_RECEIVED` constraint updates without waiting for a manual trigger.
+
+```bash
+NP_URL="https://nexus-prime-975461050387.us-central1.run.app"
+gcloud scheduler jobs create http doc-comment-poll \
+  --location=us-central1 \
+  --schedule="*/5 * * * *" \
+  --uri="${NP_URL}/poll-comments" \
+  --oidc-service-account-email="nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com" \
+  --project=morphic-gaos-prod
+```
+
+**Verification:** Both Phase 2.5 jobs appear with state `ENABLED` in the Scheduler console. Force-run `daily-kickoff` — a morning briefing card appears in the owner's Chat space (`POST /daily-sync` returns HTTP 200). Force-run `doc-comment-poll` — `POST /poll-comments` returns HTTP 200.
+
 ---
 
 ## 11. Cloud Logging — Retention Configuration
@@ -1074,6 +1108,14 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [ ] Local Python subscriber receives the Pub/Sub push and prints the proposal ID and new status
 - [ ] Cloud Scheduler TTL sweep job exists and can be triggered manually (HTTP 200 response)
 - [x] Cloud Scheduler nightly archive job exists with state `ENABLED` — `POST /archive` implemented in Phase 2 Item 3 (returns HTTP 200)
+- [ ] **[Phase 2.5]** Google Chat App created in Google Cloud console; Chat API enabled; bot token stored in Secret Manager as `GOOGLE_CHAT_BOT_TOKEN`
+- [ ] **[Phase 2.5]** Vertex AI Search datastore created and indexed against Drive `Knowledge/` folder; datastore ID stored in `settings.yaml`
+- [ ] **[Phase 2.5]** Google Custom Search Engine created; CSE ID and API key stored in Secret Manager as `GOOGLE_CSE_ID` and `GOOGLE_CSE_API_KEY`
+- [ ] **[Phase 2.5]** AppSheet app deployed and connected to the Google Sheets workbook (`Agent_Approvals` + `Project Registry` tabs at minimum)
+- [ ] **[Phase 2.5]** Cloud Scheduler `daily-kickoff` job created (6 AM daily, `POST /sync`, returns HTTP 200)
+- [ ] **[Phase 2.5]** Cloud Scheduler `doc-comment-poll` job created (every 5 minutes, `POST /poll-comments`, returns HTTP 200)
+- [ ] **[Phase 2.5]** `POST /chat` endpoint returns HTTP 200; Nexus-Prime responds in Chat thread within 10 seconds
+- [ ] **[Phase 2.5]** Approval Gate Chat-path validated end-to-end: Chat card Approve tap → `APPROVAL_RESULT` published → Nexus-Prime resumes parked task → Sheet audit row written
 - [ ] All 7 smoke tests above are passing
 - [ ] All 8 webhook tests from `GAOS-Manager-Spec.md §14` are passing
 - [ ] `setupProtections()` has been run; Status/Code/Hash columns are locked to owner

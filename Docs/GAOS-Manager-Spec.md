@@ -1529,6 +1529,47 @@ Phase 1 is complete when **all** of the following are true:
 - Set up a background process that uses **Ollama** to summarize workspace activity.
 - **Output:** Script appends "System Thoughts" to Google Sheet every few minutes.
 
+### Phase 2.5: The "Conversation Layer" (Chat + Vision Hub)
+
+Inserted between Phase 2 and Phase 3. All items below must be deployed and verified before Phase 3 begins.
+
+#### Goals
+- Replace Sheet-dropdown approval with a Google Chat card (Option A: Chat is the single source of truth for approval events).
+- Add a conversational `POST /chat` endpoint so the owner can interact with Nexus-Prime directly.
+- Introduce a daily morning briefing via `POST /sync` (Cloud Scheduler, 6 AM daily).
+- Add a **Blueprint Factory** — Nexus-Prime converts Chat Vision submissions into structured Google Docs project blueprints.
+- Integrate **Vertex AI Search** over the Drive `Knowledge/` corpus so agents can retrieve procedural memory (Layer 5 was write-only before this step).
+- Add an **AppSheet** Vision Hub UI as a structured alternative submission path (merged into this step).
+- Enable Scout's **recursive web search** (`_discover` node) and wire it to the `KNOWLEDGE_INJECTION` protocol.
+- Add the **ITERATE_PLAN** constraint compaction node to Nexus-Prime's LangGraph graph.
+
+#### Phase 2.5 Build Sequence
+
+| Step | Deliverable | New file(s) | Status |
+|------|------------|-------------|--------|
+| 1 | `tools/google_chat.py` + `POST /chat` endpoint + Skill Import card | `tools/google_chat.py`, `tests/test_google_chat.py` | ✅ Complete |
+| 2 | `POST /daily-sync` endpoint + daily morning briefing card + `daily-kickoff` Scheduler job | `tests/test_daily_sync.py` | ✅ Complete |
+| 3 | `tools/google_docs.py` + Blueprint Factory (Nexus-Prime `ITERATE_PLAN` node) | `tools/google_docs.py` | — |
+| 4 | `tools/vertex_search.py` + Layer 5b retrieval wired to agent boot context | `tools/vertex_search.py` | — |
+| 5 | AppSheet Vision Hub + `VISION_SUBMITTED` handler + `doc-comment-poll` Scheduler job | — | — |
+| 6 | Scout `_discover` recursive node + `tools/google_search.py` + `KNOWLEDGE_INJECTION` | `tools/google_search.py` | — |
+| 7 | `ITERATE_PLAN` constraint compaction node + `SKILL_REQUEST` approval flow | — | — |
+
+#### Phase 2.5 Exit Criteria
+
+1. `POST /chat` returns HTTP 200; Nexus-Prime responds in the Chat thread.
+2. `POST /daily-sync` returns HTTP 200; a morning briefing card is posted to the owner's Chat space.
+3. `daily-kickoff` Scheduler job fires at 6 AM and hits `POST /daily-sync` (manual Force Run passes).
+4. Approval Gate: owner taps **Approve** on a Chat card → `APPROVAL_RESULT` published → Nexus-Prime resumes the parked task. Sheet row is written as audit trail only.
+5. A Vision submission via Chat (`VISION_SUBMITTED`) results in a structured Google Doc blueprint in the project Drive folder.
+6. Vertex AI Search returns ≥ 1 procedural document for a domain keyword query.
+7. Scout `_discover` runs a 3-depth recursive search; findings are buffered correctly as `KNOWLEDGE_INJECTION` candidates with `knowledge_type = "market_intel"`.
+8. `ITERATE_PLAN` compaction triggers when `constraints` list reaches 5 items; original constraints are archived to BigQuery `aos_logs.blueprint_constraints`.
+9. All new tests pass (`pytest`, 0 failures).
+10. Monthly cost projection (from 7-day test run) remains below **$3.00/month** at equivalent production load.
+
+---
+
 ### Phase 3: The "Approval Gate" (Gemini Integration)
 - Program Supervisor Agent to:
   1. Detect a problem.
@@ -1583,6 +1624,11 @@ Phase 4 is complete when **all** of the following are true:
 | Messaging | Cloud Pub/Sub | [x] |
 | Proactive Trigger | Cloud Scheduler | [x] |
 | Human Interface | Google Sheets + Apps Script | [x] |
+| Conversational Interface | Google Chat App | [ ] |
+| Vision Hub | AppSheet (Business Workspace) | [ ] |
+| Blueprint Factory | Google Docs API | [ ] |
+| Institutional Knowledge Retrieval | Vertex AI Search (over Drive corpus) | [ ] |
+| Structured Research | Google Custom Search API | [ ] |
 | Memory | Vertex AI Memory Bank | [x] |
 | Runtime (Phase 1–4) | Cloud Run (scale-to-zero, event-driven) | [x] |
 | Runtime (Phase 5+) | Vertex AI Agent Engine *(deferred — see §9.4)* | [ ] |
