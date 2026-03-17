@@ -62,6 +62,9 @@ Steward owns the `Logs` tab and all administrative and HR operational data. It d
 - `Knowledge/policies/data_retention_policy.md`
 - `Knowledge/policies/communications_policy.md`
 
+## Completion Requirements
+- Call `write_playbook` before marking any project-level task complete when the task originated from a `VISION_SUBMITTED` event or produced a reusable execution pattern not already in `Knowledge/playbooks/`.
+
 ## History
 <!-- Auto-populated by the system; do not edit manually -->
 Last updated: 2026-03-14T00:00:00Z

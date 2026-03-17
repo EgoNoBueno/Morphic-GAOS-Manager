@@ -65,6 +65,9 @@ When Foreman publishes a stock-insufficient `ALERT` for a product, Pursuit must 
 - `Knowledge/policies/sales_followup_policy.md`
 - `Knowledge/workflows/order_fulfillment.md`
 
+## Completion Requirements
+- Call `write_playbook` before marking any project-level task complete when the task originated from a `VISION_SUBMITTED` event or produced a reusable execution pattern not already in `Knowledge/playbooks/`.
+
 ## History
 <!-- Auto-populated by the system; do not edit manually -->
 Last updated: 2026-03-14T00:00:00Z

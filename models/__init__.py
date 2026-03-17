@@ -34,6 +34,15 @@ class MessageType(str, Enum):
     BROADCAST         = "BROADCAST"        # Nexus-Prime → All: system-wide directive
     TTL_SWEEP         = "TTL_SWEEP"        # Cloud Scheduler: sweep stale proposals
     NIGHTLY_ARCHIVE   = "NIGHTLY_ARCHIVE"  # Cloud Scheduler: nightly Sheet → BigQuery archive
+    # ── Phase 2.5 — Conversation Layer ────────────────────────────────────
+    CHAT_MESSAGE      = "CHAT_MESSAGE"     # Inbound message from Google Chat (owner → Nexus-Prime)
+    DAILY_SYNC        = "DAILY_SYNC"       # Cloud Scheduler: 6 AM morning briefing trigger
+    VISION_SUBMITTED  = "VISION_SUBMITTED" # Owner submitted a project vision (Chat or AppSheet)
+    PLAN_REVIEW       = "PLAN_REVIEW"      # Owner commented on a Blueprint Doc constraint
+    COMMENT_RECEIVED  = "COMMENT_RECEIVED" # Doc comment poll detected a new owner comment
+    RESEARCH_MANDATE  = "RESEARCH_MANDATE" # Nexus-Prime → Scout: deep structured research request
+    SKILL_REQUEST     = "SKILL_REQUEST"    # Agent requests owner approval to install a new library
+    KNOWLEDGE_INJECTION = "KNOWLEDGE_INJECTION"  # Scout: corroborated market intelligence (≥5 sources)
 
 
 # ── A2AMessage ─────────────────────────────────────────────────────────────

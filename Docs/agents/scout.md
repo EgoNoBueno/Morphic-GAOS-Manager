@@ -63,6 +63,10 @@ Scout owns the `Research Products` tab and produces market intelligence reports 
 - `Knowledge/procedures/competitive_intelligence.md`
 - `Knowledge/policies/research_policy.md`
 
+## Completion Requirements
+- Call `write_playbook` before marking any project-level task complete when the task originated from a `VISION_SUBMITTED` event or produced a reusable research pattern not already in `Knowledge/playbooks/`.
+- When responding to a `RESEARCH_MANDATE`, run the `_discover` node (recursive web search, max depth 3, max 15 queries) and publish `KNOWLEDGE_INJECTION` for any finding corroborated across ≥ 5 independent sources (confidence ≥ 0.70, tagged `knowledge_type = "market_intel"`).
+
 ## History
 <!-- Auto-populated by the system; do not edit manually -->
 Last updated: 2026-03-14T00:00:00Z

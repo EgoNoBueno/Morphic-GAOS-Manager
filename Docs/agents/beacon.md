@@ -64,6 +64,9 @@ Beacon owns the `Marketing`, `Sales by Product`, `Sales Graphs`, and `Ad Respons
 - `Knowledge/workflows/weekly_reporting.md`
 - `Knowledge/policies/expense_approval_policy.md`
 
+## Completion Requirements
+- Call `write_playbook` before marking any project-level task complete when the task originated from a `VISION_SUBMITTED` event or produced a reusable execution pattern not already in `Knowledge/playbooks/`.
+
 ## History
 <!-- Auto-populated by the system; do not edit manually -->
 Last updated: 2026-03-14T00:00:00Z

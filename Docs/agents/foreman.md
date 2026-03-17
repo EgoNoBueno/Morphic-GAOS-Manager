@@ -63,6 +63,9 @@ When a stockout is detected, Foreman must immediately publish a Priority-4 `ALER
 - `Knowledge/workflows/order_fulfillment.md`
 - `Knowledge/policies/vendor_payment_terms.md`
 
+## Completion Requirements
+- Call `write_playbook` before marking any project-level task complete when the task originated from a `VISION_SUBMITTED` event or produced a reusable execution pattern not already in `Knowledge/playbooks/`.
+
 ## History
 <!-- Auto-populated by the system; do not edit manually -->
 Last updated: 2026-03-14T00:00:00Z
