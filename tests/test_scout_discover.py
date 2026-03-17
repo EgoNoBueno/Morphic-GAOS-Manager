@@ -43,6 +43,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from models import AgentWorkingMemory
+
 
 # ── Settings fixture ─────────────────────────────────────────────────────────
 
@@ -101,8 +103,8 @@ def _make_mandate(topic="loyalty program trends", blueprint_doc_id=""):
     )
 
 
-def _base_state(extra=None):
-    state = {
+def _base_state(extra=None) -> AgentWorkingMemory:
+    state: AgentWorkingMemory = {  # type: ignore[assignment]
         "task_id": "mandate-001",
         "project_id": "test-project",
         "cost_usd": 0.0,
@@ -125,7 +127,7 @@ def _base_state(extra=None):
 
 def _fake_model_resp(data=None, text=""):
     from agents import ModelResponse
-    return ModelResponse(text=text, data=data or [], cost_usd=0.001, tokens_used=50)
+    return ModelResponse(text=text, data=data or {}, cost_usd=0.001, tokens_used=50)
 
 
 def _fake_search_results(n=8):
