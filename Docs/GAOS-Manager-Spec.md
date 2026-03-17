@@ -329,14 +329,20 @@ Morphic-GAOS-Manager/
 │       ├── orchestrator.py       # Research Agent (Tier 2)
 │       └── tasks/
 ├── tools/                        # Shared tool modules all agents import
+│   ├── __init__.py
 │   ├── google_sheets.py          # Read/Write logic for Dashboard
 │   ├── project_registry.py       # Load/watch Project Registry tab
 │   ├── pubsub.py                 # Publish A2A messages
 │   ├── secrets.py                # get_secret() wrapper for Secret Manager
 │   ├── bigquery.py               # Cold log writes and archive queries
 │   ├── drive.py                  # Knowledge/ folder read/write
-│   ├── memory.py                 # Vertex AI RAG corpus read/write
-│   └── webhook_sender.py         # HMAC-signed Approval Gate proposals
+│   ├── memory.py                 # Vertex AI Memory Bank read/write
+│   ├── webhook_sender.py         # HMAC-signed Approval Gate proposals
+│   ├── google_chat.py            # Google Chat card + message sender (Phase 2.5 Step 1)
+│   ├── web_search.py             # Gemini grounded web search (lightweight)
+│   ├── vertex_search.py          # Vertex AI Search over Drive Knowledge/ corpus (Phase 2.5 Step 3)
+│   ├── google_docs.py            # Google Docs create/append/comment — Blueprint Factory (Phase 2.5 Step 4)
+│   └── google_search.py          # Google Custom Search API — Scout _discover node (Phase 2.5 Step 6)
 ├── models/                       # Pydantic schemas (A2AMessage, MemoryEntry, etc.)
 ├── config/
 │   ├── settings.yaml             # Model aliases, GCP IDs, topic list (committed)
@@ -1652,11 +1658,11 @@ Phase 4 is complete when **all** of the following are true:
 | Messaging | Cloud Pub/Sub | [x] |
 | Proactive Trigger | Cloud Scheduler | [x] |
 | Human Interface | Google Sheets + Apps Script | [x] |
-| Conversational Interface | Google Chat App | [ ] |
-| Vision Hub | AppSheet (Business Workspace) | [ ] |
-| Blueprint Factory | Google Docs API | [ ] |
-| Institutional Knowledge Retrieval | Vertex AI Search (over Drive corpus) | [ ] |
-| Structured Research | Google Custom Search API | [ ] |
+| Conversational Interface | Google Chat App | [x] |
+| Vision Hub | AppSheet (Business Workspace) | [x] |
+| Blueprint Factory | Google Docs API | [x] |
+| Institutional Knowledge Retrieval | Vertex AI Search (over Drive corpus) | [x] |
+| Structured Research | Google Custom Search API | [x] |
 | Memory | Vertex AI Memory Bank | [x] |
 | Runtime (Phase 1–4) | Cloud Run (scale-to-zero, event-driven) | [x] |
 | Runtime (Phase 5+) | Vertex AI Agent Engine *(deferred — see §9.4)* | [ ] |
