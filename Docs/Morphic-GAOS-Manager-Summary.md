@@ -28,7 +28,7 @@ The system is designed to run for roughly **$2.50 per month** in cloud costs by 
 
 6. **Layered Memory** — Scratchpad → BigQuery (episodic) → Sheets staging buffer → Vertex AI Memory Bank (long-term). Agents propose learnings; Nexus-Prime promotes them to permanent memory only after owner approval.
 
-**Current State (Phase 2.5 Steps 1+2 complete):** All 7 orchestrators, the full tool layer (including `google_chat.py` and `web_search.py`), and a 215-test suite are built. Phase 2.5 Step 1 (`POST /chat` + Chat tools) and Step 2 (`POST /daily-sync` + morning briefing) are deployed. Steps 3–7 (Vertex Search, Google Docs, AppSheet, Scout research, ITERATE_PLAN) remain.
+**Current State (Phase 2.5 Steps 1–6 complete):** All 7 orchestrators, the full tool layer (14 modules including `google_chat.py`, `vertex_search.py`, `google_docs.py`, and `google_search.py`), and a **320-test suite** are built and passing. Phase 2.5 Steps 1–6 are complete: `POST /chat` (Chat tools), `POST /daily-sync` (morning briefing), Vertex Search + `write_playbook` node, Google Docs + Blueprint Factory, AppSheet Vision Hub + `VISION_SUBMITTED` handler, and Scout `_discover` recursive node + `tools/google_search.py` + `KNOWLEDGE_INJECTION`. Step 7 (`ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow) remains.
 
 ---
 
@@ -121,9 +121,16 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 **Resources required:** Google Secret Manager, Google Apps Script (protected ranges, `onChange` trigger, `syncSkillsToVertex`), Vertex AI sandbox, Cloud Logging.
 
 #### Development Roadmap (5 Phases)
-**What it is:** A phased build plan. **Phase 1 is complete** — all 7 orchestrators, the `main.py` Cloud Run entry point, the full tool layer (`bigquery`, `webhook_sender`, `memory`, `project_registry`, `google_sheets`, `pubsub`, `secrets`), and a 215-test suite covering U1–U5 unit specs and S1–S4 static analysis gate.
-**Phase 2.5 Steps 1+2 are complete** — `tools/google_chat.py` + `POST /chat` (25 tests; commit `551f0ca`); `handle_daily_sync()` + `POST /daily-sync` + `ChatConfig` (13 tests; commit `ed6140b`).
-Phase 2 (Ollama observability), Phase 3 (Gemini + full approval loop), Phase 4 (full validation, exit criteria), Phase 5 (Grafana CEO dashboard, future).
+**What it is:** A phased build plan. **Phase 1 is complete** — all 7 orchestrators, the `main.py` Cloud Run entry point, the core tool layer (`bigquery`, `webhook_sender`, `memory`, `project_registry`, `google_sheets`, `pubsub`, `secrets`), and a baseline test suite covering U1–U5 unit specs and S1–S4 static analysis gate.
+**Phase 2.5 Steps 1–6 are complete (320 tests passing):**
+- Step 1: `tools/google_chat.py` + `POST /chat` (25 tests; commit `551f0ca`)
+- Step 2: `handle_daily_sync()` + `POST /daily-sync` + `ChatConfig` (13 tests; commit `ed6140b`)
+- Step 3: `tools/vertex_search.py` + Playbook schema + `write_playbook` node (22 tests; commit `d0f05b1`)
+- Step 4: `tools/google_docs.py` + Blueprint Factory (29 tests; commit `d0f05b1`)
+- Step 5: AppSheet Vision Hub + `VISION_SUBMITTED` handler + `doc-comment-poll` Scheduler job (30 tests; commit `a62c6cc`)
+- Step 6: `tools/google_search.py` + Scout `_discover` recursive node + `KNOWLEDGE_INJECTION` protocol (24 tests; commit `7def85c`)
+
+Step 7 (`ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow) is next. Phase 2 (Ollama observability), Phase 3 (Gemini + full approval loop), Phase 4 (full validation, exit criteria), Phase 5 (Grafana CEO dashboard, future) follow.
 **Why it exists:** Building everything at once is how you end up with a broken system that is impossible to debug. Each phase has explicit exit criteria that must all be true before moving to the next.
 **Resources required:** Phases 1–4: Cloud Run, Cloud Pub/Sub, Sheets, Ollama, Gemini. Phase 5 (future): Grafana on Cloud Run, Vertex AI Agent Engine (optional upgrade).
 
@@ -204,7 +211,7 @@ While the master spec defines what the system does, this document defines how ea
 
 *The API reference for every shared function agents are allowed to call. No agent touches a Google SDK directly — it goes through these wrappers.*
 
-This document defines the public interface for eight tool modules. The design enforces consistent `project_id` scoping, batching, and error handling across the whole system.
+This document defines the public interface for fourteen tool modules. The design enforces consistent `project_id` scoping, batching, and error handling across the whole system.
 
 #### `tools/secrets.py`
 **What it does:** Fetches secrets from Google Secret Manager by name. The only module allowed to touch Secret Manager directly.
@@ -236,6 +243,46 @@ This document defines the public interface for eight tool modules. The design en
 **What it does:** Loads the Project Registry tab, validates project IDs, and distinguishes between active, paused, and archived projects.
 **Why it exists:** Every agent must validate the `project_id` it receives before doing any work. Centralizing this across all agents means the validation logic only needs to be correct once.
 **Resources required:** Google Sheets (Project Registry tab).
+
+#### `tools/memory.py`
+**What it does:** Reads from and writes to Vertex AI Memory Bank for each agent's domain context. Agents batch-read at boot; individual writes go through Nexus-Prime post-approval only.
+**Why it exists:** Centralizes all long-term memory I/O so access patterns (batch reads at boot, approved writes only) are enforced consistently across every orchestrator.
+**Resources required:** Vertex AI Memory Bank, `roles/aiplatform.user` IAM role.
+
+#### `tools/bigquery.py`
+**What it does:** Appends task-outcome rows, approval records, and cost summaries to BigQuery. Supports parameterized queries for episodic memory lookups.
+**Why it exists:** BigQuery is the cold-storage backbone for audit logs and pattern detection. Centralizing all writes prevents schema drift across agents.
+**Resources required:** BigQuery, `roles/bigquery.dataEditor` IAM role.
+
+#### `tools/google_chat.py`
+**What it does:** Posts messages and interactive approval cards to Google Chat spaces. Used by all orchestrators for status updates, the daily briefing, and approval-request cards.
+**Why it exists:** Google Chat is the primary human-facing notification channel. A shared wrapper enforces consistent card format and error handling across agents.
+**Added:** Phase 2.5 Step 1.
+**Resources required:** Google Chat API, service account with Chat scope.
+
+#### `tools/web_search.py`
+**What it does:** Performs grounded web searches via Gemini's built-in search grounding tool for tasks that need real-time knowledge but not deep recursive research.
+**Why it exists:** Provides a lightweight search capability for quick fact-checks without triggering Scout's full `_discover` pipeline.
+**Resources required:** Gemini API (search grounding enabled).
+
+#### `tools/vertex_search.py`
+**What it does:** Queries the Vertex AI Search (Discovery Engine) corpus over the project's `Knowledge/` Drive folder. Returns semantically ranked procedural documents.
+**Why it exists:** Gives agents fast semantic retrieval over their knowledge library without scanning Drive directly. The `write_playbook` node in all orchestrators indexes new playbooks here.
+**Added:** Phase 2.5 Step 3.
+**Resources required:** Vertex AI Search (Discovery Engine), `roles/discoveryengine.editor` IAM role.
+
+#### `tools/google_docs.py`
+**What it does:** Creates, reads, and appends content to Google Docs. Used exclusively by Nexus-Prime to generate and iterate on Blueprint Docs in the project Drive folder.
+**Why it exists:** Blueprint Docs are the structured output of the vision workflow — they need to persist as editable Drive documents, not just Sheet rows.
+**Added:** Phase 2.5 Step 4.
+**Resources required:** Google Docs API, Google Drive API, service account with Docs + Drive scope.
+
+#### `tools/google_search.py`
+**What it does:** Calls the Google Custom Search JSON API v1. Exposes `search()` (single query) and `research_topic()` (multi-query with URL deduplication). Called exclusively from Scout's `_discover` node.
+**Why it exists:** Enables Scout's recursive deep-research loop (`RESEARCH_MANDATE` → `_discover` → `KNOWLEDGE_INJECTION`) for gathering market intelligence with corroborated sourcing.
+**Added:** Phase 2.5 Step 6.
+**Key constraint:** Free tier is 100 queries/day; `max_queries_per_mandate` (default 15) caps each mandate at 15% of the daily quota.
+**Resources required:** Google Custom Search API, `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_CX` in Secret Manager.
 
 ---
 
@@ -355,127 +402,11 @@ Manages compliance deadlines, meeting scheduling, employee onboarding tracking, 
 *Key notes:* A missed compliance deadline (today's date past the due date) triggers the highest possible alert — Priority-5, immediate.
 
 #### Scout — Research Agent (`scout.md`)
-Monitors competitors, tracks market trends, identifies sourcing alternatives, and detects supply disruptions. It owns the `Research Products` tab. It uses `FAST_MODEL` (not `LOCAL_MODEL`) because its work requires web-current knowledge via Vertex AI Search. It routes market signals to Beacon and competitor alerts to Nexus-Prime — it does not author strategy itself.
+Monitors competitors, tracks market trends, identifies sourcing alternatives, and detects supply disruptions. It owns the `Research Products` tab. It uses `FAST_MODEL` (not `LOCAL_MODEL`) because its work requires web-current knowledge. It routes market signals to Beacon and competitor alerts to Nexus-Prime — it does not author strategy itself.
 
-*Key dependency:* When Foreman detects a stockout, Scout is automatically tasked to find alternative sourcing options within 48 hours.
+Scout implements a recursive deep-research pipeline (Phase 2.5 Step 6): when it receives a `RESEARCH_MANDATE` Pub/Sub message, it routes to the `_discover` node, which generates LLM-driven search queries, calls `tools/google_search.py` up to `max_search_depth` levels (default 3, max 15 queries), and accumulates results. Findings corroborated across ≥ 5 independent sources (confidence ≥ 0.70) are held in the observation buffer and published as `KNOWLEDGE_INJECTION` events. If a `blueprint_doc_id` is present in the mandate payload, Scout appends a Section E Market Intelligence block directly to the Blueprint Doc.
 
----
-
-## Glossary of Terms
-
-**A2A (Agent-to-Agent) Protocol**
-The standardized communication layer between agents. All messages use the `A2AMessage` Pydantic schema and travel through Cloud Pub/Sub. No agent talks to another agent directly.
-
-**Approval Gate**
-The human review checkpoint in the system. When an agent wants to deploy code, make a payment, send a communication, or change system behavior, it writes a proposal to the `Agent_Approvals` Sheet tab and waits for the owner's approval before proceeding.
-
-**BigQuery**
-Google's cloud data warehouse. Used in GAOS as the cold storage layer for historical logs and task outcomes. Agents query it for episodic memory (past task outcomes) but write to it only through the nightly archive job.
-
-**Cloud Run**
-Google's serverless container runtime. Agents run on Cloud Run and scale to zero when idle — the system pays only for actual execution time, not idle time.
-
-**Cloud Scheduler**
-A cron-like service that triggers jobs on a schedule. Used in GAOS for the nightly archive job, the hourly TTL sweep of unanswered proposals, and other time-based agent wakes.
-
-**Confidence Threshold**
-The minimum confidence score (0.70 by default) an observation must reach before the system automatically submits it as a knowledge proposal. Confidence rises as multiple independent observations corroborate the same pattern.
-
-**Correlation ID**
-A UUID that links all Pub/Sub messages in a single multi-step workflow (e.g., the sequence of messages in a Lead-to-Revenue flow). Used for audit tracing.
-
-**DEEP_MODEL**
-The alias for the highest-capability paid cloud model (Gemini Pro or equivalent). Reserved for approval gate proposals, system re-architecture decisions, and multi-agent conflict resolution. Never used for routine tasks.
-
-**Domain Orchestrator**
-A Tier 2 agent that owns a specific business domain (accounting, marketing, sales, operations, admin, research). Each orchestrator has its own Sheet tab, Pub/Sub topic, and team of Tier 3 task agents.
-
-**Episodic Memory**
-The agent's autobiographical history — which tasks ran, what errors occurred, what the outcomes were. Stored automatically in Cloud Logging and queryable from BigQuery. Used for pattern detection and the no-progress detector.
-
-**Evolution Task**
-A Write-Test-Refine session where an agent discovers a capability gap and writes Python code in the Vertex AI sandbox to address it. The result (new skill) is always submitted through the Approval Gate before deployment.
-
-**FAST_MODEL**
-The alias for the speed-optimized paid cloud model (Gemini Flash or equivalent). Used for moderate reasoning, chat interactions, API response parsing, and as the fallback when the local model is unavailable.
-
-**gspread**
-The Python library used to interact with the Google Sheets API. All Sheet reads and writes in GAOS go through `tools/google_sheets.py`, which uses gspread under the hood.
-
-**HMAC-SHA256**
-A cryptographic signing algorithm. GAOS uses it to sign every webhook request from a Cloud agent to the Apps Script approval endpoint. The Apps Script verifies the signature before processing the request, preventing unauthorized injections.
-
-**IAM (Identity and Access Management)**
-Google Cloud's permission system. Each agent has its own service account with the minimum permissions it needs and no more. Nexus-Prime's service account cannot read the Vertex AI credentials; the Sheets service account cannot read Pub/Sub credentials.
-
-**Identity File**
-A Markdown file in `Docs/agents/` that defines an agent's persona, goal, objectives, resources, operational scope, guardrails, escalation rules, and knowledge sources. This file is loaded as the agent's system prompt at the start of every session — it is the agent's instructions for how to behave.
-
-**Knowledge Proposal**
-A structured submission to the Approval Gate asking Nexus-Prime to promote an agent observation (or a procedure update) to permanent memory. Nothing enters long-term memory without one.
-
-**LangGraph**
-The orchestration framework that manages stateful, multi-step agent workflows. Orchestrators declare a `StateGraph` with named nodes (plan, dispatch, collect, park, resume, etc.) and LangGraph manages transitions between them, including persisting state across Pub/Sub events.
-
-**LOCAL_MODEL**
-The alias for the free local model (Ollama with Llama or Mistral). Used for logging, formatting, summarization, data classification, and any task where cloud LLM quality is not required. Costs only electricity.
-
-**Nexus-Prime**
-The Tier 1 root agent — the general manager of the entire AOS. It does not do domain work itself. It oversees all orchestrators, handles cross-domain conflicts, manages knowledge approval, initializes new projects, and is the only agent that can authorize changes to how the system operates.
-
-**No-Progress Detector**
-A safety mechanism in the Write-Test-Refine loop. If the error fingerprint on iteration N is identical to iteration N-1, the loop stops immediately — further attempts will not help without human intervention.
-
-**Observation Buffer**
-The Tier 3 memory layer. Agent learnings that have not yet reached the confidence threshold are held here (in the `Pending_Knowledge` Sheet tab) for up to 14 days while the system waits for corroborating instances. If they expire without reaching threshold, they are discarded.
-
-**Ollama**
-An open-source tool that runs large language models locally on the host machine. GAOS uses it as `LOCAL_MODEL` for zero-cost tasks. It is configured as a Windows Service to auto-start on boot and restart on crash.
-
-**`project_id`**
-A short string slug (e.g., `acme-retail`) that identifies one business project namespace. Every agent action — Sheet write, Pub/Sub publish, Memory Bank read, Cloud Log entry — must include the `project_id` to ensure data from different projects never mixes.
-
-**Project Registry**
-A tab in the master Google Sheet workbook that lists every active AOS project. Nexus-Prime reads this on startup and monitors it for new entries. Adding a row with status `Active` automatically triggers a new project initialization.
-
-**Protected Range**
-A Google Sheets feature that prevents specific cells from being edited by anyone except the owner. Used on the `Status` column (col I), `Proposed Code` column (col H), and the `Code SHA-256` column (col M) in the `Agent_Approvals` tab — and on the entire `Authorized Approvers` tab.
-
-**Pub/Sub (Cloud Pub/Sub)**
-Google's managed message-passing service. Used as the nervous system of GAOS — all agent-to-agent communication, approval notifications, and system-wide broadcasts travel through Pub/Sub topics and subscriptions.
-
-**RBAC (Role-Based Access Control)**
-The permission system governing who may approve proposals. Each person in the `Authorized Approvers` Sheet tab has a tier (1–5). They may only approve proposals at or below their tier level. Attempts by unauthorized or insufficient-tier users to approve proposals are reverted and logged as security events.
-
-**Semantic Memory**
-The Tier 4 memory layer. Approved facts, patterns, and business rules that agents use as context for decision-making. Stored in Vertex AI Memory Bank. Written only by Nexus-Prime post-approval; read by all orchestrators at boot.
-
-**Service Account**
-A Google Identity account used by a software service (not a human). Each agent has its own service account with the minimum GCP permissions it needs. Service account JSON keys are stored in Google Secret Manager.
-
-**Static Analysis**
-A two-gate code review performed by `validate_code_safety()` in `agents/__init__.py` before any agent-written code reaches the Approval Queue. **Gate 1 (pattern gate):** walks the AST to block dangerous call patterns (`os.system`, `subprocess.*`, `pickle.loads`, `eval`, `exec`, `__import__`, etc.). **Gate 2 (import gate):** checks every `import` and `from … import` against the approved module allowlist using exact module-boundary matching (e.g. `import requests` is blocked even though `re` is allowlisted — a substring check would pass it). Code that fails either gate is hard-stopped before it reaches the queue. Separately, `syncSkillsToVertex` (Apps Script) performs a final hash-consistency check at deploy time.
-
-**Steward**
-The Admin & HR domain orchestrator. Manages compliance deadlines, meeting scheduling, onboarding tracking, and document filing.
-
-**Task Agent (Tier 3)**
-A stateless, single-purpose agent that performs one unit of work and returns a result to its orchestrator. It does not use LangGraph, does not publish to Pub/Sub, and does not interact with the human dashboard. It escalates by returning `status: "escalated"` in its output.
-
-**TTL (Time-to-Live)**
-The maximum time before something is considered stale and acted upon. Used for: unanswered approval proposals (each priority has a TTL), observation buffer entries (14 days), Cloud Logging entries (7 days), and BigQuery table partitions (varies by data type).
-
-**Vertex AI Code Execution**
-A sandboxed Python execution environment from Google. Used by agents during the Write-Test-Refine self-evolution loop to safely run and test code without risking the production environment. Network-isolated by Google.
-
-**Vertex AI Memory Bank**
-Google's managed vector memory service. Stores long-term semantic facts for agents. Agents batch-read their domain context from the Memory Bank at boot and cache it for the session — they do not query it per-task, as each operation has a cost.
-
-**Working Memory**
-The Tier 1 memory layer. The agent's in-flight scratchpad for a single Cloud Run invocation — current task ID, sub-task results, running cost, observation buffer, parked proposals. Lives in LangGraph state and is lost when the invocation ends.
-
-**Write-Test-Refine Loop**
-See *Evolution Task*.
+*Key dependencies:* When Foreman detects a stockout, Scout is automatically tasked to find alternative sourcing options within 48 hours. Nexus-Prime triggers deep research by publishing `RESEARCH_MANDATE` — Scout replies with `KNOWLEDGE_INJECTION`.
 
 ---
 
@@ -483,16 +414,19 @@ See *Evolution Task*.
 
 | File | Purpose | Length |
 |------|---------|--------|
-| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,691 lines |
-| `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~998 lines |
-| `Docs/GAOS-Nexus-Prime-Spec.md` | Engineering construction requirements for the Tier 1 root orchestrator | ~945 lines |
-| `Docs/GAOS-Onboarding-Spec.md` | Deployer first-run guide + end-user onboarding via Steward | ~827 lines |
-| `Docs/GAOS-Memory-Spec.md` | Full memory architecture, five layers, self-learning loop | ~841 lines |
-| `Docs/GAOS-Agent-Spec.md` | Engineering construction requirements for every agent tier | ~402 lines |
-| `Docs/GAOS-Skill-Compliance-Spec.md` | External skill review process before AOS integration | ~419 lines |
-| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory) | ~659 lines |
-| `Docs/GAOS-Persona-Spec.md` | AOS soul ("The Strategic Architect"), `think` node spec, tone standard | ~360 lines |
-| `Docs/GAOS-Privacy-Spec.md` | Cloud data exposure, privacy risk analysis, and mitigation strategies | ~367 lines |
+| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,392 lines |
+| `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~893 lines |
+| `Docs/GAOS-Nexus-Prime-Spec.md` | Engineering construction requirements for the Tier 1 root orchestrator | ~834 lines |
+| `Docs/GAOS-Onboarding-Spec.md` | Deployer first-run guide + end-user onboarding via Steward | ~638 lines |
+| `Docs/GAOS-Memory-Spec.md` | Full memory architecture, five layers, self-learning loop | ~706 lines |
+| `Docs/GAOS-Agent-Spec.md` | Engineering construction requirements for every agent tier | ~317 lines |
+| `Docs/GAOS-Skill-Compliance-Spec.md` | External skill review process before AOS integration | ~298 lines |
+| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 14 modules) | ~846 lines |
+| `Docs/GAOS-Persona-Spec.md` | AOS soul ("The Strategic Architect"), `think` node spec, tone standard | ~297 lines |
+| `Docs/GAOS-Privacy-Spec.md` | Cloud data exposure, privacy risk analysis, and mitigation strategies | ~260 lines |
+| `Docs/GAOS-Project-Glossary.md` | Canonical glossary of all abbreviations and technical terms | ~151 lines |
+| `Docs/GAOS-Doctor.md` | Health-check runbook for diagnosing deployment and runtime issues | ~55 lines |
+| `Docs/AI-Autocoding-Rules.md` | Coding rules enforced during AI-assisted development sessions | ~250 lines |
 | `Docs/agents/nexus-prime.md` | Identity file — Nexus-Prime (Root Orchestrator / General Manager) | — |
 | `Docs/agents/ledger.md` | Identity file — Ledger (Accounting Agent) | — |
 | `Docs/agents/beacon.md` | Identity file — Beacon (Marketing Agent) | — |
@@ -501,7 +435,7 @@ See *Evolution Task*.
 | `Docs/agents/steward.md` | Identity file — Steward (Admin & HR Agent) | — |
 | `Docs/agents/scout.md` | Identity file — Scout (Research Agent) | — |
 | `main.py` | Cloud Run HTTP entry point — all 7 agents, selected by `AGENT_NAME` env var | — |
-| `tests/` | 151-test suite — U1–U5 unit specs + S1–S4 static analysis gate + tool modules | — |
+| `tests/` | 320-test suite — U1–U5 unit specs + S1–S4 static analysis + tool modules + Phase 2.5 | — |
 
 ---
 

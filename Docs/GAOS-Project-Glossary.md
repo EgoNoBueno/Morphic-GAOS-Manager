@@ -13,6 +13,7 @@ This glossary defines every abbreviation, acronym, and technical term used in Mo
 - **AOS (Agent Operating System)**: The intelligent workforce system built on Google's cloud ecosystem. It coordinates specialized AI agents to handle business operations autonomously.
 - **AP (Accounts Payable)**: Money the business owes to vendors; the Ledger agent monitors and proposes payments for all AP items.
 - **API (Application Programming Interface)**: A standardized "plug" that lets two pieces of software talk to each other — for example, every time an agent reads from or writes to your dashboard, it calls Google's Sheets API.
+- **Approval Gate**: The human review checkpoint in the system. When an agent wants to deploy code, make a payment, send a communication, or change system behavior, it writes a proposal to the `Agent_Approvals` Sheet tab and waits for the owner's approval before proceeding.
 - **AR (Accounts Receivable)**: Money customers owe the business; Ledger opens an AR entry when a deal closes and marks it fulfilled once Foreman confirms the shipment has been sent.
 - **AST (Abstract Syntax Tree)**: A structural map of a piece of Python code that the system walks automatically to detect dangerous commands before any agent-written code is submitted to the Approval Gate.
 
@@ -28,22 +29,30 @@ This glossary defines every abbreviation, acronym, and technical term used in Mo
 - **CMEK (Customer-Managed Encryption Keys)**: An optional configuration where you supply your own encryption key for data stored in BigQuery and other GCP services, so Google cannot access your data without your explicit key.
 - **Cloud Pub/Sub**: A Google Cloud messaging service used for communication between agents. Ensures reliable message delivery even during restarts or crashes.
 - **Cloud Run**: A Google Cloud service for running containerized applications. Used in the GAOS system for scalable, serverless deployment — pay only when agents are actively handling requests.
+- **Cloud Scheduler**: A cron-like Google Cloud service that triggers jobs on a schedule. Used in GAOS for the nightly archive job, the hourly TTL sweep of unanswered proposals, and other time-based agent wakes.
 - **Cold start**: The brief startup delay that occurs when a Cloud Run agent wakes up from zero — relevant because the system is designed around scale-to-zero (pay-per-use) rather than an always-on server.
+- **Confidence Threshold**: The minimum confidence score (0.70 by default) an observation must reach before the system automatically submits it as a knowledge proposal. Confidence rises as multiple independent observations corroborate the same pattern.
+- **Correlation ID**: A UUID that links all Pub/Sub messages belonging to a single multi-step workflow (e.g., the full sequence of messages in a Lead-to-Revenue flow). Used for audit tracing and task-resumption matching.
 - **CPL (Cost Per Lead)**: A marketing metric expressing how much is spent to acquire one potential customer; the Beacon agent tracks CPL per campaign and uses it in weekly performance reports.
 - **CRM (Customer Relationship Management)**: Software (or a process) for tracking leads, deals, and customer interactions; the Pursuit agent manages all CRM data in the Google Sheet.
 - **CVE (Common Vulnerabilities and Exposures)**: A public database of known security flaws in software packages; every third-party library the project imports is checked against CVE records before it is allowed into the codebase.
 
 ## D
 
+- **DEEP_MODEL**: The alias in `settings.yaml` for the highest-capability paid cloud model (Gemini Pro or equivalent). Reserved for approval gate proposals, system re-architecture decisions, and multi-agent conflict resolution — never used for routine tasks.
+- **Domain Orchestrator**: A Tier 2 agent that owns a specific business domain (accounting, marketing, sales, operations, admin, or research). Each orchestrator has its own Sheet tab, Pub/Sub topic, and team of Tier 3 task agents.
 - **DPA (Data Processing Addendum)**: A legal contract Google provides to GCP customers that commits them not to use your data to train AI models — distinct from the consumer privacy policy that applies to free Google tools.
 
 ## E
 
 - **EDI (Electronic Data Interchange)**: A standardized electronic format for exchanging business documents such as purchase orders between companies; the Foreman agent is blocked from writing directly to supplier EDI systems without Approval Gate sign-off.
 - **EOL (End of Life)**: A software product that is no longer supported; used to describe a deprecated Google library the project avoids because its API endpoint no longer serves current models.
+- **Episodic Memory**: The agent's autobiographical history — which tasks ran, what errors occurred, what the outcomes were. Stored automatically in Cloud Logging and queryable from BigQuery. Used for pattern detection and the no-progress detector.
+- **Evolution Task**: A Write-Test-Refine session where an agent discovers a capability gap and writes Python code in the Vertex AI sandbox to address it. The result (new skill) is always submitted through the Approval Gate before deployment.
 
 ## F
 
+- **FAST_MODEL**: The alias in `settings.yaml` for the speed-optimized paid cloud model (Gemini Flash or equivalent). Used for moderate reasoning, chat interactions, API response parsing, and as the fallback when the local model is unavailable.
 - **FastAPI**: A Python web framework used to run each agent as an HTTP service on Cloud Run, allowing it to receive incoming Pub/Sub push messages and respond to scheduled trigger calls.
 
 ## G
@@ -70,6 +79,7 @@ This glossary defines every abbreviation, acronym, and technical term used in Mo
 ## I
 
 - **IAM (Identity and Access Management)**: Google Cloud's permission system that controls which service account is allowed to use which Google service; each of the eight agent service accounts has the minimum roles needed for its specific function.
+- **Identity File**: A Markdown file in `Docs/agents/` that defines an agent's persona, goal, objectives, resources, operational scope, guardrails, escalation rules, and knowledge sources. Loaded as the agent's system prompt at the start of every session — it is the agent's core instructions for how to behave.
 
 ## J
 
@@ -78,6 +88,7 @@ This glossary defines every abbreviation, acronym, and technical term used in Mo
 ## K
 
 - **KMS (Key Management Service)**: Google Cloud's managed service for creating, storing, and rotating the encryption keys used to protect data at rest.
+- **Knowledge Proposal**: A structured submission to the Approval Gate asking Nexus-Prime to promote an agent observation or procedure update to permanent memory. Nothing enters long-term memory without one.
 - **KPI (Key Performance Indicator)**: A measurable target used to gauge success; Nexus-Prime's primary KPI is defined as the business owner's success, which governs how agents prioritize their work.
 
 ## L
@@ -85,6 +96,7 @@ This glossary defines every abbreviation, acronym, and technical term used in Mo
 - **LangGraph**: A software framework that manages each orchestrator's multi-step workflow as a named state machine — handling task parking for human approval, conditional routing between work stages, and resumption after a Pub/Sub event.
 - **Llama (e.g., Llama 3.1)**: A family of open-source AI language models from Meta; the default local model, which runs on your machine via Ollama at zero cost per inference call.
 - **LLM (Large Language Model)**: An AI model trained on vast amounts of text that can reason, summarize, draft, and classify — Gemini (cloud) and Llama (local) are the two LLMs this system routes work between based on cost and complexity.
+- **LOCAL_MODEL**: The alias in `settings.yaml` for the free local model (Ollama running Llama or Mistral). Used for logging, formatting, summarization, data classification, and any task where cloud LLM quality is not required — costs only electricity.
 
 ## M
 
@@ -97,11 +109,13 @@ This glossary defines every abbreviation, acronym, and technical term used in Mo
 
 - **NER (Named Entity Recognition)**: An AI technique that identifies named entities (company names, people, dollar amounts) in text; referenced as what would be required for thorough automated PII redaction before prompts are sent to cloud AI models.
 - **Nexus-Prime**: The general manager agent in the GAOS system. Oversees the entire system, routes jobs, and authorizes operational changes.
+- **No-Progress Detector**: A safety mechanism in the Write-Test-Refine loop that stops iteration immediately if the error fingerprint on iteration N is identical to iteration N-1 — further attempts will not help without human intervention.
 - **NSSM (Non-Sucking Service Manager)**: A free Windows utility that registers Ollama as a Windows service so it starts automatically on system boot and restarts if it crashes — the primary reliability fix for keeping the local AI available 24/7.
 
 ## O
 
 - **OAuth (Open Authorization)**: An open standard that lets users grant third-party applications limited, scoped access to their Google account without sharing their password; used during local development setup to authorize the system to access Sheets and Drive.
+- **Observation Buffer**: The Tier 3 memory staging layer. Agent learnings that have not yet reached the confidence threshold are held in the `Pending_Knowledge` Sheet tab for up to 14 days while the system waits for corroborating instances. Entries that expire without reaching threshold are discarded.
 - **OIDC (OpenID Connect)**: An authentication layer built on top of OAuth that Pub/Sub uses to sign each push delivery request so Cloud Run can verify the message genuinely came from Google's infrastructure and not from an outside attacker.
 - **Ollama**: Free, locally-installed software that runs open-source AI models directly on your computer; handles all high-frequency, low-complexity agent tasks (logging, formatting, summarizing) at zero cloud cost.
 
@@ -110,6 +124,9 @@ This glossary defines every abbreviation, acronym, and technical term used in Mo
 - **P&L (Profit and Loss)**: A financial summary of revenue versus expenses over a period; Ledger generates a weekly P&L summary row every Monday and appends it to the Accounting dashboard tab.
 - **PEP 8 (Python Enhancement Proposal 8)**: The official Python style guide defining code formatting conventions; the project's Ruff linter automatically enforces PEP 8 compliance and fails any build where violations are found.
 - **PII (Personally Identifiable Information)**: Any data that could identify a specific individual, such as email addresses or phone numbers; the privacy spec defines scrubbing rules to prevent PII from being included in prompts sent to cloud AI models.
+- **`project_id`**: A short string slug (e.g., `acme-retail`) that identifies one business project namespace. Every agent action — Sheet write, Pub/Sub publish, Memory Bank read, Cloud Log entry — must include the `project_id` to ensure data from different projects never mixes.
+- **Project Registry**: A tab in the master Google Sheet workbook that lists every active AOS project. Nexus-Prime reads this on startup and monitors it for new entries. Adding a row with status `Active` automatically triggers a new project initialization.
+- **Protected Range**: A Google Sheets feature that prevents specific cells from being edited by anyone except the owner. Applied to the `Status` column, `Proposed Code` column, and `Code SHA-256` column in the `Agent_Approvals` tab — and to the entire `Authorized Approvers` tab.
 - **Pydantic**: A Python library that enforces strict data types on every agent input and output; ensures that a task ID, project ID, and cost figure are always present and correctly typed at every agent boundary.
 - **PyPI (Python Package Index)**: The public repository where Python packages are published and downloaded; every third-party library the project imports is sourced from PyPI and vetted for known CVEs.
 - **pytest**: The Python testing framework used to run the project's test suite; all tests must pass before any code is committed.
@@ -126,15 +143,19 @@ This glossary defines every abbreviation, acronym, and technical term used in Mo
 
 - **SA (Service Account)**: A Google Cloud identity for a non-human program rather than a person; each of the system's eight agents has a dedicated SA with only the minimum permissions its role requires.
 - **SDK (Software Development Kit)**: A pre-packaged collection of tools and libraries that makes it easier to build software for a specific platform; agents must never call Google SDKs directly — they go through the shared tool layer.
+- **Semantic Memory**: The Tier 4 memory layer. Approved facts, patterns, and business rules that agents use as context for decision-making. Stored in Vertex AI Memory Bank. Written only by Nexus-Prime post-approval; read by all orchestrators at boot.
 - **Serverless**: A cloud deployment model where agents run on Cloud Run and automatically scale to zero instances when idle — you pay only per invocation rather than for always-on servers.
 - **SHA-256 (Secure Hash Algorithm, 256-bit)**: A one-way mathematical fingerprint of any text; every code proposal submitted to the Approval Gate is SHA-256 pinned so that if anyone edits the code after submission, the mismatch is detected and the deploy is blocked.
 - **SKU (Stock Keeping Unit)**: A unique identifier for a distinct product variant in inventory; Foreman monitors stock levels per SKU and triggers reorder proposals when any SKU reaches its threshold.
 - **SLA (Service Level Agreement)**: A defined time commitment for completing a task; agents have internal SLAs — for example, Pursuit must follow up on every qualified lead within the window defined in the sales policy.
 - **SQL (Structured Query Language)**: The standard language used to query databases; used to read from and write to BigQuery for agent-history queries, outcome analysis, and weekly cost-summary reports.
 - **SSRF (Server-Side Request Forgery)**: A security attack where a compromised agent is tricked into making internal network requests on behalf of an attacker; the tool layer validates every outbound URL and blocks private IP ranges to prevent this.
+- **Static Analysis**: A two-gate code review performed before any agent-written code reaches the Approval Queue. Gate 1 (pattern gate) walks the AST to block dangerous call patterns (`os.system`, `subprocess.*`, `eval`, `exec`, `pickle.loads`, `__import__`, etc.). Gate 2 (import gate) validates every import against an approved allowlist using exact module-boundary matching. Code that fails either gate is hard-stopped before it reaches the queue.
+- **Steward**: The Admin & HR domain orchestrator. Manages compliance deadlines, meeting scheduling, onboarding tracking, and document filing.
 
 ## T
 
+- **Task Agent (Tier 3)**: A stateless, single-purpose Tier 3 agent that performs one unit of work and returns a result to its orchestrator. Does not use LangGraph, does not publish to Pub/Sub, and does not interact with the human dashboard. Escalates by returning `status: "escalated"` in its output.
 - **TLS (Transport Layer Security)**: The encryption protocol that protects data while it travels over the internet; all GCP services in this stack communicate exclusively over TLS 1.2 or higher.
 - **TTL (Time To Live)**: An expiry timer applied to pending Approval Gate proposals; when a TTL expires, the Cloud Scheduler fires a sweep that re-notifies the owner and eventually auto-rejects the item so stale proposals never silently accumulate.
 
@@ -146,12 +167,15 @@ This glossary defines every abbreviation, acronym, and technical term used in Mo
 ## V
 
 - **Vertex AI**: A Google Cloud service for building and deploying machine learning models. Used in the GAOS system for long-term memory storage and knowledge promotion.
+- **Vertex AI Code Execution**: A sandboxed Python execution environment provided by Google. Used by agents during the Write-Test-Refine self-evolution loop to safely run and test code without risking the production environment — network-isolated by Google.
+- **Vertex AI Memory Bank**: Google's managed vector memory service used for Tier 4 long-term semantic storage. Agents batch-read their domain context from the Memory Bank at boot and cache it for the session — they do not query it per-task, as each operation has a cost.
 - **VPC (Virtual Private Cloud)**: A private network perimeter in Google Cloud that can restrict which services and external IPs are allowed to communicate with your project; the optional VPC Service Controls configuration prevents data exfiltration even if a service-account credential is stolen.
 - **VRAM (Video RAM)**: Memory located on a graphics card; the limiting factor when choosing a local AI model — running a 70B-parameter model requires approximately 48 GB of VRAM.
 
 ## W
 
 - **winget**: The Windows package manager used to install utilities during setup; referenced specifically for installing NSSM (`winget install nssm`) to register Ollama as a Windows service.
+- **Working Memory**: The Tier 1 memory layer. The agent's in-flight scratchpad for a single Cloud Run invocation — current task ID, sub-task results, running cost, observation buffer, parked proposals. Lives in LangGraph state and is lost when the invocation ends.
 - **Write-Test-Refine loop**: The self-improvement cycle where an agent writes a Python solution in the Vertex AI sandbox, tests it, and iterates up to five times within a 15-minute time limit before submitting the result for human approval.
 
 ## Y
