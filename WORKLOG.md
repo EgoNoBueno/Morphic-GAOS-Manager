@@ -5,7 +5,38 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
-## 2026-03-17 — Phase 2.5 Step 1: Google Chat Tool + POST /chat COMPLETE ✅
+## 2026-03-16 — Phase 2.5 Step 2: Morning Briefing + POST /daily-sync COMPLETE ✅
+
+**215 / 215 tests passing. Zero regressions.**
+
+| File | Change |
+|------|--------|
+| `config/__init__.py` | Added `ChatConfig(owner_space: str)` model; added `chat: ChatConfig` field to `Settings`. |
+| `config/settings.yaml.template` | Added `chat.owner_space` key with comment. |
+| `agents/nexus_prime/orchestrator.py` | Added `handle_daily_sync(project_id)` — queries overnight Logs, Error Logs, and Agent_Approvals; composes Chat Card v2 morning briefing; calls `send_card()` to `settings.chat.owner_space`. |
+| `main.py` | Added `POST /daily-sync` endpoint (Nexus-Prime only); updated docstring. |
+| `tests/test_daily_sync.py` | NEW — 13 tests across 2 classes (`TestHandleDailySync` D1–D9, `TestDailySyncEndpoint` S1–S4). All passing. |
+
+**Next up:** Configure `daily-kickoff` Cloud Scheduler job to POST to `/daily-sync` at 6 AM, then proceed to **Phase 2.5 Step 3** (`tools/vertex_search.py` + Playbook schema + `write_playbook` in all orchestrators).
+
+---
+
+## 2026-03-16 — Phase 2.5 Step 2: PAUSED — design reviewed, implementation not started
+
+**Step 2 scope confirmed from SCRATCH.md:**
+
+- **Trigger:** `daily-kickoff` Cloud Scheduler job fires at **6 AM** → POST to `/sync` with `DAILY_SYNC` payload
+- **What `/sync` currently does:** handles only `APPROVAL_RESULT` from Apps Script (hard-coded path)
+- **Change needed:** detect `DAILY_SYNC` vs `APPROVAL_RESULT` in the request body; for `DAILY_SYNC` → query overnight Logs/Alerts rows from Sheets → compose morning briefing Chat card → `send_card()` to owner's Chat space
+- **Settings change needed:** add `chat.owner_space` to `settings.yaml` / `settings.yaml.template` (the `spaces/…` resource name for the owner's DM)
+- **`DAILY_SYNC` MessageType:** already exists in `models/__init__.py` ✅
+- **`send_card()` in `tools/google_chat.py`:** ready to use ✅
+
+**Resumption point:** `POST /sync` extension + `handle_daily_sync()` in nexus_prime orchestrator + ~8 new tests + WORKLOG + commit.
+
+---
+
+## 2026-03-16 — Phase 2.5 Step 1: Google Chat Tool + POST /chat COMPLETE ✅
 
 **202 / 202 tests passing. Zero regressions.**
 

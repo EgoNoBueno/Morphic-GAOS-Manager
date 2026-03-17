@@ -58,3 +58,8 @@ apps_script:
   script_id: ""
   deployment_id: ""
   webhook_url: ""
+
+# Google Chat — owner DM space for morning briefings and approval cards
+# Discover the space name from an incoming Chat event (event.space.name)
+chat:
+  owner_space: ""  # e.g. spaces/AAAAXXXXXXX

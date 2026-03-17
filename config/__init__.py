@@ -57,6 +57,10 @@ class AppsScriptConfig(BaseModel):
     webhook_url: str = ""
 
 
+class ChatConfig(BaseModel):
+    owner_space: str = ""  # spaces/<id> — owner DM for morning briefings
+
+
 class Settings(BaseModel):
     gcp: GCPConfig
     sheet: SheetConfig
@@ -65,6 +69,7 @@ class Settings(BaseModel):
     pubsub: PubSubConfig = Field(default_factory=PubSubConfig)
     projects: dict[str, ProjectConfig] = Field(default_factory=dict)
     apps_script: AppsScriptConfig = Field(default_factory=AppsScriptConfig)
+    chat: ChatConfig = Field(default_factory=ChatConfig)
 
     @property
     def GCP_PROJECT_ID(self) -> str:

@@ -9,6 +9,7 @@ Endpoints:
   POST /ttl-sweep     Cloud Scheduler TTL sweep (Nexus-Prime only)
   POST /sync          Apps Script → promote approved skill (Nexus-Prime only)
   POST /archive       Cloud Scheduler nightly archive sweep (Nexus-Prime only)
+  POST /daily-sync    Cloud Scheduler 6 AM morning briefing (Nexus-Prime only)
   POST /chat          Google Chat push events — text messages and card callbacks
   GET  /health        Cloud Run health check (always 200)
 
@@ -281,6 +282,41 @@ async def archive(request: Request) -> JSONResponse:
         )
     except Exception as exc:
         log.exception("Nightly archive failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return JSONResponse(content={"status": "ok", **result})
+
+
+@app.post("/daily-sync")
+async def daily_sync(request: Request) -> JSONResponse:
+    """
+    Cloud Scheduler hits this endpoint at 6 AM daily (Nexus-Prime only).
+    Queries overnight Logs, Error Logs, and pending Agent_Approvals, then sends
+    a morning briefing Chat card to the owner's space configured in settings.
+
+    Spec: GAOS-Manager-Spec.md §2.5 (Phase 2.5 Step 2)
+    """
+    _verify_pubsub_audience(request)
+
+    if _AGENT_NAME != "nexus-prime":
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{_AGENT_NAME}' does not support /daily-sync.",
+        )
+
+    from agents.nexus_prime.orchestrator import handle_daily_sync
+
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    try:
+        result = await handle_daily_sync(project_id)
+        log.info(
+            "Daily sync complete: %d logs, %d errors, %d pending approvals",
+            result.get("overnight_logs", 0),
+            result.get("overnight_errors", 0),
+            result.get("pending_approvals", 0),
+        )
+    except Exception as exc:
+        log.exception("Daily sync failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
     return JSONResponse(content={"status": "ok", **result})

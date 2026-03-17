@@ -985,6 +985,141 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
     }
 
 
+# ── Morning briefing job ──────────────────────────────────────────────────────
+
+
+async def handle_daily_sync(project_id: str) -> dict[str, Any]:
+    """
+    Morning briefing — called by POST /daily-sync (Cloud Scheduler, 6 AM daily).
+    Not a graph node — runs outside the LangGraph state machine.
+
+    Steps:
+      1. Query overnight Logs tab (last 24 h)
+      2. Query overnight Error Logs tab (last 24 h)
+      3. Query pending rows in Agent_Approvals tab
+      4. Compose a Chat Card v2 briefing card
+      5. Send card to settings.chat.owner_space via send_card()
+      6. Return summary dict
+
+    Spec: GAOS-Manager-Spec.md §2.5 (Phase 2.5 Step 2)
+    """
+    from datetime import datetime, timezone, timedelta
+    from config import get_settings
+    from tools.google_sheets import get_all_records
+    from tools.google_chat import send_card
+
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(hours=24)
+    task_id = str(uuid.uuid4())
+
+    def _parse_ts(ts_str: str) -> datetime:
+        try:
+            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except (ValueError, AttributeError):
+            return datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    # ── 1. Overnight Logs ────────────────────────────────────────────────────
+    try:
+        all_logs = get_all_records("Logs", project_id)
+        overnight_logs = [r for r in all_logs if _parse_ts(r.get("timestamp", "")) >= cutoff]
+    except Exception as exc:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"daily-sync: failed to read Logs tab: {exc}", "WARNING")
+        overnight_logs = []
+
+    # ── 2. Overnight Error Logs ───────────────────────────────────────────────
+    try:
+        all_errors = get_all_records("Error Logs", project_id)
+        overnight_errors = [r for r in all_errors if _parse_ts(r.get("timestamp", "")) >= cutoff]
+    except Exception as exc:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"daily-sync: failed to read Error Logs tab: {exc}", "WARNING")
+        overnight_errors = []
+
+    # ── 3. Pending approvals ─────────────────────────────────────────────────
+    try:
+        all_approvals = get_all_records("Agent_Approvals", project_id)
+        pending = [r for r in all_approvals if r.get("status", "").lower() in ("pending", "")]
+    except Exception as exc:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"daily-sync: failed to read Agent_Approvals tab: {exc}", "WARNING")
+        pending = []
+
+    # ── 4. Compose briefing card ─────────────────────────────────────────────
+    date_str = now.strftime("%A, %B %d, %Y")
+    active_agents = sorted({r.get("agent_id", "") for r in overnight_logs if r.get("agent_id")})
+    agent_list = ", ".join(active_agents[:5]) or "none"
+
+    activity_section: dict = {
+        "header": "Overnight Activity (last 24 h)",
+        "widgets": [
+            {"textParagraph": {
+                "text": (
+                    f"📋 <b>{len(overnight_logs)}</b> log "
+                    f"{'entry' if len(overnight_logs) == 1 else 'entries'} "
+                    f"across {len(active_agents)} agent(s): {agent_list}"
+                ),
+            }},
+            {"textParagraph": {
+                "text": (
+                    f"{'⚠️' if overnight_errors else '✅'} "
+                    f"<b>{len(overnight_errors)}</b> "
+                    f"error{'s' if overnight_errors != 1 else ''} logged overnight"
+                ),
+            }},
+        ],
+    }
+
+    pending_text = (
+        f"🔔 <b>{len(pending)}</b> proposal(s) awaiting your approval"
+        if pending
+        else "✅ No pending approvals"
+    )
+    actions_section: dict = {
+        "header": "Pending Actions",
+        "widgets": [{"textParagraph": {"text": pending_text}}],
+    }
+
+    card: dict = {
+        "header": {
+            "title": "Good morning! AOS Daily Briefing",
+            "subtitle": date_str,
+        },
+        "sections": [activity_section, actions_section],
+    }
+
+    # ── 5. Send card ─────────────────────────────────────────────────────────
+    owner_space = settings.chat.owner_space
+    if not owner_space:
+        _log_cloud(
+            "nexus-prime", project_id, "task", task_id,
+            "daily-sync: chat.owner_space not configured — briefing card not sent",
+            "WARNING",
+        )
+    else:
+        try:
+            send_card(owner_space, card)
+        except Exception as exc:
+            _log_cloud("nexus-prime", project_id, "task", task_id,
+                       f"daily-sync: failed to send briefing card: {exc}", "WARNING")
+
+    _log_cloud(
+        "nexus-prime", project_id, "task", task_id,
+        f"DAILY_SYNC complete: {len(overnight_logs)} logs, "
+        f"{len(overnight_errors)} errors, {len(pending)} pending approvals",
+    )
+
+    return {
+        "overnight_logs": len(overnight_logs),
+        "overnight_errors": len(overnight_errors),
+        "pending_approvals": len(pending),
+        "space_name": owner_space,
+        "task_id": task_id,
+    }
+
+
 # ── Graph assembly ────────────────────────────────────────────────────────────
 
 def build_nexus_prime_graph() -> Any:
