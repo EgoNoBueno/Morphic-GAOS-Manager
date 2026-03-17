@@ -93,88 +93,17 @@ python -c "import google.auth; from google.auth.transport.requests import Reques
 
 > **What this does:** All Google Cloud libraries (`google-auth`, `gspread`, `google-genai`, `google-cloud-pubsub`) automatically pick up the credential written to `~/.config/gcloud/application_default_credentials.json`. You do not need a service account key file locally. On Cloud Run, the attached service account identity provides credentials automatically — see §2.3.
 
-### 0.5 GAOS-Doctor Setup
+### 0.5 GAOS-Doctor Health Runbook
 
-The GAOS-Doctor tool is a critical utility for maintaining the health and consistency of the GAOS system. Follow these steps to set up and integrate GAOS-Doctor:
+GAOS-Doctor is a manual health-check runbook — not a CLI tool. Refer to `Docs/GAOS-Doctor.md` for the step-by-step checklist of system health verifications (Sheet connectivity, Pub/Sub topics, Secret Manager access, Cloud Run `/health` endpoints, Vertex AI corpora, etc.).
 
-1. **Install GAOS-Doctor**:
-   Ensure the `gaos-doctor` CLI tool is installed and accessible in your environment. This tool is included in the Morphic-GAOS-Manager repository and can be installed as part of the Python dependencies.
+Run through the GAOS-Doctor checklist whenever you suspect a configuration drift or after any infrastructure change.
 
-   ```powershell
-   uv pip install -e ".[dev]"
-   ```
+### 0.6 Google Sheets Control Plane
 
-2. **Verify Installation**:
-   Run the following command to confirm the tool is installed correctly:
+The GAOS control plane is a **single** Google Sheets workbook with a 14-tab schema — not a separate "Dashboard" spreadsheet. The workbook is provisioned by `scripts/setup_workspace.py` in §4.1 and its ID is stored in `settings.yaml` under `sheet.workbook_id`.
 
-   ```powershell
-   gaos-doctor --version
-   ```
-
-3. **Run Initial Health Check**:
-   Execute a full system health check to ensure all prerequisites are met:
-
-   ```powershell
-   gaos-doctor --deep
-   ```
-
-4. **Integrate with CI/CD**:
-   Add `gaos-doctor` to your CI/CD pipeline to automate health checks during deployments. Example:
-
-   ```yaml
-   - name: Run GAOS-Doctor
-     run: |
-       gaos-doctor --non-interactive
-   ```
-
-5. **Documentation**:
-   Refer to `Docs/GAOS-Doctor.md` for detailed usage instructions and advanced options.
-
-### 0.6 Google Sheets Dashboard Setup
-
-The Google Sheets dashboard is a critical component for monitoring the health and performance of the GAOS system. Follow these steps to configure the dashboard:
-
-1. **Create the Dashboard**:
-   - Open Google Sheets and create a new spreadsheet named `GAOS Dashboard`.
-   - Share the sheet with the service account email used by the GAOS system.
-
-2. **Add Monitoring Sections**:
-   - **Agent Status Overview**:
-     - Create a sheet tab named `Agent Status`.
-     - Add columns: `Agent Name`, `Current Status`, `Last Activity`, `Pending Tasks`.
-   - **System Alerts**:
-     - Create a sheet tab named `System Alerts`.
-     - Add columns: `Alert Type`, `Component`, `Timestamp`, `Resolution Status`.
-   - **Task Queue Metrics**:
-     - Create a sheet tab named `Task Queue`.
-     - Add columns: `Task ID`, `Assigned Agent`, `Task Type`, `Status`, `Time in Queue`.
-   - **Resource Utilization**:
-     - Create a sheet tab named `Resource Utilization`.
-     - Add columns: `Resource Type`, `Usage`, `Quota Limit`, `% Utilized`.
-   - **Approval Queue**:
-     - Create a sheet tab named `Approval Queue`.
-     - Add columns: `Request ID`, `Request Type`, `Submitted By`, `Status`, `Timestamp`.
-   - **Error Logs**:
-     - Create a sheet tab named `Error Logs`.
-     - Add columns: `Error ID`, `Component`, `Error Message`, `Timestamp`, `Resolution Notes`.
-   - **Performance Metrics**:
-     - Create a sheet tab named `Performance Metrics`.
-     - Add columns: `Metric Name`, `Current Value`, `Threshold`, `Status`.
-   - **System Uptime**:
-     - Create a sheet tab named `System Uptime`.
-     - Add columns: `Component`, `Uptime Percentage`, `Last Downtime`, `Downtime Duration`.
-
-3. **Integrate with GAOS System**:
-   - Use the `google-sheets` tool module to write data to the appropriate tabs.
-   - Schedule periodic updates using Cloud Scheduler to ensure real-time data.
-
-4. **Add Visualizations**:
-   - Create charts for task trends, resource utilization, and error frequency.
-   - Use conditional formatting to highlight critical statuses (e.g., errors, high resource usage).
-
-5. **Verify Setup**:
-   - Ensure all tabs are populated with test data from the GAOS system.
-   - Validate that the service account has the necessary permissions to update the sheet.
+The 14 tabs are: `Project Registry`, `Accounting`, `Inventory`, `Contacts`, `Leads`, `Scheduling`, `Agent_Approvals`, `Authorized_Approvers`, `Logs`, `Error_Logs`, `Observability`, `Research`, `Tasks`, `Proposals`. No additional spreadsheet needs to be created.
 
 ---
 
@@ -1147,13 +1076,13 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [ ] All 8 webhook tests from `GAOS-Manager-Spec.md §14` are passing
 - [ ] `setupProtections()` has been run; Status/Code/Hash columns are locked to owner
 - [ ] Authorized Approvers tab has at least one row (owner, tier 5, active=TRUE)
-- [ ] `settings.yaml` is complete with correct `workbook_id`, `knowledge_folder_id`, and model aliases
+- [x] `settings.yaml` is complete with correct `workbook_id`, `knowledge_folder_id`, and model aliases
 - [ ] `WEBHOOK_URL` secret is populated in Secret Manager
 - [ ] BigQuery dataset and 6 tables created with TTL partitioning
 - [ ] All Knowledge/ seed files created in Drive
 - [ ] All 7 Cloud Run services deployed and returning `{"status":"ok"}` on `/health`
 - [ ] All 22 Pub/Sub push subscriptions created with OIDC auth (`pubsub-push-sa`)
-- [ ] Vertex AI RAG corpora created — all 7 `memory_bank.corpora` entries in `settings.yaml` are non-empty
+- [x] Vertex AI RAG corpora created — all 7 `memory_bank.corpora` entries in `settings.yaml` are non-empty
 - [ ] Cloud Logging retention reduced to 7 days
 
 ---
