@@ -414,17 +414,17 @@ Scout implements a recursive deep-research pipeline (Phase 2.5 Step 6): when it 
 
 | File | Purpose | Length |
 |------|---------|--------|
-| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,392 lines |
-| `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~893 lines |
+| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,779 lines |
+| `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~1,175 lines |
 | `Docs/GAOS-Nexus-Prime-Spec.md` | Engineering construction requirements for the Tier 1 root orchestrator | ~834 lines |
 | `Docs/GAOS-Onboarding-Spec.md` | Deployer first-run guide + end-user onboarding via Steward | ~638 lines |
-| `Docs/GAOS-Memory-Spec.md` | Full memory architecture, five layers, self-learning loop | ~706 lines |
+| `Docs/GAOS-Memory-Spec.md` | Full memory architecture, five layers, self-learning loop | ~893 lines |
 | `Docs/GAOS-Agent-Spec.md` | Engineering construction requirements for every agent tier | ~317 lines |
 | `Docs/GAOS-Skill-Compliance-Spec.md` | External skill review process before AOS integration | ~298 lines |
-| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 14 modules) | ~846 lines |
+| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 14 modules) | ~1,135 lines |
 | `Docs/GAOS-Persona-Spec.md` | AOS soul ("The Strategic Architect"), `think` node spec, tone standard | ~297 lines |
 | `Docs/GAOS-Privacy-Spec.md` | Cloud data exposure, privacy risk analysis, and mitigation strategies | ~260 lines |
-| `Docs/GAOS-Project-Glossary.md` | Canonical glossary of all abbreviations and technical terms | ~151 lines |
+| `Docs/GAOS-Project-Glossary.md` | Canonical glossary of all abbreviations and technical terms | ~204 lines |
 | `Docs/GAOS-Doctor.md` | Health-check runbook for diagnosing deployment and runtime issues | ~55 lines |
 | `Docs/AI-Autocoding-Rules.md` | Coding rules enforced during AI-assisted development sessions | ~250 lines |
 | `Docs/agents/nexus-prime.md` | Identity file — Nexus-Prime (Root Orchestrator / General Manager) | — |
