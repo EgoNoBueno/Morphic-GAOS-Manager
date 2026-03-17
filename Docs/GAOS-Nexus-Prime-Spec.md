@@ -1,9 +1,9 @@
 # GAOS Nexus-Prime Construction Specification
 
-**Agent Identity:** `nexus-prime`  
-**Tier:** 1 — Root Orchestrator  
-**Model:** `DEEP_MODEL` for all decision nodes; `LOCAL_MODEL` for status aggregation and heartbeat formatting  
-**Framework:** Google ADK + LangGraph `StateGraph`  
+**Agent Identity:** `nexus-prime`
+**Tier:** 1 — Root Orchestrator
+**Model:** `DEEP_MODEL` for all decision nodes; `LOCAL_MODEL` for status aggregation and heartbeat formatting
+**Framework:** Google ADK + LangGraph `StateGraph`
 **Pub/Sub:** Subscribes to ALL 7 domain topics + `agent.approvals.events`
 
 > This document specifies the engineering construction requirements for Nexus-Prime. It is companion to `GAOS-Agent-Spec.md` (common patterns shared by all agents) and supplements the behavioral rules in `GAOS-Manager-Spec.md §1`. Read both before building.
@@ -67,20 +67,24 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
     conflict_queue: list[dict]              # Conflicting agent state pairs pending arbitration
     # Note: parked_proposals (list[str]) is inherited from AgentWorkingMemory.
     #       It stores proposal IDs only — not full row dicts.
-    
+
     # Project initialization state (ephemeral per task)
     pending_project_row: Optional[dict]
     new_project_id: Optional[str]
-    
+
     # Evolution gate state
     candidate_code: Optional[str]
     candidate_agent_id: Optional[str]
     candidate_sha256: Optional[str]
     safety_check_passed: bool
-    
+
     # System-wide health tracking
     system_state_summary: dict              # Populated from heartbeats
     last_ttl_sweep_at: Optional[str]        # ISO timestamp of last TTL sweep
+
+    # Vision workflow (Phase 2.5 Step 5)
+    active_blueprints: dict                 # Maps blueprint_id → doc_id
+    blueprint_constraints: list[dict]       # Active constraint stack across all blueprints
 ```
 
 ---
@@ -89,7 +93,7 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
 
 ### 3.1 Node Inventory
 
-Nexus-Prime's `StateGraph` has 12 nodes. The router node determines which branch to execute based on message type.
+Nexus-Prime's `StateGraph` has 14 nodes. The router node determines which branch to execute based on message type.
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -97,17 +101,19 @@ Nexus-Prime's `StateGraph` has 12 nodes. The router node determines which branch
 │                                                                │
 │  [boot] ──► [monitor] ──► [route]                              │
 │                               │                                │
-│       ┌───────────┬───────────┼────────────┬────────────┐      │
-│       │           │           │            │            │      │
-│  [diagnose] [knowledge_review] [init_project] [conflict_resolve]│
-│       │           │           │            │            │      │
-│  [propose_gate] [promote] [notify_agents] [park_or_broadcast]  │
-│       │           │           │            │            │      │
-│       └───────────┴───────────┴────────────┴────────────┘      │
-│                               │                                │
-│                          [record] ──► END                      │
+│    ┌───────┬───────┬───────┬───────┬───────┬───────┐   │
+│    │       │       │       │       │       │       │   │
+│ [diag] [know] [init] [conf] [park] [vision] [iter]  │
+│    │       │       │       │       │       │       │   │
+│ [prop] [prom] [notif] ───────────────────────┘   │
+│    │       │       │                                   │
+│    └───────┴───────┘                                   │
+│                    │                                   │
+│               [record] ──► END                           │
 └────────────────────────────────────────────────────────────────┘
 ```
+
+Node abbreviations: diag=diagnose, know=knowledge\_review, init=init\_project, conf=conflict\_resolve, park=park\_or\_broadcast, vision=vision\_blueprint, iter=iterate\_plan, prop=propose\_gate, prom=promote, notif=notify\_agents
 
 ### 3.2 Node Definitions
 
@@ -187,6 +193,9 @@ def route(state: NexusPrimeWorkingMemory) -> str:
         MessageType.KNOWLEDGE_CANDIDATE: "knowledge_review", # New observation to evaluate
         MessageType.BROADCAST:           "conflict_resolve", # Cross-domain state conflict
         MessageType.NEW_PROJECT:         "init_project",     # Project Registry change detected
+        MessageType.VISION_SUBMITTED:    "vision_blueprint", # Owner vision → Blueprint Doc
+        MessageType.PLAN_REVIEW:         "iterate_plan",     # Owner comment on Blueprint
+        MessageType.COMMENT_RECEIVED:    "iterate_plan",     # Doc comment poll found new comment
     }
     return routing_table.get(msg.message_type, "record")
 
@@ -416,7 +425,7 @@ Called when a `NEW_PROJECT` message is received (or when `boot` detects a `Pendi
 ```python
 def init_project(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     from tools.google_sheets import get_all_records, update_row
-    
+
     registry = get_all_records("Project Registry", state["project_id"])
     pending_rows = [r for r in registry if r.get("status") == "Pending"]
     if not pending_rows:
@@ -596,6 +605,97 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         last_error="" if not state.get("hard_stop_triggered") else "hard_stop triggered",
         tab="Main Control Plane",
     )
+
+    return state
+```
+
+#### `vision_blueprint`
+
+*(Phase 2.5 Step 5)* Handles `VISION_SUBMITTED` messages. Calls `DEEP_MODEL` to generate a structured Blueprint Doc from the owner's vision text, creates the Google Doc via `tools/google_docs.create_document()`, appends a row to the `Project_Incubator` Sheet tab, and sends an Approve/Reject Chat card to the owner's space (falling back to `settings.chat.owner_space` when `space_name` is absent from the payload). The `blueprint_id` (task_id) → `doc_id` mapping is stored in `active_blueprints`. All downstream failures (Docs API, Sheets, Chat) are caught and logged — the node never raises.
+
+```python
+def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    from tools.google_docs import create_document
+    from tools.google_sheets import append_row
+
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+
+    vision_text  = (msg.payload or {}).get("vision_text", "")
+    blueprint_id = msg.task_id
+    project_id   = state["project_id"]
+
+    prompt   = _build_vision_prompt(vision_text, project_id)
+    doc_text = _call_llm(prompt, model=settings.models.DEEP_MODEL)
+
+    try:
+        doc_id = create_document(title=f"Blueprint: {blueprint_id}",
+                                  content=doc_text, project_id=project_id)
+        state.setdefault("active_blueprints", {})[blueprint_id] = doc_id
+    except Exception as exc:
+        logger.error("vision_blueprint: create_document failed: %s", exc)
+        return state
+
+    try:
+        append_row("Project_Incubator",
+                   [blueprint_id, doc_id, "Pending", msg.payload.get("submitted_by", "")],
+                   project_id)
+    except Exception as exc:
+        logger.warning("vision_blueprint: append_row failed: %s", exc)
+
+    try:
+        space = (msg.payload or {}).get("space_name") or settings.chat.owner_space
+        send_approval_card(space_name=space, proposal_id=blueprint_id,
+                           summary=f"Blueprint ready for review: {doc_id}",
+                           project_id=project_id)
+    except Exception as exc:
+        logger.warning("vision_blueprint: send_approval_card failed: %s", exc)
+
+    return state
+```
+
+#### `iterate_plan`
+
+*(Phase 2.5 Step 5)* Handles `PLAN_REVIEW` and `COMMENT_RECEIVED` messages. Appends the new constraint to `blueprint_constraints`. When the count of constraints for the relevant blueprint reaches `_COMPACTION_THRESHOLD` (5), calls `_run_compaction()` which compresses them into one paragraph using `FAST_MODEL` and archives the originals to BigQuery `aos_logs.blueprint_constraints`; the list entry is then replaced with a single `"COMPACTED_CONSTRAINTS (from N reviewed comments)"` marker. Appends the new or compacted constraint text to the Blueprint Doc via `tools/google_docs.append_content()`.
+
+```python
+def iterate_plan(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    from tools.google_docs import append_content
+
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+
+    blueprint_id = (msg.payload or {}).get("blueprint_id", msg.task_id)
+    constraint   = (msg.payload or {}).get("constraint", "")
+    project_id   = state["project_id"]
+
+    state.setdefault("blueprint_constraints", []).append(
+        {"blueprint_id": blueprint_id, "text": constraint}
+    )
+
+    relevant = [c for c in state["blueprint_constraints"]
+                if c["blueprint_id"] == blueprint_id]
+
+    if len(relevant) >= _COMPACTION_THRESHOLD:
+        compacted = _run_compaction(state, blueprint_id, relevant)
+        state["blueprint_constraints"] = [
+            c for c in state["blueprint_constraints"]
+            if c["blueprint_id"] != blueprint_id
+        ]
+        state["blueprint_constraints"].append(
+            {"blueprint_id": blueprint_id,
+             "text": f"COMPACTED_CONSTRAINTS (from {len(relevant)} reviewed comments): {compacted}"}
+        )
+        constraint = compacted
+
+    doc_id = state.get("active_blueprints", {}).get(blueprint_id)
+    if doc_id:
+        try:
+            append_content(doc_id, constraint, project_id)
+        except Exception as exc:
+            logger.warning("iterate_plan: append_content failed: %s", exc)
 
     return state
 ```
@@ -842,6 +942,10 @@ Nexus-Prime exposes these HTTP endpoints as a Cloud Run service:
 | `/ttl-sweep` | POST | `handle_ttl_sweep` | Called by Cloud Scheduler hourly |
 | `/archive` | POST | `handle_archive` | Called by Cloud Scheduler nightly (2AM) |
 | `/sync` | POST | `handle_sync` | Called by Apps Script `syncSkillsToVertex` after approval |
+| `/daily-sync` | POST | `handle_daily_sync` | Called by Cloud Scheduler at 6 AM for morning briefing |
+| `/chat` | POST | `parse_chat_event` + graph | Google Chat push events (direct messages + mentions) |
+| `/vision` | POST | graph via `agent.run()` | Owner vision submission → Blueprint Doc creation |
+| `/poll-comments` | POST | `handle_poll_comments` | Cloud Scheduler 5-min doc-comment poll |
 | `/health` | GET | `handle_health` | Returns 200 if the service is running |
 
 All endpoints except `/health` require authentication via OIDC token (Cloud Run service-to-service auth). The `/pubsub` endpoint additionally validates the Pub/Sub push token.
