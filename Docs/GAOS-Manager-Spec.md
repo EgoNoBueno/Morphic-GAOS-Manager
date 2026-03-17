@@ -82,6 +82,17 @@ Tier 3 — Task Agents  [Supervised by Orchestrator Only]
 - **Dashboard tab:** Logs → Research Products
 - **Example Tier 3 agents:** Web Scraper, Trend Summarizer, Competitor Price Monitor
 
+#### Domain Orchestrator Summary
+
+| Agent | Domain | Primary Responsibilities | Dashboard Tab |
+|-------|--------|--------------------------|---------------|
+| **Ledger** | Accounting & Finance | Accounts receivable/payable, expense categorization, P&L summaries, invoice tracking | Accounting |
+| **Beacon** | Marketing | Campaign planning, ad spend monitoring, content scheduling, marketing performance analysis | Marketing (Sales by Product, Sales Graphs, Ad Response/Spend) |
+| **Pursuit** | Sales | CRM updates, lead follow-up sequences, quote generation, pipeline reporting | Marketing → Sales by Product |
+| **Foreman** | Operations | Order fulfillment, inventory levels, shipping coordination, vendor communications | Shipping and Receiving |
+| **Steward** | Admin & HR | Calendar management, meeting scheduling, compliance reminders, employee onboarding | Logs |
+| **Scout** | Research | Market research, competitor monitoring, trend analysis, product sourcing recommendations | Logs → Research Products |
+
 ---
 
 ### 1.3 Agent Construction Requirements
