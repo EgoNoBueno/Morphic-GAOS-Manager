@@ -72,6 +72,13 @@ class DocsConfig(BaseModel):
     blueprints_folder_id: str = ""       # Default Drive folder ID for Blueprint Docs
 
 
+class GoogleSearchConfig(BaseModel):
+    api_key_secret: str = "GOOGLE_SEARCH_API_KEY"  # Secret Manager key name
+    cx_secret: str = "GOOGLE_SEARCH_CX"            # Secret Manager CX name
+    max_search_depth: int = 3                       # Recursive query depth per mandate
+    max_queries_per_mandate: int = 15               # Hard cap on queries per RESEARCH_MANDATE
+
+
 class Settings(BaseModel):
     gcp: GCPConfig
     sheet: SheetConfig
@@ -83,6 +90,7 @@ class Settings(BaseModel):
     chat: ChatConfig = Field(default_factory=ChatConfig)
     vertex_search: VertexSearchConfig = Field(default_factory=VertexSearchConfig)
     docs: DocsConfig = Field(default_factory=DocsConfig)
+    google_search: GoogleSearchConfig = Field(default_factory=GoogleSearchConfig)
 
     @property
     def GCP_PROJECT_ID(self) -> str:

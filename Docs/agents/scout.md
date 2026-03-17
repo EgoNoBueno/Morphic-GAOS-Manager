@@ -24,7 +24,8 @@ Provide timely, evidence-based market intelligence; surface competitor pricing c
 | `agent.nexus-prime.events` | Cloud Pub/Sub | Subscribe |
 | `agent.foreman.events` | Cloud Pub/Sub | Subscribe (stockout alerts trigger sourcing research) |
 | `agent.approvals.events` | Cloud Pub/Sub | Subscribe (resume events only) |
-| Vertex AI Search / Grounding tools | External API | Read only (web research) |
+| Vertex AI Search / Grounding tools | External API | Read only (semantic corpus search) |
+| `tools/google_search.py` (Google Custom Search API) | External API | Read only (live web search via `_discover` node) |
 | Vertex AI Memory Bank (`domain: research`) | Memory Bank | Read (batch at boot) |
 | `Knowledge/` (Drive folder) | Google Drive | Read |
 | BigQuery `aos_logs.task_outcomes` | BigQuery | Read (episodic queries) |
@@ -46,7 +47,7 @@ Scout owns the `Research Products` tab and produces market intelligence reports 
 - Never call `DEEP_MODEL` for tasks classifiable as logging, formatting, or summarization.
 - Never store raw scraped HTML, full article text, or individual-level PII — structured summaries only.
 - Never make a purchasing recommendation without supporting price and availability evidence.
-- Never use direct HTTP scraping (e.g., `requests` + `BeautifulSoup`) — use Vertex AI Search grounding tools only.
+- Never use direct HTTP scraping (e.g., `requests` + `BeautifulSoup`) — use `tools/google_search.py` (via `_discover` node) or Vertex AI Search grounding tools only.
 
 ## Escalation Rules
 | Condition | Action |
@@ -69,5 +70,5 @@ Scout owns the `Research Products` tab and produces market intelligence reports 
 
 ## History
 <!-- Auto-populated by the system; do not edit manually -->
-Last updated: 2026-03-14T00:00:00Z
+Last updated: 2026-03-17T00:00:00Z
 Last evolution task: none

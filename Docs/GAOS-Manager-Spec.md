@@ -1580,7 +1580,7 @@ Inserted between Phase 2 and Phase 3. All items below must be deployed and verif
 | 3 | `tools/vertex_search.py` + Playbook schema + `write_playbook` node (all 6 orchestrators) | `tools/vertex_search.py` | ✅ (`write_playbook` ⏳ Phase 3) |
 | 4 | `tools/google_docs.py` + Blueprint Factory (Nexus-Prime `ITERATE_PLAN` node) | `tools/google_docs.py` | ✅ |
 | 5 | AppSheet Vision Hub + `VISION_SUBMITTED` handler + `doc-comment-poll` Scheduler job | `tests/test_vision_workflow.py` | ✅ Complete (`doc-comment-poll` ⏳ wire in GCP) |
-| 6 | Scout `_discover` recursive node + `tools/google_search.py` + `KNOWLEDGE_INJECTION` | `tools/google_search.py` | — |
+| 6 | Scout `_discover` recursive node + `tools/google_search.py` + `KNOWLEDGE_INJECTION` | `tools/google_search.py`, `tests/test_scout_discover.py` | ✅ Complete |
 | 7 | `ITERATE_PLAN` constraint compaction node + `SKILL_REQUEST` approval flow | — | — |
 
 #### Phase 2.5 Exit Criteria

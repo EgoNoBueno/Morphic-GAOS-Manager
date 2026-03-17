@@ -366,4 +366,28 @@ If an abstraction already exists, it **must** be used — not re-implemented inl
 
 ---
 
-_Last updated: 2026-03-16_
+## 22. Use PowerShell-Native Commands — No Unix-Only Aliases
+
+**Rule:** All terminal commands in this project must use PowerShell-native syntax. Do not use Unix commands that are not available in PowerShell on Windows.
+
+**Common substitutions:**
+
+| Unix (❌ wrong on Windows) | PowerShell (✅ correct) |
+|---------------------------|------------------------|
+| `cmd \| tail -N` | `cmd \| Select-Object -Last N` |
+| `cmd \| head -N` | `cmd \| Select-Object -First N` |
+| `tail -f file.log` | `Get-Content file.log -Wait` |
+| `grep "pattern" file` | `Select-String -Pattern "pattern" -Path file` |
+| `cat file` | `Get-Content file` |
+| `rm -rf dir` | `Remove-Item -Recurse -Force dir` |
+| `cp -r src dst` | `Copy-Item -Recurse src dst` |
+| `ls -la` | `Get-ChildItem` |
+| `which cmd` | `Get-Command cmd` |
+
+**Why:** PowerShell on Windows does not include `tail`, `head`, `grep`, `cat`, `which`, or other POSIX utilities. Using them causes immediate failures that interrupt work and require retries.
+
+> ⚠️ **AI sessions:** This rule applies specifically to any AI-generated terminal commands. Always use `Select-Object -Last N` for output truncation, never `tail`. Always use `Select-String` for pattern matching, never `grep`. Verify every generated command is valid PowerShell before issuing it.
+
+---
+
+_Last updated: 2026-03-17_

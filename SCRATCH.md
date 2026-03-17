@@ -95,10 +95,16 @@ Phase 3.5 additions (Innovation Interface Layer)
 │                NexusPrimeWorkingMemory: active_blueprints, blueprint_constraints fields.
 │                Route table updated. build_nexus_prime_graph() updated.
 │                Depends on: Steps 1, 3, 4
-├── Step 6: tools/google_search.py + RESEARCH_MANDATE + Scout _discover node (recursive loop)
+├── ✅ Step 6: tools/google_search.py + RESEARCH_MANDATE + Scout _discover node (recursive loop)
 │            │   + Step 6.1: KNOWLEDGE_INJECTION — Scout writes Market Intelligence tags
 │            │               to Vertex AI Memory Bank (Layer 4) after every discovery loop
-│            └── Depends on: Step 5 (injects into Blueprint Section E)
+│            └── ✅ DONE: 24 tests passing. _discover (recursive Google Custom Search, max depth 3,
+│                        max 15 queries), _inject_knowledge (KNOWLEDGE_INJECTION publish +
+│                        Section E Blueprint Doc append), _route_after_boot (RESEARCH_MANDATE routing),
+│                        GoogleSearchConfig in config/__init__.py + settings.yaml.template,
+│                        tools/google_search.py (search, research_topic, GoogleSearchError),
+│                        _initial_state() updated for Pub/Sub envelope decoding.
+│                        Depends on: Step 5 (injects into Blueprint Section E)
 └── Step 7: AppSheet app (no backend code — config only, wires to Project_Incubator tab)
              └── Depends on: Step 5 (tab must exist first)
 ```
@@ -130,12 +136,12 @@ Phase 3.5 additions (Innovation Interface Layer)
 | 5 | Blueprint Doc generator in Nexus-Prime | Logic | Minor LLM cost (Gemini Pro call per Blueprint) | ✅ |
 | 5 | **`ITERATE_PLAN` node in Nexus-Prime LangGraph** | Logic | Minor LLM cost (re-run on each comment batch) | ✅ |
 | 5 | Doc comment polling Scheduler job | GCP resource | $0 (4th job = $0.10/month) | ⏳ wire in GCP |
-| 6 | `tools/google_search.py` | Python tool | $0 free tier (≤100 queries/day) | — |
-| 6 | `RESEARCH_MANDATE` in `MessageType` | Enum value | $0 | — |
-| 6 | `_discover` node in Scout LangGraph | Logic change | Minor cost (~$0.13/mandate max) | — |
-| 6 | **Step 6.1: `KNOWLEDGE_INJECTION` — Scout writes Market Intelligence to Memory Bank** | Logic | Minor Memory Bank write cost | — |
-| 6 | `SCOUT_MAX_SEARCH_DEPTH`, `SCOUT_MAX_QUERIES_PER_MANDATE` in `settings.yaml` | Config | $0 | — |
-| 6 | `GOOGLE_SEARCH_API_KEY`, `GOOGLE_SEARCH_CX` secrets | Secret Manager | $0 | — |
+| 6 | `tools/google_search.py` | Python tool | $0 free tier (≤100 queries/day) | ✅ |
+| 6 | `RESEARCH_MANDATE` in `MessageType` | Enum value | $0 | ✅ |
+| 6 | `_discover` node in Scout LangGraph | Logic change | Minor cost (~$0.13/mandate max) | ✅ |
+| 6 | **Step 6.1: `KNOWLEDGE_INJECTION` — Scout writes Market Intelligence to Memory Bank** | Logic | Minor Memory Bank write cost | ✅ |
+| 6 | `SCOUT_MAX_SEARCH_DEPTH`, `SCOUT_MAX_QUERIES_PER_MANDATE` in `settings.yaml` | Config | $0 | ✅ |
+| 6 | `GOOGLE_SEARCH_API_KEY`, `GOOGLE_SEARCH_CX` secrets | Secret Manager | $0 | ⏳ wire in GCP |
 | 7 | AppSheet app | No-code config | $0 — Workspace included | — |
 
 **Revised monthly cost estimate:** ~$2.55–$2.65/month (adds one $0.10 Cloud Scheduler job + occasional Blueprint LLM calls; well within target).

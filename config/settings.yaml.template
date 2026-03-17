@@ -78,3 +78,13 @@ vertex_search:
 docs:
   service_account_key: ""      # e.g. config/keys/nexus-prime-sa.json
   blueprints_folder_id: ""     # Drive folder ID for Blueprint Docs (Project_Incubator/)
+
+# Google Custom Search — Scout deep research (Phase 2.5 Step 6)
+# Store actual values in GCP Secret Manager; the names below are the secret IDs.
+# Free tier: 100 queries/day. Provision at: console.cloud.google.com/apis/library/customsearch.googleapis.com
+# Create a Custom Search Engine at: programmablesearchengine.google.com
+google_search:
+  api_key_secret: "GOOGLE_SEARCH_API_KEY"  # Secret Manager key name for the API key
+  cx_secret: "GOOGLE_SEARCH_CX"            # Secret Manager key name for the CX (Engine ID)
+  max_search_depth: 3               # Maximum recursive query depth per RESEARCH_MANDATE
+  max_queries_per_mandate: 15       # Hard cap on total queries per RESEARCH_MANDATE

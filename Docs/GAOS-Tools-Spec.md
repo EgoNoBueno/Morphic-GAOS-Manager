@@ -900,6 +900,7 @@ def web_search(query: str, max_results: int = 5) -> str:
 | Vertex AI Search settings (`vertex_search.*`) | `GAOS-Deploy-Spec.md` §10 |
 | Google Docs settings (`docs.*`) | `config/settings.yaml.template` — `docs:` block |
 | Blueprint Factory (Vision → Doc) | `Docs/agents/nexus-prime.md` — `VISION_SUBMITTED` handler |
+| Google Search settings (`google_search.*`) | `config/settings.yaml.template` — `google_search:` block |
 
 ---
 
@@ -1070,3 +1071,65 @@ docs:
 Only Nexus-Prime calls `create_document()`, `append_content()`, and `list_comments()`.
 Domain orchestrators do not interact with Google Docs directly — they submit task results
 to Nexus-Prime which applies Blueprint updates post-approval.
+
+---
+
+## 17. `tools/google_search.py`
+
+Google Custom Search JSON API v1 wrapper for Scout's deep research. Added in Phase 2.5 Step 6.
+
+```python
+def search(
+    query: str,
+    project_id: str,
+    num: int = 10,
+) -> list[dict[str, Any]]:
+    """
+    Execute a single Google Custom Search query.
+
+    Returns:
+        List of dicts: [{title, url, snippet, date}, ...]
+
+    Raises:
+        GoogleSearchError: API error, quota exceeded (429/403), or credentials unavailable.
+    """
+
+def research_topic(
+    queries: list[str],
+    project_id: str,
+    max_queries: int = 15,
+) -> list[dict[str, Any]]:
+    """
+    Execute multiple queries, deduplicating results by URL.
+    Failed queries are skipped — remaining queries still execute.
+    """
+```
+
+### Error Types
+
+| Exception | Trigger |
+|-----------|---------|
+| `GoogleSearchError` | HTTP 429/403, network failure, JSON decode error, missing Secret Manager credentials |
+
+### Authentication
+
+Credentials are fetched from GCP Secret Manager at call time — never embedded in settings.yaml. Secret names are configurable:
+
+- `settings.google_search.api_key_secret` → name of the API key secret (default: `"GOOGLE_SEARCH_API_KEY"`)
+- `settings.google_search.cx_secret` → name of the CX (engine ID) secret (default: `"GOOGLE_SEARCH_CX"`)
+
+### Settings Required
+
+```yaml
+google_search:
+  api_key_secret: "GOOGLE_SEARCH_API_KEY"  # Secret Manager key name
+  cx_secret: "GOOGLE_SEARCH_CX"            # Secret Manager CX name
+  max_search_depth: 3                       # Recursive query depth per mandate
+  max_queries_per_mandate: 15               # Hard cap on total queries per RESEARCH_MANDATE
+```
+
+### Usage Rule
+
+`tools/google_search.py` is called exclusively from Scout's `_discover` node. No other orchestrator calls it directly. Nexus-Prime triggers Scout via a `RESEARCH_MANDATE` Pub/Sub message — it does not call the search tool itself.
+
+> ⚠️ **Rate limit:** Free tier is 100 queries/day. `max_queries_per_mandate` (default 15) ensures a single mandate never exceeds 15% of the daily quota. Monitor usage in GCP Console → APIs & Services → Google Custom Search API.

@@ -5,6 +5,25 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-17 — Phase 2.5 Step 6: Scout `_discover` + `tools/google_search.py` + `KNOWLEDGE_INJECTION` COMPLETE ✅
+
+**320 / 320 tests passing. Zero regressions. +24 new tests.**
+
+| File | Change |
+|------|--------|
+| `tools/google_search.py` | NEW — Google Custom Search JSON API v1 wrapper. `search()` (single query, ≤10 results), `research_topic()` (multi-query with URL deduplication). `GoogleSearchError` for quota, auth, and network failures. Credentials fetched from Secret Manager at call time. |
+| `config/__init__.py` | Added `GoogleSearchConfig(api_key_secret, cx_secret, max_search_depth=3, max_queries_per_mandate=15)`. Added `google_search: GoogleSearchConfig` field to `Settings`. |
+| `config/settings.yaml.template` | Added `google_search:` block (`api_key_secret`, `cx_secret`, `max_search_depth`, `max_queries_per_mandate`). |
+| `agents/scout/orchestrator.py` | New nodes: `_discover` (RESEARCH_MANDATE handler — recursive Google Custom Search, max depth 3, max 15 queries, LLM-generated query expansion, corroboration detection at ≥5 sources), `_inject_knowledge` (publishes `KNOWLEDGE_INJECTION` to `agent.scout.events`; appends Section E to Blueprint Doc if `blueprint_doc_id` present). New router `_route_after_boot` (RESEARCH_MANDATE → discover, all others → plan). Updated `build_scout_graph()` with new nodes and edges. Updated `_initial_state()` to decode Pub/Sub push envelopes. Added `datetime` import. |
+| `tests/test_scout_discover.py` | NEW — 24 tests across 6 classes: `TestGoogleSearchTool` (GS1–5), `TestResearchTopic` (RT1–4), `TestDiscoverNode` (DN1–6), `TestInjectKnowledgeNode` (IK1–5), `TestRouteAfterBoot` (RB1–2), `TestInitialStatePubSub` (IS1–2). All passing. |
+| `Docs/AI-Autocoding-Rules.md` | Added Rule 22: PowerShell-native commands — no Unix-only aliases (`tail` → `Select-Object -Last`, `grep` → `Select-String`, etc.). |
+
+**Step 6 note:** Google Custom Search API free tier is 100 queries/day. `max_queries_per_mandate=15` caps each mandate at 15% of daily quota. Requires `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_CX` secrets wired in Secret Manager before production use.
+
+**Next up:** Phase 2.5 Step 7 — `ITERATE_PLAN` constraint compaction node + `SKILL_REQUEST` approval flow.
+
+---
+
 ## 2026-03-16 — Phase 2.5 Step 5: Vision Workflow COMPLETE ✅
 
 **296 / 296 tests passing. Zero regressions. +30 new tests.**
