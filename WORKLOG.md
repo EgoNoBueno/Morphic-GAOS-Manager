@@ -5,6 +5,67 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-17 — Phase 2.5 Step 1: Google Chat Tool + POST /chat COMPLETE ✅
+
+**202 / 202 tests passing. Zero regressions.**
+
+| File | Change |
+|------|--------|
+| `tools/google_chat.py` | NEW — Google Chat API v1 client. `send_message`, `send_card`, `send_approval_card`, `send_skill_import_card`, `parse_chat_event`. ADC auth (Cloud Run) or SA key (local). |
+| `main.py` | Added `POST /chat` endpoint. Nexus-Prime only. Routes `CARD_CLICKED` → `APPROVAL_RESULT` or `SKILL_REQUEST`; `MESSAGE` → `CHAT_MESSAGE`; lifecycle events → 200 ACK. |
+| `tests/test_google_chat.py` | NEW — 25 tests across 3 classes (`TestGoogleChatTool`, `TestParseChatEvent`, `TestChatEndpoint`). All passing. |
+
+**Fix logged:** `importlib.reload()` must run **before** `patch.object()` in endpoint tests — reload destroys previously patched symbols. Use `_reloaded_client()` pattern.
+
+---
+
+## 2026-03-16T18:00 — Phase 2.5 Design Session COMPLETE ✅
+
+**All design decisions locked. Spec documents, models, and agent identity files updated.**
+
+**What was planned:**
+
+| Innovation Area | Decision |
+|----------------|---------|
+| Google Chat App | New primary approval surface (Option A). Chat cards → Approve/Reject. Sheet is audit trail only. |
+| AppSheet / Vision Hub | New Step 5 — visual "Vision to Blueprint" submission interface. |
+| Vertex AI Search | Layer 5b retrieval added. Fills write-only gap in Drive procedural knowledge. |
+| Google Docs Dynamic Templates | Blueprint Factory — Nexus-Prime generates structured project docs from Chat Vision submissions. |
+| Recursive Scout Search | New `_discover` LangGraph node. Depth-first web search loop with `KNOWLEDGE_INJECTION` protocol. |
+| Proactive Daily Sync | New `daily-kickoff` Scheduler job (6 AM) + `doc-comment-poll` job (5 min). |
+| KNOWLEDGE_INJECTION | New MessageType + 5-observation gate + `market_intel` knowledge type. |
+| ITERATE_PLAN | New LangGraph node (Nexus-Prime). Constraint compaction at 5-item trigger. |
+| SKILL_REQUEST | New MessageType for library installation approval workflow. |
+
+**What changed:**
+
+| File | Change |
+|------|--------|
+| `SCRATCH.md` | All design decisions recorded and locked. Option A confirmed. |
+| `models/__init__.py` | Added 8 new `MessageType` values: `CHAT_MESSAGE`, `DAILY_SYNC`, `VISION_SUBMITTED`, `PLAN_REVIEW`, `COMMENT_RECEIVED`, `RESEARCH_MANDATE`, `SKILL_REQUEST`, `KNOWLEDGE_INJECTION`. |
+| `Docs/GAOS-Manager-Spec.md` | Added Phase 2.5 roadmap entry (Section 16), updated Section 17 checklist with 7 new components. |
+| `Docs/GAOS-Memory-Spec.md` | Added Layer 5b (Vertex AI Search retrieval), `KNOWLEDGE_INJECTION` governance rules, `market_intel` knowledge type, Playbook sub-folder schema, `write_playbook` completion requirement. |
+| `Docs/GAOS-Deploy-Spec.md` | Added Section 10.3 (daily-kickoff Scheduler job), Section 10.4 (doc-comment-poll Scheduler job), Phase 2.5 checklist items to Section 14. |
+| `Docs/agents/nexus-prime.md` | Added `ITERATE_PLAN` node, `write_playbook` to objectives, `VISION_SUBMITTED` handling to resources, Chat card approval pathway to spec. |
+| `Docs/agents/scout.md` | Added `_discover` node, `KNOWLEDGE_INJECTION` protocol, `RESEARCH_MANDATE` message type, `market_intel` knowledge type to guardrails. |
+| All 5 domain agent `*.md` files | Added `write_playbook` to completion requirement. |
+
+**Phase 2.5 build sequence (7 steps — implementation begins next session):**
+
+| Step | What | New Files |
+|------|------|-----------|
+| 1 | Chat interface (POST /chat + Skill Import card) | `tools/google_chat.py` |
+| 2 | Daily sync (POST /sync + morning briefing) | — |
+| 3 | Google Docs integration (Blueprint Factory) | `tools/google_docs.py` |
+| 4 | Vertex AI Search (institutional knowledge retrieval) | `tools/vertex_search.py` |
+| 5 | Vision Hub (AppSheet + VISION_SUBMITTED handler) | — |
+| 6 | Scout recursive search + KNOWLEDGE_INJECTION | `tools/google_search.py` |
+| 7 | ITERATE_PLAN constraint compaction node | — |
+
+**Next up:** Phase 2.5 Step 1 — `tools/google_chat.py` + `POST /chat` endpoint.
+
+---
+
 ## 2026-03-16T15:30 — Glossary expansion COMPLETE ✅
 
 **`Docs/GAOS-Project-Glossary.md` fully rebuilt.** Commit `2df1898`.

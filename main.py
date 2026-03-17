@@ -5,11 +5,12 @@ Each Cloud Run service is deployed from the same codebase. The AGENT_NAME
 environment variable selects which orchestrator handles incoming requests.
 
 Endpoints:
-  POST /pubsub      Pub/Sub push subscription delivery
-  POST /ttl-sweep   Cloud Scheduler TTL sweep (Nexus-Prime only)
-  POST /sync        Apps Script → promote approved skill (Nexus-Prime only)
-  POST /archive     Cloud Scheduler nightly archive sweep (Nexus-Prime only)
-  GET  /health      Cloud Run health check (always 200)
+  POST /pubsub        Pub/Sub push subscription delivery
+  POST /ttl-sweep     Cloud Scheduler TTL sweep (Nexus-Prime only)
+  POST /sync          Apps Script → promote approved skill (Nexus-Prime only)
+  POST /archive       Cloud Scheduler nightly archive sweep (Nexus-Prime only)
+  POST /chat          Google Chat push events — text messages and card callbacks
+  GET  /health        Cloud Run health check (always 200)
 
 All POST endpoints verify the OIDC token in the Authorization header before
 dispatching. This is safe because Cloud Run is deployed --no-allow-unauthenticated;
@@ -283,6 +284,126 @@ async def archive(request: Request) -> JSONResponse:
         raise HTTPException(status_code=500, detail=str(exc))
 
     return JSONResponse(content={"status": "ok", **result})
+
+
+@app.post("/chat")
+async def chat(request: Request) -> JSONResponse:
+    """
+    Google Chat push endpoint — handles text messages and card button callbacks.
+
+    Google Chat delivers interactive events as HTTP POST requests when:
+    - The owner sends a direct message to the bot (``type: MESSAGE``).
+    - The owner taps a card button (``type: CARD_CLICKED``).
+
+    Event routing:
+    - ``MESSAGE``      → wraps text as ``CHAT_MESSAGE`` and routes to Nexus-Prime
+                          via the agent's ``run()`` graph, which formulates a reply
+                          and calls ``send_message()`` back to the Chat space.
+    - ``CARD_CLICKED`` with ``action_name`` ``"approve"`` or ``"reject"``
+                       → wraps as ``APPROVAL_RESULT`` and routes to Nexus-Prime.
+    - ``CARD_CLICKED`` with ``action_name`` ``"skill_approve"`` or ``"skill_reject"``
+                       → wraps as ``SKILL_REQUEST`` (resolved) and routes to Nexus-Prime.
+    - All other event types respond 200 immediately (no-op ACK).
+
+    Security: This endpoint requires an Authorization: Bearer token, matching
+    all other POST endpoints. The Chat push URL must be registered in the
+    Google Chat API console with OIDC authentication targeting the nexus-prime
+    service account.
+
+    Nexus-Prime only — other agents return 404.
+
+    Spec: GAOS-Manager-Spec.md §2.5 (Phase 2.5 Step 1)
+    """
+    _verify_pubsub_audience(request)
+
+    if _AGENT_NAME != "nexus-prime":
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{_AGENT_NAME}' does not support /chat.",
+        )
+
+    try:
+        body = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
+
+    from tools.google_chat import ChatEventParseError, parse_chat_event
+    from models import A2AMessage, MessageType
+    import uuid, base64
+
+    try:
+        event = parse_chat_event(body)
+    except ChatEventParseError as exc:
+        log.warning("Could not parse Chat event: %s", exc)
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    event_type = event["event_type"]
+    action_name = event.get("action_name", "")
+
+    # No-op ACK for bot lifecycle events
+    if event_type in ("ADDED_TO_SPACE", "REMOVED_FROM_SPACE"):
+        return JSONResponse(content={"status": "ok"})
+
+    # Determine message type and payload
+    if event_type == "CARD_CLICKED" and action_name in ("approve", "reject"):
+        msg_type = MessageType.APPROVAL_RESULT
+        payload = {
+            "status": "Approved" if action_name == "approve" else "Rejected",
+            "proposal_id": event["parameters"].get("proposal_id", ""),
+            "approved_by": event["sender_email"],
+            "source": "google_chat",
+            "space_name": event["space_name"],
+        }
+    elif event_type == "CARD_CLICKED" and action_name in ("skill_approve", "skill_reject"):
+        msg_type = MessageType.SKILL_REQUEST
+        payload = {
+            "status": "Approved" if action_name == "skill_approve" else "Rejected",
+            "proposal_id": event["parameters"].get("proposal_id", ""),
+            "package_name": event["parameters"].get("package_name", ""),
+            "approved_by": event["sender_email"],
+            "source": "google_chat",
+            "space_name": event["space_name"],
+        }
+    elif event_type == "MESSAGE":
+        msg_type = MessageType.CHAT_MESSAGE
+        payload = {
+            "text": event["text"],
+            "sender_email": event["sender_email"],
+            "space_name": event["space_name"],
+            "message_name": event["message_name"],
+        }
+    else:
+        # Unknown CARD_CLICKED action or unsupported event — ACK silently
+        return JSONResponse(content={"status": "ok"})
+
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    synthetic_msg = A2AMessage(
+        source_agent="google-chat",
+        target_agent="nexus-prime",
+        project_id=project_id,
+        task_id=str(uuid.uuid4()),
+        message_type=msg_type,
+        priority=3,
+        payload=payload,
+    )
+    envelope = {
+        "message": {
+            "data": base64.b64encode(
+                synthetic_msg.model_dump_json().encode()
+            ).decode(),
+            "messageId": synthetic_msg.task_id,
+        },
+        "subscription": "google-chat/push",
+    }
+
+    agent = _get_agent()
+    try:
+        await agent.run(envelope)
+    except Exception as exc:
+        log.exception("Chat handler failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return JSONResponse(content={"status": "ok"})
 
 
 # ── Cloud Run startup ─────────────────────────────────────────────────────────
