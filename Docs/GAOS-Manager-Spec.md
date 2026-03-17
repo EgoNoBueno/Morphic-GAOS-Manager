@@ -1341,6 +1341,8 @@ Storing API keys in `.env` files is acceptable **only during local development**
 | `OLLAMA_HOST` | Local Ollama endpoint URL (e.g. `http://localhost:11434`) | `LOCAL_MODEL` routing |
 | `WEBHOOK_HMAC_SECRET` | Random 32-byte hex string | Nexus-Prime (`webhook_sender.py`) + Apps Script (`doPost`) |
 | `WEBHOOK_URL` | Apps Script Web App URL | Nexus-Prime (`webhook_sender.py`) |
+| `GOOGLE_SEARCH_API_KEY` | Google Custom Search JSON API key | Scout (`tools/google_search.py` — `_discover` node, Phase 2.5 Step 6) |
+| `GOOGLE_SEARCH_CX` | Custom Search Engine ID (CX) | Scout (`tools/google_search.py` — `_discover` node, Phase 2.5 Step 6) |
 
 > **No JSON key files in Secret Manager.** All Google service access (Sheets, Pub/Sub, BigQuery, Drive, Vertex AI) is handled via service account identity — each Cloud Run service runs as its own SA and calls `google.auth.default()`. Service account JSON keys are not created, stored, or injected anywhere in this system. See `GAOS-Deploy-Spec.md §2`.
 | Environment | Secret Source | `.env` allowed? |
