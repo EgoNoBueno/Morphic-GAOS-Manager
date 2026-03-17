@@ -1062,13 +1062,13 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [ ] All 320 unit tests pass (`pytest` — green, 0 failures)
 - [ ] Apps Script `onChange` trigger fires on Status cell change and publishes to `agent.approvals.events`
 - [ ] Local Python subscriber receives the Pub/Sub push and prints the proposal ID and new status
-- [ ] Cloud Scheduler TTL sweep job exists and can be triggered manually (HTTP 200 response)
+- [x] Cloud Scheduler TTL sweep job exists and can be triggered manually (HTTP 200 response)
 - [x] Cloud Scheduler nightly archive job exists with state `ENABLED` — `POST /archive` implemented in Phase 2 Item 3 (returns HTTP 200)
 - [x] **[Phase 2.5]** Google Chat App created in Google Cloud console; Chat API enabled; `nexus-prime-sa` added to the Chat space as the bot identity (authenticated via service account ADC — no Secret Manager token required)
 - [x] **[Phase 2.5]** Vertex AI Search datastore created and indexed against Drive `Knowledge/` folder; datastore ID stored in `settings.yaml`
-- [x] **[Phase 2.5]** Google Custom Search Engine created; CSE ID and API key stored in Secret Manager as `GOOGLE_SEARCH_CX` and `GOOGLE_SEARCH_API_KEY`
+- [ ] **[Phase 2.5]** Google Custom Search Engine created; CSE ID and API key stored in Secret Manager as `GOOGLE_SEARCH_CX` and `GOOGLE_SEARCH_API_KEY`
 - [ ] **[Phase 2.5]** AppSheet app deployed and connected to the Google Sheets workbook (`Agent_Approvals` + `Project Registry` tabs at minimum)
-- [x] **[Phase 2.5]** Cloud Scheduler `daily-kickoff` job created (6 AM daily, `POST /sync`, returns HTTP 200)
+- [x] **[Phase 2.5]** Cloud Scheduler `daily-kickoff` job created (6 AM daily, `POST /daily-sync`, returns HTTP 200)
 - [x] **[Phase 2.5]** Cloud Scheduler `doc-comment-poll` job created (every 5 minutes, `POST /poll-comments`, returns HTTP 200)
 - [x] **[Phase 2.5]** `POST /chat` endpoint returns HTTP 200; Nexus-Prime responds in Chat thread within 10 seconds
 - [ ] **[Phase 2.5]** Approval Gate Chat-path validated end-to-end: Chat card Approve tap → `APPROVAL_RESULT` published → Nexus-Prime resumes parked task → Sheet audit row written
@@ -1077,11 +1077,11 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [ ] `setupProtections()` has been run; Status/Code/Hash columns are locked to owner
 - [ ] Authorized Approvers tab has at least one row (owner, tier 5, active=TRUE)
 - [x] `settings.yaml` is complete with correct `workbook_id`, `knowledge_folder_id`, and model aliases
-- [ ] `WEBHOOK_URL` secret is populated in Secret Manager
-- [ ] BigQuery dataset and 6 tables created with TTL partitioning
+- [x] `WEBHOOK_URL` secret is populated in Secret Manager
+- [x] BigQuery dataset and 6 tables created with TTL partitioning
 - [ ] All Knowledge/ seed files created in Drive
-- [ ] All 7 Cloud Run services deployed and returning `{"status":"ok"}` on `/health`
-- [ ] All 22 Pub/Sub push subscriptions created with OIDC auth (`pubsub-push-sa`)
+- [x] All 7 Cloud Run services deployed and returning `{"status":"ok"}` on `/health`
+- [x] All 22 Pub/Sub push subscriptions created with OIDC auth (`pubsub-push-sa`)
 - [x] Vertex AI RAG corpora created — all 7 `memory_bank.corpora` entries in `settings.yaml` are non-empty
 - [ ] Cloud Logging retention reduced to 7 days
 
