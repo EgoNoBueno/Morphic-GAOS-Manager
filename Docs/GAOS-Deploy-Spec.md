@@ -1109,7 +1109,7 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [x] All 7 Cloud Run services deployed and returning `{"status":"ok"}` on `/health`
 - [x] All 22 Pub/Sub push subscriptions created with OIDC auth (`pubsub-push-sa`)
 - [x] Vertex AI RAG corpora created — all 7 `memory_bank.corpora` entries in `settings.yaml` are non-empty
-- [ ] Cloud Logging retention reduced to 7 days
+- [x] Cloud Logging retention reduced to 7 days
 
 ---
 
