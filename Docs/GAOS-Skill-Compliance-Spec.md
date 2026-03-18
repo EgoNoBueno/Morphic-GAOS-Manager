@@ -223,7 +223,7 @@ Any import not on the allowlist is an automatic **Gate 1 failure** until the all
 - [ ] `name` field: `snake_case`, unique across the system
 - [ ] `description` field: one sentence, present
 - [ ] `model` field: resolved from `settings.yaml` alias — **no hardcoded Gemini version strings** (e.g., `"gemini-1.5-pro"` is forbidden; `settings.FAST_MODEL` is required)
-- [ ] `instruction` field: populated from the identity file at runtime
+- [ ] `instruction` field: populated by `_load_identity_file(agent_name)` from `agents/__init__.py` — do **not** assign a raw string literal. `_load_identity_file()` automatically appends the Context Trio (owner business context, brand voice, and operating rules from `Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`) after the agent-specific identity file — no additional wiring is required.
 - [ ] `tools` field: explicit list — no wildcard, no inheritance from parent agent
 - [ ] `AgentInput` and `AgentOutput` Pydantic schemas defined — no bare `dict` or `Any` typed agent boundary fields
 - [ ] `task_id` and `project_id` present in both input and output schemas
@@ -395,7 +395,7 @@ After the proposal is approved and the skill is merged, the following must be co
 2. **Write unit tests** — satisfy `GAOS-Agent-Spec.md §8.1` (U1–U5) for all agent skills; `GAOS-Agent-Spec.md §8.3` if the skill is code-producing.
 3. **Add integration tests** — for Tier 2 orchestrators, satisfy `GAOS-Agent-Spec.md §8.2` (I1–I6).
 4. **Update `GAOS-Deploy-Spec.md`** — add any new secrets, Pub/Sub topics, or Sheet tabs that must be provisioned.
-5. **Add identity file** — if not already present, create `Docs/agents/<name>.md` per `GAOS-Manager-Spec.md §18.2`.
+5. **Add identity file** — if not already present, create `Docs/agents/<name>.md` per `GAOS-Manager-Spec.md §18.2`. The Context Trio (`about-me.md`, `brand-voice.md`, `working-preferences.md`) is appended automatically by `_load_identity_file()` — no additional wiring is required in the identity file or the orchestrator.
 
 ---
 
