@@ -1,7 +1,7 @@
 <div align="center">
 
 <!-- Banner: save the project graphic as Docs/assets/morphicg-banner.png and uncomment the line below -->
-<img src="Docs/assets/morphicg-banner.png" alt="Morphic-G AOS Banner" width="100%"/> 
+<img src="Docs/assets/morphicg-banner.png" alt="Morphic-G AOS Banner" width="100%"/>
 
 # Morphic-G AOS
 ### The Intelligent Workforce for Small Business
@@ -275,8 +275,8 @@ When an agent needs a decision, a row appears in `Agent_Approvals` with:
 - **The proposed code** (if it's a self-evolution task)
 - **Priority level** (1–5) and the response deadline
 
-To approve: change the `Status` cell to `Approved`.  
-To reject: change it to `Rejected`.  
+To approve: change the `Status` cell to `Approved`.
+To reject: change it to `Rejected`.
 To request changes: change it to `Needs Revision` and add a note in the Comments column.
 
 An Apps Script `onEdit` trigger fires the moment you press Enter and notifies the agent. You do not need to open a terminal or restart anything.
@@ -313,6 +313,39 @@ If an agent hits a problem it cannot self-resolve — and its Write-Test-Refine 
 | [`Docs/GAOS-Onboarding-Spec.md`](Docs/GAOS-Onboarding-Spec.md) | First-time deployer setup wizard + end-user onboarding via Steward |
 | [`Docs/GAOS-Skill-Compliance-Spec.md`](Docs/GAOS-Skill-Compliance-Spec.md) | 6-gate review checklist for importing external skill modules |
 | [`Docs/agents/`](Docs/agents/) | Identity files for all 7 agents (Nexus-Prime + 6 domain orchestrators) |
+
+---
+
+## The Context Trio: AOS Governance
+
+This workspace uses a **Context Trio** of three Markdown files in `Docs/` that act as the source of truth for AI agents — ensuring every autonomous action is aligned with your specific business logic, communication standards, and operational constraints without requiring constant re-prompting.
+
+| File | Nickname | Purpose |
+|------|----------|---------|
+| [`Docs/about-me.md`](Docs/about-me.md) | 🧭 The Compass | Defines **what** we are building and **why** |
+| [`Docs/brand-voice.md`](Docs/brand-voice.md) | 🎭 The Persona | Defines **how** we speak |
+| [`Docs/working-preferences.md`](Docs/working-preferences.md) | 📜 The Constitution | Defines **how** the system operates |
+
+### Why These Files Exist
+
+Without these files, AI agents default to generic assistant behavior — technically correct but contextually wrong. A sales sequence written by a generic assistant sounds like a press release. A campaign budget proposed without cost awareness ignores the $2.50/month ceiling. The Context Trio prevents this:
+
+- **`about-me.md`** ensures agents understand the business philosophy before they act — every suggestion is filtered through *"does this solve a specific pain point?"* and *"does this deliver measurable value?"*
+- **`brand-voice.md`** prevents the system from defaulting to corporate jargon. The Transparent Champion persona (Slack-plain, Oatly-honest, Nike-motivated) is applied to every deliverable.
+- **`working-preferences.md`** overrides generic AI defaults with architectural discipline — modular construction, $2.50/month cost ceiling, and approval-gate policy for high-risk actions.
+
+### How to Use & Modify
+
+1. **Audit Stubs** — Open `about-me.md` and replace every `NOTE TO USER` placeholder with your specific niche, priorities, and KPIs. The more specific you are, the better agent outputs become.
+2. **Update Burned-By Rules** — When a session reveals a failure mode (a repeated mistake, a wrong assumption, a bad default), add it to `working-preferences.md` under Operational Workflow Policies. These accumulate into a lessons-learned database the system consults automatically.
+3. **Refine Voice** — If agent output tone feels off — too stiff, too casual, wrong vocabulary — edit the vocabulary table or voice pillars in `brand-voice.md`. Changes take effect on the next session.
+4. **Technical Stack Alignment** — When your stack changes (new LLM, new GCP project, new integration), update `working-preferences.md`'s tool references. Security and approval-gate rules live in `AI-Autocoding-Rules.md` — update both together.
+
+### How the Agent Uses This Trio
+
+At the start of every work session, agents read all three files as standing orders. They are referenced in the system prompt hierarchy used by Nexus-Prime and passed as context to domain orchestrators before task execution. Together they ensure all autonomous work — lead scoring, campaign drafting, code generation, budget recommendations — is grounded in the owner's actual business rather than a generic interpretation of the request.
+
+> **To customize:** Populate all three `NOTE TO USER` stubs in the files above and commit the changes. Every subsequent AI session will automatically inherit your context without re-prompting.
 
 ---
 
@@ -356,7 +389,7 @@ If an agent hits a problem it cannot self-resolve — and its Write-Test-Refine 
 
 <div align="center">
 
-*Built entirely on Google's cloud ecosystem.*  
+*Built entirely on Google's cloud ecosystem.*
 *Phase 1 and Phase 2.5 deployed. 320 tests green. Running in production.*
 
 </div>
