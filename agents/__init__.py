@@ -27,6 +27,8 @@ from typing import Any
 # ── Timestamp helpers ─────────────────────────────────────────────────────────
 
 _DOCS_ROOT = Path(__file__).parent.parent / "Docs" / "agents"
+_CONTEXT_TRIO_ROOT = Path(__file__).parent.parent / "Docs"
+_CONTEXT_TRIO_FILES = ("about-me.md", "brand-voice.md", "working-preferences.md")
 
 
 def utcnow_iso() -> str:
@@ -334,15 +336,51 @@ def _evo_result(code: str, iterations: int, cost: float, constraint: str, fp: st
 
 # ── Identity file loader ──────────────────────────────────────────────────────
 
+def _load_context_trio() -> str:
+    """
+    Read the three Context Trio files from Docs/ and return them as a single
+    concatenated string for inclusion in every agent's system prompt.
+
+    Files loaded (in order):
+        Docs/about-me.md          — owner business context (The Compass)
+        Docs/brand-voice.md       — communication standards (The Persona)
+        Docs/working-preferences.md — operational rules (The Constitution)
+
+    Returns:
+        Concatenated Markdown string, or an empty string if all three files
+        are missing (e.g., during unit tests without the full repo mounted).
+    """
+    sections: list[str] = []
+    for filename in _CONTEXT_TRIO_FILES:
+        path = _CONTEXT_TRIO_ROOT / filename
+        if path.exists():
+            sections.append(path.read_text(encoding="utf-8"))
+    return "\n\n---\n\n".join(sections)
+
+
 def _load_identity_file(agent_name: str) -> str:
     """
-    Read Docs/agents/<agent_name>.md and return its content.
-    Falls back to an empty string if the file is missing (logs a warning).
+    Read Docs/agents/<agent_name>.md and return its content, with the Context
+    Trio (about-me.md, brand-voice.md, working-preferences.md) appended.
+
+    The trio provides owner business context, brand voice, and operational
+    rules to every agent without requiring per-orchestrator changes.
+
+    Falls back gracefully if files are missing (e.g., in unit tests).
     """
     path = _DOCS_ROOT / f"{agent_name}.md"
     if not path.exists():
-        return f"# {agent_name.title()} Agent\n(Identity file not found — ensure Docs/agents/{agent_name}.md exists in the container image.)\n"
-    return path.read_text(encoding="utf-8")
+        identity = (
+            f"# {agent_name.title()} Agent\n"
+            f"(Identity file not found — ensure Docs/agents/{agent_name}.md exists in the container image.)\n"
+        )
+    else:
+        identity = path.read_text(encoding="utf-8")
+
+    trio = _load_context_trio()
+    if trio:
+        return f"{identity}\n\n---\n\n{trio}"
+    return identity
 
 
 # ── Cloud Logging helper ──────────────────────────────────────────────────────
