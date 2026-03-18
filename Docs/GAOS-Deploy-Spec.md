@@ -1073,14 +1073,19 @@ Phase 1 is complete when all of the following pass. Run them in order.
 
 Run all 8 webhook-specific tests from `GAOS-Manager-Spec.md §14` after test 7 passes.
 
+> ⚠️ **Warning — APIs must be enabled in the OAuth client project:** When running smoke tests locally with ADC refreshed via `--client-id-file=oauth-client.json`, API calls are billed/quota-tracked against project `490183704378` (the OAuth client's owning project), **not** `morphic-gaos-prod`. Each GCP API (Sheets, Drive, Pub/Sub, Secret Manager, BigQuery) must be enabled in **both** projects. If you get a 403 `accessNotConfigured` error during any smoke test, run:
+> ```powershell
+> gcloud services enable sheets.googleapis.com drive.googleapis.com pubsub.googleapis.com secretmanager.googleapis.com bigquery.googleapis.com script.googleapis.com --project=490183704378
+> ```
+
 ---
 
 ## 14. Phase 1 Exit Criteria Checklist
 
 Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **every item** below is checked:
 
-- [ ] `tools/google_sheets.py` appends a row and reads a cell value without errors
-- [ ] All 320 unit tests pass (`pytest` — green, 0 failures)
+- [x] `tools/google_sheets.py` appends a row and reads a cell value without errors
+- [x] All 320 unit tests pass (`pytest` — green, 0 failures)
 - [ ] Apps Script `onChange` trigger fires on Status cell change and publishes to `agent.approvals.events`
 - [ ] Local Python subscriber receives the Pub/Sub push and prints the proposal ID and new status
 - [x] Cloud Scheduler TTL sweep job exists and can be triggered manually (HTTP 200 response)
