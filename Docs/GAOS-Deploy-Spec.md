@@ -874,7 +874,7 @@ done
 
 > **Note:** Secrets (`GEMINI_API_KEY`, etc.) are **not** injected as environment variables. Each agent fetches secrets at boot via the Secret Manager API using its service account identity. `--set-secrets` is not needed.
 
-Each service exposes seven endpoints:
+Each service exposes nine endpoints:
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -884,9 +884,26 @@ Each service exposes seven endpoints:
 | `/archive` | POST | Cloud Scheduler nightly archive sweep (Nexus-Prime only) |
 | `/daily-sync` | POST | Cloud Scheduler 6 AM morning briefing (Nexus-Prime only) |
 | `/chat` | POST | Google Chat push events — messages and card callbacks (Nexus-Prime only) |
+| `/vision` | POST | Owner-submitted project vision (Nexus-Prime only; added Phase 2.5 Step 5) |
+| `/poll-comments` | POST | Doc comment poll trigger (Nexus-Prime only; added Phase 2.5 Step 5) |
 | `/health` | GET | Liveness probe — always returns `{"status":"ok"}` |
 
 All POST endpoints require a `Bearer` token in the `Authorization` header. Cloud Run ingress validates the OIDC token before the request reaches the handler; the handler check is defense-in-depth only.
+
+> ⚠️ **Warning — Cloud Run image must be rebuilt after every code change:** Cloud Run does not auto-deploy from source. After any change to `main.py`, agent orchestrators, or `tools/`, the image must be rebuilt and all 7 services redeployed:
+> ```powershell
+> $PROJECT="morphic-gaos-prod"
+> $IMAGE="us-central1-docker.pkg.dev/$PROJECT/cloud-run-source-deploy/gaos-agent:latest"
+> gcloud builds submit --tag $IMAGE --project=$PROJECT .
+> foreach ($agent in @("nexus-prime","ledger","beacon","pursuit","foreman","steward","scout")) {
+>   gcloud run deploy $agent --image $IMAGE --region us-central1 --project $PROJECT `
+>     --service-account "${agent}-sa@${PROJECT}.iam.gserviceaccount.com" `
+>     --memory 512Mi --cpu 1 --timeout 60s --concurrency 1 `
+>     --min-instances 0 --max-instances 5 --no-allow-unauthenticated `
+>     --set-env-vars AGENT_NAME=$agent --quiet
+> }
+> ```
+> **Lesson learned:** After Phase 2.5 Steps 3–6 added `/vision`, `/poll-comments`, `/daily-sync`, and `/chat` endpoints, the production Cloud Run services were still running revision `00001` (pre-Phase 2.5 code). `/poll-comments` returned 404 and the Scheduler's `doc-comment-poll` job was failing every 5 minutes as a result. Always rebuild and redeploy after significant feature additions.
 
 ### 9.2 Post-Deploy Wiring
 
