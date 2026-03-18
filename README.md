@@ -241,6 +241,9 @@ python scripts/setup_workspace.py
 # stores WEBHOOK_URL in Secret Manager (one browser consent click required)
 python scripts/setup_apps_script.py
 python scripts/setup_apps_script.py --post-auth   # run after browser consent
+
+# After any local edit to a .gs file, push changes to Apps Script without redeploying:
+python scripts/setup_apps_script.py --push
 ```
 
 For anything the scripts don't cover (Vertex AI corpora, Cloud Run deploy, Cloud Scheduler jobs), follow [`Docs/GAOS-Deploy-Spec.md`](Docs/GAOS-Deploy-Spec.md).
@@ -276,7 +279,7 @@ To approve: change the `Status` cell to `Approved`.
 To reject: change it to `Rejected`.  
 To request changes: change it to `Needs Revision` and add a note in the Comments column.
 
-An Apps Script `onChange` trigger fires instantly and notifies the agent. You do not need to open a terminal or restart anything.
+An Apps Script `onEdit` trigger fires the moment you press Enter and notifies the agent. You do not need to open a terminal or restart anything.
 
 ### Proposal priority levels
 
@@ -317,8 +320,9 @@ If an agent hits a problem it cannot self-resolve — and its Write-Test-Refine 
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| **Phase 1** | All 7 orchestrators, `main.py` Cloud Run entry point, full tool layer, 151-test suite | **Complete** |
+| **Phase 1** | All 7 orchestrators, `main.py` Cloud Run entry point, full tool layer, 320-test suite, all smoke tests passing | **Complete** |
 | **Phase 2** | Ollama observability, weekly summarization job | Spec complete |
+| **Phase 2.5** | Google Chat integration, Vertex AI Search, Google Custom Search, Cloud Scheduler daily-kickoff and poll-comments jobs, Apps Script webhook + approval gate deployed | **Deployed** |
 | **Phase 3** | Gemini integration, full approval loop end-to-end | Spec complete |
 | **Phase 4** | Full validation, exit criteria, cost verification | Spec complete |
 | **Phase 5** | CEO dashboard (Grafana + Cloud Run), optional Vertex Agent Engine | Future |
@@ -353,6 +357,6 @@ If an agent hits a problem it cannot self-resolve — and its Write-Test-Refine 
 <div align="center">
 
 *Built entirely on Google's cloud ecosystem.*  
-*Specs complete. Ready to build.*
+*Phase 1 and Phase 2.5 deployed. 320 tests green. Running in production.*
 
 </div>
