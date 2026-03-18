@@ -261,9 +261,9 @@ This document defines the public interface for fourteen tool modules. The design
 **Resources required:** Google Chat API, service account with Chat scope.
 
 #### `tools/web_search.py`
-**What it does:** Performs grounded web searches via Gemini's built-in search grounding tool for tasks that need real-time knowledge but not deep recursive research.
-**Why it exists:** Provides a lightweight search capability for quick fact-checks without triggering Scout's full `_discover` pipeline.
-**Resources required:** Gemini API (search grounding enabled).
+**What it does:** Queries the DuckDuckGo Instant Answer API (no API key, no cost) and returns a plain-text snippet string. Used exclusively to inject current real-world context into `LOCAL_MODEL` (Ollama) prompts when `web_access=True` is passed to `_call_model()`. If the fetch fails for any reason, the original prompt is sent to Ollama unchanged — failure is always silent.
+**Why it exists:** Gives the free local model access to current facts without spending any Gemini API budget. Gemini models already have live knowledge natively, so `web_access=True` is silently ignored for them.
+**Resources required:** None — the DuckDuckGo public API requires no credentials.
 
 #### `tools/vertex_search.py`
 **What it does:** Queries the Vertex AI Search (Discovery Engine) corpus over the project's `Knowledge/` Drive folder. Returns semantically ranked procedural documents.
@@ -414,17 +414,17 @@ Scout implements a recursive deep-research pipeline (Phase 2.5 Step 6): when it 
 
 | File | Purpose | Length |
 |------|---------|--------|
-| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,779 lines |
-| `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~1,175 lines |
+| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,400 lines |
+| `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~902 lines |
 | `Docs/GAOS-Nexus-Prime-Spec.md` | Engineering construction requirements for the Tier 1 root orchestrator | ~834 lines |
 | `Docs/GAOS-Onboarding-Spec.md` | Deployer first-run guide + end-user onboarding via Steward | ~638 lines |
-| `Docs/GAOS-Memory-Spec.md` | Full memory architecture, five layers, self-learning loop | ~893 lines |
+| `Docs/GAOS-Memory-Spec.md` | Full memory architecture, five layers, self-learning loop | ~706 lines |
 | `Docs/GAOS-Agent-Spec.md` | Engineering construction requirements for every agent tier | ~317 lines |
 | `Docs/GAOS-Skill-Compliance-Spec.md` | External skill review process before AOS integration | ~298 lines |
-| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 14 modules) | ~1,135 lines |
+| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 14 modules) | ~893 lines |
 | `Docs/GAOS-Persona-Spec.md` | AOS soul ("The Strategic Architect"), `think` node spec, tone standard | ~297 lines |
 | `Docs/GAOS-Privacy-Spec.md` | Cloud data exposure, privacy risk analysis, and mitigation strategies | ~260 lines |
-| `Docs/GAOS-Project-Glossary.md` | Canonical glossary of all abbreviations and technical terms | ~204 lines |
+| `Docs/GAOS-Project-Glossary.md` | Canonical glossary of all abbreviations and technical terms | ~157 lines |
 | `Docs/GAOS-Doctor.md` | Health-check runbook for diagnosing deployment and runtime issues | ~55 lines |
 | `Docs/AI-Autocoding-Rules.md` | Coding rules enforced during AI-assisted development sessions | ~250 lines |
 | `Docs/agents/nexus-prime.md` | Identity file — Nexus-Prime (Root Orchestrator / General Manager) | — |
