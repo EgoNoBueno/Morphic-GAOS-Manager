@@ -414,7 +414,7 @@ After clicking Allow, the web app is live and `WEBHOOK_URL` is in Secret Manager
 
 **Step 2 — Run `setupProtections`** (function dropdown → `setupProtections` → Run). Locks Status, Proposed Code, and Code SHA-256 columns + entire Authorized Approvers tab to owner-only edit.
 
-**Step 3 — Install the `onChange` trigger** (Triggers → Add Trigger → Function: `onChangeApproval` | Event type: On change).
+**Step 3 — Install the `onEdit` trigger** (Triggers → Add Trigger → Function: `onChangeApproval` | Event type: **On edit**).
 
 > **`doPost` web-app context note:** `SpreadsheetApp.getActiveSpreadsheet()` returns
 > `null` when called from a deployed web-app `doPost` endpoint (as opposed to an
@@ -440,6 +440,12 @@ Triggers → Add Trigger → Function: `onChangeApproval` | Event type: **On edi
 > ⚠️ **Warning — must use `onEdit`, not `onChange`:** The `onChangeApproval` handler uses `e.range`, which is only present on `onEdit` events. Installing as `onChange` causes a silent failure: `e.range` is `undefined`, `range.getColumn()` throws, and the trigger does nothing. The error only appears in the Apps Script execution log — the cell value stays changed and no Logs entry is written.
 >
 > **If you previously installed an `onChange` trigger**, delete it in the Triggers panel and reinstall as `onEdit`.
+
+> ⚠️ **Warning — never use `e.source` in the trigger handler:** `e.source` is unreliable for installable `onEdit` triggers and may be `undefined`, causing `TypeError: Cannot read properties of undefined (reading 'source')` on line 1 of the handler. Always use `e.range.getSheet()` instead — it is always populated on `onEdit` events. Also guard the entire function with `if (!e || !e.range) return;` as the first line.
+>
+> Similarly, `Session.getActiveUser().getEmail()` may return an empty string for installable triggers in some Google Workspace configurations. Fall back to `Session.getEffectiveUser().getEmail()` — use: `Session.getActiveUser().getEmail() || Session.getEffectiveUser().getEmail()`.
+>
+> **Automation:** Re-upload all `.gs` files after any local edit using `python scripts/setup_apps_script.py --push` — no copy-paste into the Apps Script editor required.
 
 ### 4.7 Deploy the Webhook as a Web App
 
@@ -1087,7 +1093,7 @@ Phase 1 is complete when all of the following pass. Run them in order.
 | 1 | Sheet write | `python -c "from tools.google_sheets import init_sheets_client, append_row; import datetime; init_sheets_client('default'); append_row('Logs', {'timestamp': datetime.datetime.utcnow().isoformat(), 'level': 'SMOKE_TEST', 'source': 'smoke', 'message': 'phase 1 test'}, 'default')"` | Row appears in `Logs` tab |
 | 2 | Sheet read | `python -c "from tools.google_sheets import init_sheets_client, get_all_records; init_sheets_client('default'); rows = get_all_records('Project Registry', 'default'); print(f'{len(rows)} rows')"` | Prints `0 rows` (or more once project rows are added) |
 | 3 | Pub/Sub publish | `python -c "from tools.pubsub import publish; from models import A2AMessage; ..."` sending a test message to `agent.nexus-prime.events` | Message ID returned; no exception |
-| 4 | Pub/Sub receive | Manually trigger the Apps Script `onChange` by editing a Status cell | Local Python subscriber (or Cloud Run log) shows the event within 5 seconds |
+| 4 | Approval trigger | Run `python scripts/smoke_test_4.py` — script appends a throwaway row, prompts you to type `Approved` in the UI, then polls for K/L stamp and Logs entry | K (Approved By) and L (Approver Tier) populate; APPROVAL entry appears in Logs tab ✅ |
 | 5 | Secret access | `python -c "from tools.secrets import get_secret; v = get_secret('GEMINI_API_KEY', 'morphic-gaos-prod'); print(v[:8] + '...')"` | First 8 chars of API key printed |
 | 6 | Webhook HMAC | POST a correctly signed payload to the Apps Script Web App URL | `statusCode: 200`; row appears in `Agent_Approvals` |
 | 7 | Webhook rejection | POST with a tampered signature | `statusCode: 401`; `HMAC_FAILURE` appears in `Logs` tab |
@@ -1107,7 +1113,7 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 
 - [x] `tools/google_sheets.py` appends a row and reads a cell value without errors
 - [x] All 320 unit tests pass (`pytest` — green, 0 failures)
-- [ ] Apps Script `onChange` trigger fires on Status cell change and publishes to `agent.approvals.events`
+- [x] Apps Script `onEdit` trigger fires on Status cell change — stamps Approved By (col K), Approver Tier (col L), and writes an APPROVAL entry to the Logs tab ✅ (smoke test 4 passed 2026-03-17)
 - [ ] Local Python subscriber receives the Pub/Sub push and prints the proposal ID and new status
 - [x] Cloud Scheduler TTL sweep job exists and can be triggered manually (HTTP 200 response)
 - [x] Cloud Scheduler nightly archive job exists with state `ENABLED` — `POST /archive` implemented in Phase 2 Item 3 (returns HTTP 200)

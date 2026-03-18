@@ -5,6 +5,28 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-17T22:44-03:00 — Smoke Test 4 Debug + Pass; Tooling Improvements COMPLETE ✅
+
+**Smoke test 4 (`onEdit` approval trigger) debugged and confirmed passing.**
+
+| Item | Action |
+|------|--------|
+| `apps_script/onChangeApproval.gs` | Fixed `TypeError: Cannot read properties of undefined (reading 'source')` — replaced `e.source.getActiveSheet()` with guard `if (!e \|\| !e.range) return;` + `e.range.getSheet()`. Added `getEffectiveUser()` fallback for `getActiveUser()` returning empty string on installable triggers. |
+| `scripts/setup_apps_script.py` | Added `--push` flag: re-uploads all `.gs` files to the live Apps Script project via API without creating a new deployment. Eliminates copy-paste into the editor after any local `.gs` edit. |
+| `scripts/smoke_test_4.py` | NEW — automated smoke test 4 harness. Appends a throwaway test row (`SMOKE4-HHMMSS`), prompts user to type `Approved` in the UI, polls for K/L stamp, checks Logs tab, then cleans up. Prints PASSED/FAILED. |
+| `.github/copilot-instructions.md` | NEW — mirrors `Docs/AI-Autocoding-Rules.md`. VS Code injects this automatically into every Copilot Agent session (including after compaction) — no manual attach required. |
+| `Docs/GAOS-Deploy-Spec.md` | §4.4 Step 3: On change → On edit. §4.6: Added `e.source` undefined warning + `getEffectiveUser()` fallback note + `--push` automation note. §13 smoke test table: updated test 4 to reference `smoke_test_4.py`. §14: Checked off Apps Script trigger item ✅. |
+
+**Files changed:** `apps_script/onChangeApproval.gs`, `scripts/setup_apps_script.py`, `scripts/smoke_test_4.py` (new), `.github/copilot-instructions.md` (new), `Docs/GAOS-Deploy-Spec.md`, `WORKLOG.md`
+
+**Tests added:** none (smoke_test_4.py is a manual-assist integration harness, not a pytest unit test)
+
+**Commits:** `da7e559` (onEdit fix + --push + smoke_test_4), `aecfafa` (copilot-instructions.md)
+
+**Next:** Smoke tests 6+7 (HMAC webhook — `POST` with valid and tampered signatures to the Apps Script Web App URL) → 8 webhook tests from `GAOS-Manager-Spec.md §14` → AppSheet deployment → Approval Gate Chat-path E2E.
+
+---
+
 ## 2026-03-17 — Phase 1 Deploy Infrastructure Audit COMPLETE ✅
 
 **All automatable Phase 1 §14 items confirmed or created. 13 Drive seed files present in Knowledge/.**
