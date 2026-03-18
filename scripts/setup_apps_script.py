@@ -385,6 +385,36 @@ def phase2() -> None:
     print("   Remaining manual step: add owner row to Authorized Approvers tab (§4.3).")
 
 
+# ── Push: re-upload .gs files only (no new deployment) ───────────────────────
+
+def push() -> None:
+    """Re-upload all .gs files to the existing Apps Script project.
+
+    Use this after editing any .gs file locally — no browser interaction needed.
+    The existing Web App deployment continues to serve; changes take effect
+    immediately in the script editor (HEAD / devMode).
+    """
+    print("\n=== Push: re-uploading .gs files ===\n")
+
+    settings = load_settings()
+    script_id = settings.get("apps_script", {}).get("script_id")
+    if not script_id:
+        sys.exit("No script_id in settings.yaml — run Phase 1 first")
+
+    creds = get_credentials()
+    script_service = build("script", "v1", credentials=creds)
+
+    print("Uploading script files...")
+    content = build_script_content()
+    script_service.projects().updateContent(
+        scriptId=script_id, body=content
+    ).execute()
+    print(f"  Uploaded {len(SCRIPT_FILES)} files + appsscript.json manifest")
+    print(f"\n✅ Push complete — script ID: {script_id}")
+    print("   Changes are live in the Apps Script editor (HEAD).")
+    print("   Existing Web App deployment unchanged; create a new one with --redeploy if needed.")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -395,10 +425,16 @@ def main() -> None:
         "--post-auth", action="store_true",
         help="Phase 2: set Script Properties and install triggers (run after browser consent)"
     )
+    parser.add_argument(
+        "--push", action="store_true",
+        help="Re-upload all .gs files to the existing project (hot-reload, no new deployment)"
+    )
     args = parser.parse_args()
 
     if args.post_auth:
         phase2()
+    elif args.push:
+        push()
     else:
         phase1()
 

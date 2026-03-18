@@ -4,10 +4,13 @@
 // validates the approver's identity and tier before allowing the change to stand.
 
 function onChangeApproval(e) {
-  const sheet = e.source.getActiveSheet();
-  if (sheet.getName() !== 'Agent_Approvals') return;
+  // Guard: e or e.range may be undefined in edge cases (e.g. trigger misconfiguration).
+  if (!e || !e.range) return;
 
   const range = e.range;
+  const sheet = range.getSheet();               // reliable for onEdit events
+  if (sheet.getName() !== 'Agent_Approvals') return;
+
   const col = range.getColumn();
   const STATUS_COL = 9; // Column I
   if (col !== STATUS_COL) return;
@@ -18,7 +21,10 @@ function onChangeApproval(e) {
   const row = range.getRow();
   const proposalId = sheet.getRange(row, 1).getValue();
   const priority = getPriorityFromProposal_(sheet, row);
-  const approverEmail = Session.getActiveUser().getEmail();
+  // getActiveUser() returns '' for installable triggers in some Workspace configs;
+  // fall back to getEffectiveUser() (the account that authorised the trigger).
+  const approverEmail = Session.getActiveUser().getEmail()
+                     || Session.getEffectiveUser().getEmail();
 
   // Look up approver in Authorized Approvers tab
   const approver = getApprover_(approverEmail);
