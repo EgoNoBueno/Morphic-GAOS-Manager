@@ -1100,8 +1100,8 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [ ] **[Phase 2.5]** Approval Gate Chat-path validated end-to-end: Chat card Approve tap → `APPROVAL_RESULT` published → Nexus-Prime resumes parked task → Sheet audit row written
 - [ ] All 7 smoke tests above are passing
 - [ ] All 8 webhook tests from `GAOS-Manager-Spec.md §14` are passing
-- [ ] `setupProtections()` has been run; Status/Code/Hash columns are locked to owner
-- [ ] Authorized Approvers tab has at least one row (owner, tier 5, active=TRUE)
+- [x] `setupProtections()` has been run; Status/Code/Hash columns are locked to owner
+- [x] Authorized Approvers tab has at least one row (owner, tier 5, active=TRUE)
 - [x] `settings.yaml` is complete with correct `workbook_id`, `knowledge_folder_id`, and model aliases
 - [x] `WEBHOOK_URL` secret is populated in Secret Manager
 - [x] BigQuery dataset and 6 tables created with TTL partitioning
