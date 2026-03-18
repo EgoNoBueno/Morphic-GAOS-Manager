@@ -5,6 +5,19 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-18T06:06-03:00 — Smoke Tests 6+7: Webhook HMAC Script COMPLETE ✅
+
+**332 / 332 tests passing. Zero regressions. No new unit tests (integration-only).**
+
+| File | Change |
+|------|--------|
+| `scripts/smoke_test_6_7.py` | NEW — Automated webhook HMAC smoke test harness. Fetches `WEBHOOK_URL` and `WEBHOOK_HMAC_SECRET` from Secret Manager, then runs all 8 test cases from `GAOS-Manager-Spec.md §14` against the live Apps Script doPost endpoint: (1) valid payload → 200, (2) tampered signature → 401, (3) missing signature → 401, (4) missing project_id → 400, (5) invalid project_id → 400, (6) priority out of range → 400, (7) empty body → 400/500, (8) replay → 200. Prints `8/8 tests passed` then cleanup reminder. Run: `python scripts/smoke_test_6_7.py`. |
+| `Docs/GAOS-Deploy-Spec.md` | §13 smoke test table: collapsed tests 6+7 into one row pointing to `smoke_test_6_7.py`; updated unit test count from 320 → 332. §14 checklist: replaced two vague "All 7 smoke tests" / "All 8 webhook tests" items with specific `smoke_test_6_7.py` run requirement. |
+
+**Next:** Run `python scripts/smoke_test_6_7.py` against the live endpoint to confirm 8/8 pass → AppSheet no-code deployment → Approval Gate Chat-path E2E.
+
+---
+
 ## 2026-03-18T05:49-03:00 — Phase 2.5 Step 7: SKILL_REQUEST Approval Flow COMPLETE ✅
 
 **332 / 332 tests passing. Zero regressions. +12 new tests.**

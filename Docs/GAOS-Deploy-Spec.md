@@ -1089,16 +1089,13 @@ Phase 1 is complete when all of the following pass. Run them in order.
 
 | # | Test | How to run | Expected result |
 |---|------|-----------|-----------------|
-| 0 | Unit test suite | `pytest` | 320 tests pass, 0 failures |
+| 0 | Unit test suite | `pytest` | 332 tests pass, 0 failures |
 | 1 | Sheet write | `python -c "from tools.google_sheets import init_sheets_client, append_row; import datetime; init_sheets_client('default'); append_row('Logs', {'timestamp': datetime.datetime.utcnow().isoformat(), 'level': 'SMOKE_TEST', 'source': 'smoke', 'message': 'phase 1 test'}, 'default')"` | Row appears in `Logs` tab |
 | 2 | Sheet read | `python -c "from tools.google_sheets import init_sheets_client, get_all_records; init_sheets_client('default'); rows = get_all_records('Project Registry', 'default'); print(f'{len(rows)} rows')"` | Prints `0 rows` (or more once project rows are added) |
 | 3 | Pub/Sub publish | `python -c "from tools.pubsub import publish; from models import A2AMessage; ..."` sending a test message to `agent.nexus-prime.events` | Message ID returned; no exception |
 | 4 | Approval trigger | Run `python scripts/smoke_test_4.py` — script appends a throwaway row, prompts you to type `Approved` in the UI, then polls for K/L stamp and Logs entry | K (Approved By) and L (Approver Tier) populate; APPROVAL entry appears in Logs tab ✅ |
 | 5 | Secret access | `python -c "from tools.secrets import get_secret; v = get_secret('GEMINI_API_KEY', 'morphic-gaos-prod'); print(v[:8] + '...')"` | First 8 chars of API key printed |
-| 6 | Webhook HMAC | POST a correctly signed payload to the Apps Script Web App URL | `statusCode: 200`; row appears in `Agent_Approvals` |
-| 7 | Webhook rejection | POST with a tampered signature | `statusCode: 401`; `HMAC_FAILURE` appears in `Logs` tab |
-
-Run all 8 webhook-specific tests from `GAOS-Manager-Spec.md §14` after test 7 passes.
+| 6+7+8tests | Webhook HMAC (all 8 cases) | Run `python scripts/smoke_test_6_7.py` — automated; runs all 8 webhook test cases from `GAOS-Manager-Spec.md §14` (valid payload, tampered sig, missing sig, bad schema, bad project_id, priority OOB, empty body, replay) | `8/8 tests passed` printed; cleanup note shows smoke rows to delete from `Agent_Approvals` |
 
 > ⚠️ **Warning — APIs must be enabled in the OAuth client project:** When running smoke tests locally with ADC refreshed via `--client-id-file=oauth-client.json`, API calls are billed/quota-tracked against project `490183704378` (the OAuth client's owning project), **not** `morphic-gaos-prod`. Each GCP API (Sheets, Drive, Pub/Sub, Secret Manager, BigQuery) must be enabled in **both** projects. If you get a 403 `accessNotConfigured` error during any smoke test, run:
 > ```powershell
@@ -1125,8 +1122,8 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [x] **[Phase 2.5]** Cloud Scheduler `doc-comment-poll` job created (every 5 minutes, `POST /poll-comments`, returns HTTP 200)
 - [x] **[Phase 2.5]** `POST /chat` endpoint returns HTTP 200; Nexus-Prime responds in Chat thread within 10 seconds
 - [ ] **[Phase 2.5]** Approval Gate Chat-path validated end-to-end: Chat card Approve tap → `APPROVAL_RESULT` published → Nexus-Prime resumes parked task → Sheet audit row written
-- [ ] All 7 smoke tests above are passing
-- [ ] All 8 webhook tests from `GAOS-Manager-Spec.md §14` are passing
+- [ ] All webhook smoke tests passing: `python scripts/smoke_test_6_7.py` prints `8/8 tests passed`
+- [ ] All 8 individual webhook test cases from `GAOS-Manager-Spec.md §14` confirmed via smoke_test_6_7.py output
 - [x] `setupProtections()` has been run; Status/Code/Hash columns are locked to owner
 - [x] Authorized Approvers tab has at least one row (owner, tier 5, active=TRUE)
 - [x] `settings.yaml` is complete with correct `workbook_id`, `knowledge_folder_id`, and model aliases
