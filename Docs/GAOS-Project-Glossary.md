@@ -162,6 +162,7 @@ This glossary defines every abbreviation, acronym, and technical term used in Mo
 
 - **Task Agent (Tier 3)**: A stateless, single-purpose Tier 3 agent that performs one unit of work and returns a result to its orchestrator. Does not use LangGraph, does not publish to Pub/Sub, and does not interact with the human dashboard. Escalates by returning `status: "escalated"` in its output.
 - **TLS (Transport Layer Security)**: The encryption protocol that protects data while it travels over the internet; all GCP services in this stack communicate exclusively over TLS 1.2 or higher.
+- **TL;DR (Too Long; Didn't Read)**: Internet shorthand for a short summary placed at the end of a long post or document, aimed at readers who skimmed and just want the bottom line.
 - **TTL (Time To Live)**: An expiry timer applied to pending Approval Gate proposals; when a TTL expires, the Cloud Scheduler fires a sweep that re-notifies the owner and eventually auto-rejects the item so stale proposals never silently accumulate.
 
 ## U
