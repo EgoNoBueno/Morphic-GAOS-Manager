@@ -339,7 +339,7 @@ Morphic-GAOS-Manager/
 │   ├── memory.py                 # Vertex AI Memory Bank read/write
 │   ├── webhook_sender.py         # HMAC-signed Approval Gate proposals
 │   ├── google_chat.py            # Google Chat card + message sender (Phase 2.5 Step 1)
-│   ├── web_search.py             # Gemini grounded web search (lightweight)
+│   ├── web_search.py             # DuckDuckGo Instant Answer API — free, no key, Ollama context injection only
 │   ├── vertex_search.py          # Vertex AI Search over Drive Knowledge/ corpus (Phase 2.5 Step 3)
 │   ├── google_docs.py            # Google Docs create/append/comment — Blueprint Factory (Phase 2.5 Step 4)
 │   └── google_search.py          # Google Custom Search API — Scout _discover node (Phase 2.5 Step 6)
@@ -351,6 +351,9 @@ Morphic-GAOS-Manager/
 │   ├── agents/                   # Per-agent identity files (system prompt headers)
 │   │   ├── nexus-prime.md
 │   │   ├── ledger.md, beacon.md, pursuit.md …
+│   ├── about-me.md               # Context Trio — owner business context (The Compass)
+│   ├── brand-voice.md            # Context Trio — Transparent Champion brand voice (The Persona)
+│   ├── working-preferences.md    # Context Trio — operational rules, cost ceiling (The Constitution)
 │   └── *.md                      # Spec and architecture docs
 ├── apps_script/                  # Apps Script source (.gs files deployed via API)
 │   ├── doPost.gs
@@ -1711,6 +1714,8 @@ Docs/
 
 **Agent loading rule:** Each agent loads only its own identity file plus the architecture files it acts on. Nexus-Prime loads `a2a-protocol.md` and `approval-gate.md`. Domain orchestrators (Ledger, Beacon, etc.) load their own identity file only. No agent loads the full `GAOS-Manager-Spec.md`.
 
+**Context Trio auto-append:** `_load_identity_file()` in `agents/__init__.py` automatically appends the three Context Trio files (`Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`) to every agent's system prompt after the agent-specific identity text. This provides owner business context, brand voice, and operating rules to all 7 agents without per-orchestrator changes. The trio is loaded via `_load_context_trio()` and falls back gracefully if any file is absent.
+
 - **Use Pydantic for Data:** Define what an "Action" looks like so the AI always sends `ID`, `Code`, and `Description` in the exact format the Sheet expects.
 - **The "State" is the Sheet (current state only):** The Sheet holds *live* state — pending approvals, active task queue, project registry, current KPIs. Do not store historical log data in the Sheet. If the system restarts, the agent reads the Sheet to know where it left off. Historical context (past decisions, recurring errors, trends) comes from BigQuery or Cloud Logging, not from scrolling Sheet rows. See Section 9.5 for retention thresholds.
 - **Start with "Dry Runs":** Before giving `executor.py` permission to run code, have it write the "Proposed Command" to the sheet for review.
@@ -1719,7 +1724,7 @@ Docs/
 
 ### 18.2 Agent Identity File Template
 
-Every Tier 2 orchestrator has a corresponding file at `Docs/agents/<agent-name>.md`. This is the canonical structure each file must follow. The file is prepended as a system prompt header for every ADK session for that orchestrator. Nexus-Prime does **not** have an identity file — its behaviour is governed by Section 1.
+Every Tier 2 orchestrator and Nexus-Prime has a corresponding file at `Docs/agents/<agent-name>.md`. This is the canonical structure each file must follow. The file is loaded as the system prompt header for every ADK session via `_load_identity_file()` in `agents/__init__.py`, which also appends the Context Trio automatically (see §18.1 Context Trio auto-append above). Nexus-Prime's identity file is `Docs/agents/nexus-prime.md`; its governance rules are defined in Section 1 of this document.
 
 ```markdown
 # <Agent Name> — Identity File
