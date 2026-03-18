@@ -5,6 +5,30 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-17 — Phase 1 Deploy Infrastructure Audit COMPLETE ✅
+
+**All automatable Phase 1 §14 items confirmed or created. 13 Drive seed files present in Knowledge/.**
+
+| Item | Action |
+|------|--------|
+| `customsearch` + `discoveryengine` APIs | Enabled in `morphic-gaos-prod` — were not present |
+| `GOOGLE_SEARCH_API_KEY` + `GOOGLE_SEARCH_CX` secrets | Created in Secret Manager (6 secrets total now) |
+| `daily-kickoff` + `doc-comment-poll` Scheduler jobs | Created — were wrongly marked `[x]` in §14 |
+| Drive Knowledge/ seed files (13 files) | Confirmed present; Drive API enabled in OAuth client project (`490183704378`) |
+| `scripts/_seed_knowledge_files.py` | Created — idempotent script to provision seed files via ADC |
+| `Docs/GAOS-Deploy-Spec.md` §14 | Updated: corrected false positives, marked 15+ confirmed items `[x]` |
+| `.env.example` | Added `GOOGLE_SEARCH_API_KEY` + `GOOGLE_SEARCH_CX` reference entries |
+
+**ADC note:** Standard `gcloud auth application-default login` only grants `cloud-platform` scope. Drive/Sheets access requires re-auth with `--client-id-file=oauth-client.json` and explicit `--scopes`. See Deploy Spec §6.2 warning.
+
+**Still manual (not yet done):** Cloud Logging retention (7 days), `setupProtections()` in Apps Script, Authorized Approvers tab owner row.
+
+**Commits:** `28159bf`, `9546cc5`, `08882b1`, `ac2f250`, `2e3781e`
+
+**Next up:** Phase 1 smoke tests → Phase 2.5 Step 7 (`ITERATE_PLAN` + `SKILL_REQUEST`).
+
+---
+
 ## 2026-03-17 — Phase 2.5 Step 6: Scout `_discover` + `tools/google_search.py` + `KNOWLEDGE_INJECTION` COMPLETE ✅
 
 **320 / 320 tests passing. Zero regressions. +24 new tests.**

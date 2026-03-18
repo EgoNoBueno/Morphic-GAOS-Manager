@@ -590,6 +590,13 @@ The Knowledge/ folder ID was printed by the setup script and is already in
 
 Create these placeholder files now — agents will reference them from day one. These can be brief initially; agents will propose updates as they learn.
 
+**Automated:** Use `scripts/_seed_knowledge_files.py` — idempotent, creates all 13 files, skips any that already exist.
+
+```powershell
+# Prerequisites: ADC refreshed with Drive scope (see warning below)
+python scripts/_seed_knowledge_files.py
+```
+
 **`policies/expense_approval_policy.md`** — spending thresholds requiring approval
 **`policies/vendor_payment_terms.md`** — standard vendor payment terms
 **`policies/data_retention_policy.md`** — data handling rules
@@ -603,6 +610,20 @@ Create these placeholder files now — agents will reference them from day one. 
 **`workflows/ap_reconciliation.md`** — month-end accounts payable reconciliation
 **`workflows/order_fulfillment.md`** — deal-to-delivery sequence
 **`workflows/weekly_reporting.md`** — weekly summary generation process
+
+> ⚠️ **Warning — ADC Drive scope:** Standard `gcloud auth application-default login` only grants `cloud-platform` scope. The Drive API requires explicit OAuth scopes. Refresh ADC with:
+> ```powershell
+> # Run in a standalone PowerShell window (not VS Code terminal — browser redirect fails there)
+> gcloud auth application-default login \
+>   --client-id-file=oauth-client.json \
+>   --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/script.projects,https://www.googleapis.com/auth/script.deployments,https://www.googleapis.com/auth/cloud-platform"
+> ```
+
+> ⚠️ **Warning — Drive API must be enabled in the OAuth client project:** `oauth-client.json` belongs to GCP project `490183704378` (the project that owns the OAuth 2.0 client). The Drive API must be enabled in **that** project, not just in `morphic-gaos-prod`. If you get a 403 `accessNotConfigured` error from the Drive API, run:
+> ```powershell
+> gcloud services enable drive.googleapis.com --project=490183704378
+> ```
+> This is separate from any Drive API enablement in `morphic-gaos-prod`.
 
 ### 6.3 Service Account Access
 
