@@ -1079,7 +1079,7 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [x] `settings.yaml` is complete with correct `workbook_id`, `knowledge_folder_id`, and model aliases
 - [x] `WEBHOOK_URL` secret is populated in Secret Manager
 - [x] BigQuery dataset and 6 tables created with TTL partitioning
-- [ ] All Knowledge/ seed files created in Drive
+- [x] All Knowledge/ seed files created in Drive
 - [x] All 7 Cloud Run services deployed and returning `{"status":"ok"}` on `/health`
 - [x] All 22 Pub/Sub push subscriptions created with OIDC auth (`pubsub-push-sa`)
 - [x] Vertex AI RAG corpora created — all 7 `memory_bank.corpora` entries in `settings.yaml` are non-empty
