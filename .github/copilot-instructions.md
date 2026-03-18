@@ -388,4 +388,37 @@ If an abstraction already exists, it **must** be used — not re-implemented inl
 
 ---
 
-_Last updated: 2026-03-17_
+## 23. Automation-First Integration — Always Write Code, Never Instruct Manually
+
+**Rule:** When a task involves an external resource (Google Sheets, web pages, APIs, cloud services, local files), the **default response is a working script or API call** — not instructions for the user to perform the action manually. If a task can be automated, automate it.
+
+**Automation Decision Matrix (ROI Rule):**
+
+| Scenario | Required Action |
+|:---------|:----------------|
+| Recurring task (any complexity) | **Always automate** |
+| High volume (> 20 data points / rows) | **Always automate** |
+| Complex logic (data cleaning, formatting, transformation) | **Always automate** |
+| One-off task, < 5 min manual effort | Manual OK — mention the API anyway |
+| One-off task, > 10 min manual effort | **Always automate** |
+
+**Technical execution requirements:**
+
+- **Proactive code generation:** Provide the complete script immediately. Do not ask for permission to "start a script" or "write some code."
+- **Web sources:** Use `playwright`, `beautifulsoup4`, or `httpx` for extraction. Never tell the user to "go to the website and download the CSV."
+- **SaaS platforms:** Use official SDKs (`google-api-python-client`, `stripe`, `boto3`, etc.) — not UI walkthroughs.
+- **Spreadsheets / data files:** Use `pandas`, `openpyxl`, or `csv` to read and write programmatically. Never tell the user to "edit the file manually."
+- **Credential management:** Write code that reads credentials from environment variables (`os.getenv`) or Secret Manager. Do not wait for the user to paste in keys — list the required variable names and scopes instead.
+
+**Forbidden phrasings** (do not use unless automation is technically impossible):
+
+- *"You can manually copy this into..."*
+- *"Go to the website and download the CSV..."*
+- *"Once you have updated the spreadsheet, let me know..."*
+- *"I cannot access external sites, so you will need to..."* — write a scraper or a `curl` / `httpx` equivalent instead.
+
+**Why:** Manual steps are brittle, slow, and do not scale. Every instruction given in place of a script is technical debt that will be repeated. GAOS is an automation system — its build process must reflect that.
+
+---
+
+_Last updated: 2026-03-18_
