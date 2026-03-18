@@ -790,7 +790,7 @@ def send_skill_import_card(
         ChatConfigError, ChatDeliveryError.
     """
 
-def parse_chat_event(payload: dict) -> dict:
+def parse_chat_event(body: dict) -> dict:
     """
     Validate and parse an inbound Google Chat push payload.
 
@@ -800,10 +800,11 @@ def parse_chat_event(payload: dict) -> dict:
     Returns:
         Normalised dict with keys: ``event_type``, ``space_name``,
         ``sender_email``, ``text`` (or empty str), ``action_name``
-        (for CARD_CLICKED), ``parameters`` (list of {key, value}).
+        (for CARD_CLICKED), ``parameters`` (``dict[str, str]`` keyed
+        by parameter key), ``message_name`` (Chat message resource name).
 
     Raises:
-        ChatEventParseError: Payload is missing required fields.
+        ChatEventParseError: body is missing required fields.
     """
 ```
 
@@ -1113,19 +1114,17 @@ def research_topic(
 
 ### Authentication
 
-Credentials are fetched from GCP Secret Manager at call time — never embedded in settings.yaml. Secret names are configurable:
+Credentials are fetched from GCP Secret Manager at call time — never embedded in settings.yaml. The Secret Manager secret names are hardcoded module constants:
 
-- `settings.google_search.api_key_secret` → name of the API key secret (default: `"GOOGLE_SEARCH_API_KEY"`)
-- `settings.google_search.cx_secret` → name of the CX (engine ID) secret (default: `"GOOGLE_SEARCH_CX"`)
+- `GOOGLE_SEARCH_API_KEY` — Custom Search JSON API key
+- `GOOGLE_SEARCH_CX` — Programmable Search Engine ID (CX)
 
 ### Settings Required
 
 ```yaml
 google_search:
-  api_key_secret: "GOOGLE_SEARCH_API_KEY"  # Secret Manager key name
-  cx_secret: "GOOGLE_SEARCH_CX"            # Secret Manager CX name
-  max_search_depth: 3                       # Recursive query depth per mandate
-  max_queries_per_mandate: 15               # Hard cap on total queries per RESEARCH_MANDATE
+  max_search_depth: 3          # Recursive query depth cap (read by Scout's _discover node)
+  max_queries_per_mandate: 15  # Hard cap on total queries per RESEARCH_MANDATE
 ```
 
 ### Usage Rule
