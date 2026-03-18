@@ -331,6 +331,7 @@ def route(state: NexusPrimeWorkingMemory) -> str:
         MessageType.VISION_SUBMITTED:    "vision_blueprint",
         MessageType.PLAN_REVIEW:         "iterate_plan",
         MessageType.COMMENT_RECEIVED:    "iterate_plan",
+        MessageType.SKILL_REQUEST:       "handle_skill_request",
     }
     return routing_table.get(msg.message_type, "record")
 
@@ -1498,6 +1499,184 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
     }
 
 
+def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    """
+    Handle a SKILL_REQUEST message — two sub-cases based on payload content.
+
+    **Inbound request** (no ``status`` in payload):
+    An agent encountered a ``ModuleNotFoundError`` on a library outside the
+    import allowlist and needs owner approval to install it. This path:
+
+    1. Posts a ``send_skill_import_card()`` to the owner's Chat space.
+    2. Writes an audit row to the ``Agent_Approvals`` Sheet tab.
+    3. Parks the ``proposal_id`` in ``state["parked_proposals"]``.
+
+    **Resolution** (payload contains ``status: Approved | Rejected``):
+    The owner tapped Install or Deny on the Chat card (routed here from
+    ``main.py`` skill_approve / skill_reject CARD_CLICKED). This path:
+
+    1. Updates the ``Agent_Approvals`` row to reflect the decision.
+    2. Removes ``proposal_id`` from ``state["parked_proposals"]``.
+    3. If Approved: publishes ``SKILL_REQUEST`` back to the requesting agent
+       so its Write-Test-Refine loop can resume.
+    4. If Rejected: publishes an ``ALERT`` to the requesting agent to trigger
+       a hard-stop with reason ``skill_request_rejected``.
+
+    Spec: SCRATCH.md §SKILL_REQUEST — Library Installation Approval Card
+    """
+    from config import get_settings
+    from tools.google_chat import send_skill_import_card
+    from tools.google_sheets import append_row, update_row
+    from tools.pubsub import publish
+
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+
+    payload = msg.payload or {}
+    project_id = state["project_id"]
+    task_id = state.get("task_id", str(uuid.uuid4()))
+    status = payload.get("status", "")
+
+    # ── Resolution path ───────────────────────────────────────────────────────
+    if status in ("Approved", "Rejected"):
+        proposal_id = payload.get("proposal_id", "")
+        package_name = payload.get("package_name", "")
+        approved_by = payload.get("approved_by", "")
+
+        # Update audit row in Sheet
+        if proposal_id:
+            try:
+                update_row(
+                    "Agent_Approvals",
+                    proposal_id,
+                    {"Status": status, "Approved By": approved_by},
+                    project_id,
+                )
+            except Exception as exc:
+                _log_cloud("nexus-prime", project_id, "task", task_id,
+                           f"handle_skill_request: update_row failed: {exc}", "WARNING")
+
+            # Remove from parked list
+            state["parked_proposals"] = [
+                p for p in state.get("parked_proposals", []) if p != proposal_id
+            ]
+
+        # Determine requesting agent topic
+        source_agent = msg.source_agent  # set to "google-chat" for card-click path
+        # The actual requesting agent is stored in the payload when possible
+        requesting_agent = payload.get("agent_id", source_agent)
+        topic = f"agent.{requesting_agent}.events"
+
+        settings = get_settings()
+        if status == "Approved":
+            reply = A2AMessage(
+                source_agent="nexus-prime",
+                target_agent=requesting_agent,
+                project_id=project_id,
+                task_id=task_id,
+                message_type=MessageType.SKILL_REQUEST,
+                priority=3,
+                payload={
+                    "status": "Approved",
+                    "proposal_id": proposal_id,
+                    "package_name": package_name,
+                    "approved_by": approved_by,
+                },
+            )
+            try:
+                publish(topic, reply, project_id)
+            except Exception as exc:
+                _log_cloud("nexus-prime", project_id, "task", task_id,
+                           f"handle_skill_request: publish Approved failed: {exc}", "WARNING")
+        else:
+            alert = A2AMessage(
+                source_agent="nexus-prime",
+                target_agent=requesting_agent,
+                project_id=project_id,
+                task_id=task_id,
+                message_type=MessageType.ALERT,
+                priority=3,
+                payload={
+                    "status": "Rejected",
+                    "proposal_id": proposal_id,
+                    "package_name": package_name,
+                    "reason": "skill_request_rejected",
+                },
+            )
+            try:
+                publish(topic, alert, project_id)
+            except Exception as exc:
+                _log_cloud("nexus-prime", project_id, "task", task_id,
+                           f"handle_skill_request: publish Rejected failed: {exc}", "WARNING")
+
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"handle_skill_request: resolution {status} for proposal={proposal_id} "
+                   f"package={package_name} agent={requesting_agent}")
+        return state
+
+    # ── Inbound request path ──────────────────────────────────────────────────
+    package_name: str = payload.get("package_name", "")
+    agent_id: str = payload.get("agent_id", msg.source_agent)
+    reason: str = payload.get("reason", "")
+    pypi_url: str = payload.get("pypi_url", "")
+
+    if not package_name:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   "handle_skill_request: missing package_name — skipping", "WARNING")
+        return state
+
+    proposal_id = str(uuid.uuid4())
+
+    # Write audit row to Agent_Approvals
+    row = {
+        "ID": proposal_id,
+        "Agent ID": agent_id,
+        "Issue": f"Skill import request: {package_name}",
+        "Trigger Reason": reason[:500] if reason else "ModuleNotFoundError in Write-Test-Refine loop",
+        "Stopping Constraint": "Owner must approve before library is installed",
+        "Iterations Run": 0,
+        "Total Cost USD": 0.0,
+        "Proposed Code": "",
+        "Status": "Pending",
+        "Timestamp": utcnow_iso(),
+        "Approved By": "",
+        "Approver Tier": 5,
+        "code_sha256": "",
+    }
+    try:
+        append_row("Agent_Approvals", row, project_id)
+        state["parked_proposals"].append(proposal_id)
+    except Exception as exc:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"handle_skill_request: Sheet append failed: {exc}", "WARNING")
+
+    # Send Chat card to owner's space
+    settings = get_settings()
+    owner_space = settings.chat.owner_space
+    if owner_space:
+        try:
+            send_skill_import_card(
+                space_name=owner_space,
+                proposal_id=proposal_id,
+                agent_id=agent_id,
+                package_name=package_name,
+                reason=reason,
+                pypi_url=pypi_url,
+            )
+        except Exception as exc:
+            _log_cloud("nexus-prime", project_id, "task", task_id,
+                       f"handle_skill_request: Chat card failed: {exc}", "WARNING")
+    else:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   "handle_skill_request: chat.owner_space not configured — card not sent", "WARNING")
+
+    _log_cloud("nexus-prime", project_id, "task", task_id,
+               f"handle_skill_request: inbound request parked proposal_id={proposal_id} "
+               f"package={package_name} agent={agent_id}")
+    return state
+
+
 # ── Graph assembly ────────────────────────────────────────────────────────────
 
 def build_nexus_prime_graph() -> Any:
@@ -1521,6 +1700,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_node("record",            record)
     graph.add_node("vision_blueprint",  vision_blueprint)
     graph.add_node("iterate_plan",      iterate_plan)
+    graph.add_node("handle_skill_request", handle_skill_request)
 
     graph.set_entry_point("boot")
     graph.add_edge("boot",    "monitor")
@@ -1530,15 +1710,16 @@ def build_nexus_prime_graph() -> Any:
         "route",
         route,
         {
-            "diagnose":          "diagnose",
-            "knowledge_review":  "knowledge_review",
-            "init_project":      "init_project",
-            "conflict_resolve":  "conflict_resolve",
-            "promote":           "promote",
-            "park_or_broadcast": "park_or_broadcast",
-            "record":            "record",
-            "vision_blueprint":  "vision_blueprint",
-            "iterate_plan":      "iterate_plan",
+            "diagnose":              "diagnose",
+            "knowledge_review":      "knowledge_review",
+            "init_project":          "init_project",
+            "conflict_resolve":      "conflict_resolve",
+            "promote":               "promote",
+            "park_or_broadcast":     "park_or_broadcast",
+            "record":                "record",
+            "vision_blueprint":      "vision_blueprint",
+            "iterate_plan":          "iterate_plan",
+            "handle_skill_request":  "handle_skill_request",
         },
     )
 
@@ -1550,9 +1731,10 @@ def build_nexus_prime_graph() -> Any:
     graph.add_edge("notify_agents",     "record")
     graph.add_edge("conflict_resolve",  "record")
     graph.add_edge("park_or_broadcast", "record")
-    graph.add_edge("vision_blueprint",  "record")
-    graph.add_edge("iterate_plan",      "record")
-    graph.add_edge("record",            END)
+    graph.add_edge("vision_blueprint",     "record")
+    graph.add_edge("iterate_plan",         "record")
+    graph.add_edge("handle_skill_request", "record")
+    graph.add_edge("record",               END)
 
     return graph.compile(checkpointer=MemorySaver())
 
