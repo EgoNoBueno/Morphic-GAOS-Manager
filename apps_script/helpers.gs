@@ -2,7 +2,7 @@
 //
 // Also contains setup helpers called remotely by scripts/setup_apps_script.py:
 //   setupPropertiesFromApi_(props)  — sets Script Properties from a key/value object
-//   setupTrigger_()                 — installs the onChange trigger programmatically
+//   setupTrigger_()                 — installs the onEdit trigger programmatically
 // All functions in this file are available to every other .gs file in the project.
 
 // Spreadsheet ID — used by getSpreadsheet_() so doPost (web-app context)
@@ -201,14 +201,14 @@ function setupTrigger_() {
   const triggers = ScriptApp.getUserTriggers(ss);
   for (const t of triggers) {
     if (t.getHandlerFunction() === 'onChangeApproval' &&
-        t.getEventType() === ScriptApp.EventType.ON_CHANGE) {
-      Logger.log('onChange trigger already installed — skipping');
+        t.getEventType() === ScriptApp.EventType.ON_EDIT) {
+      Logger.log('onEdit trigger already installed — skipping');
       return;
     }
   }
   ScriptApp.newTrigger('onChangeApproval')
     .forSpreadsheet(ss)
-    .onChange()
+    .onEdit()
     .create();
-  Logger.log('onChange trigger installed for onChangeApproval');
+  Logger.log('onEdit trigger installed for onChangeApproval');
 }

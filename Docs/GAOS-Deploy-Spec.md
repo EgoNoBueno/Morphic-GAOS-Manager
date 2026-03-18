@@ -432,10 +432,14 @@ The function locks:
 - Column M (code_sha256) on `Agent_Approvals` → owner only
 - Entire `Authorized Approvers` tab → owner only
 
-### 4.6 Install the `onChange` Trigger
+### 4.6 Install the `onEdit` Trigger
 
 Install manually in the Apps Script editor (see §4.4 Step 3):
-Triggers → Add Trigger → Function: `onChangeApproval` | Event type: On change.
+Triggers → Add Trigger → Function: `onChangeApproval` | Event type: **On edit**.
+
+> ⚠️ **Warning — must use `onEdit`, not `onChange`:** The `onChangeApproval` handler uses `e.range`, which is only present on `onEdit` events. Installing as `onChange` causes a silent failure: `e.range` is `undefined`, `range.getColumn()` throws, and the trigger does nothing. The error only appears in the Apps Script execution log — the cell value stays changed and no Logs entry is written.
+>
+> **If you previously installed an `onChange` trigger**, delete it in the Triggers panel and reinstall as `onEdit`.
 
 ### 4.7 Deploy the Webhook as a Web App
 
