@@ -390,6 +390,28 @@ def list_folder(folder_path: str, project_id: str) -> list[str]:
     Raises:
         KnowledgeFolderNotFoundError, DriveReadError.
     """
+
+def write_playbook(doc: "PlaybookDoc", body: str, project_id: str) -> str:
+    """
+    Write a Playbook Markdown document to ``Knowledge/playbooks/`` in Drive.
+
+    Generates YAML front-matter from ``doc`` and prepends it to ``body``
+    before calling ``write_file()``. The filename is derived from
+    ``doc.project_id`` and a URL-safe slug of ``doc.title``.
+
+    Args:
+        doc:        PlaybookDoc instance — provides all front-matter fields
+                    (title, domain, owner_agent, version, project_id,
+                    created_from_vision, last_updated, approved_by, status, tags).
+        body:       Markdown body text (Objective, Milestones, Constraints, etc.).
+        project_id: AOS project namespace.
+
+    Returns:
+        drive_file_id: The Google Drive file ID of the written playbook.
+
+    Raises:
+        DriveWriteError, DrivePermissionError.
+    """
 ```
 
 ### Error Types
@@ -623,6 +645,18 @@ def insert_row(table_ref: str, row: dict, project_id: str = "") -> None:
         BigQueryRowError:    BigQuery rejected the row (schema mismatch or
                              invalid value).
     """
+
+def insert_rows(table_ref: str, rows: list[dict], project_id: str = "") -> None:
+    """
+    Stream multiple rows into a BigQuery table in a single API call.
+
+    Prefer this over calling ``insert_row()`` in a loop for batches of 2+ rows.
+    Empty ``rows`` list is a no-op.
+
+    Raises:
+        BigQueryInsertError: API call failed after 3 retries.
+        BigQueryRowError:    One or more rows were rejected.
+    """
 ```
 
 ### Error Types
@@ -707,6 +741,37 @@ class ModelResponse:
     cost_usd: float     # estimated cost (0.0 for Ollama; token-based estimate for Gemini)
     tokens_used: int    # total tokens (0 for Ollama)
     data: dict          # parsed JSON if parse_json=True, else {}
+```
+
+### `validate_code_safety()`
+
+Static-analysis gate for agent-generated code. Called by Nexus-Prime before submitting any code to the Approval Gate.
+
+```python
+def validate_code_safety(code: str) -> dict[str, Any]:
+    """
+    Gate 1 + 2 combined static-analysis check.
+
+    Gate 1 (Pattern): scans for blocked built-ins (os.system, subprocess.*,
+      pickle.loads, eval, exec, etc.).
+    Gate 2 (Import): every import must be on _ALLOWED_IMPORTS.
+
+    Returns:
+        {"passed": bool, "reason": str}
+        On SyntaxError, passed=False with the parse error message.
+    """
+```
+
+Failure is a hard stop — code is not submitted, not retried. See `AI-Autocoding-Rules.md §4` for the full gate contract.
+
+### Utility Helpers
+
+```python
+def utcnow_iso() -> str:
+    """Return current UTC time as an ISO 8601 string. Used in log entries."""
+
+def utcnow_date() -> str:
+    """Return current UTC date as YYYY-MM-DD string. Used in heartbeats."""
 ```
 
 ---
