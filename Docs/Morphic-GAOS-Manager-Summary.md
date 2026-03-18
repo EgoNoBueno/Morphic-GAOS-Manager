@@ -130,7 +130,7 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 - Step 5: AppSheet Vision Hub + `VISION_SUBMITTED` handler + `doc-comment-poll` Scheduler job (30 tests; commit `a62c6cc`)
 - Step 6: `tools/google_search.py` + Scout `_discover` recursive node + `KNOWLEDGE_INJECTION` protocol (24 tests; commit `7def85c`)
 
-Step 7 (`ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow) is next. Phase 2 (Ollama observability), Phase 3 (Gemini + full approval loop), Phase 4 (full validation, exit criteria), Phase 5 (Grafana CEO dashboard, future) follow.
+Step 7 (`ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow) remains. Phase 2 (Ollama observability), Phase 3 (Gemini + full approval loop), Phase 4 (full validation, exit criteria), Phase 5 (Grafana CEO dashboard, future) follow. Three **Context Trio** files (`Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`) were added and integrated into `_load_identity_file()` in `agents/__init__.py` — all 7 agents now automatically receive owner business context, brand voice, and operating rules appended to their system prompt at boot, with zero per-orchestrator changes required.
 **Why it exists:** Building everything at once is how you end up with a broken system that is impossible to debug. Each phase has explicit exit criteria that must all be true before moving to the next.
 **Resources required:** Phases 1–4: Cloud Run, Cloud Pub/Sub, Sheets, Ollama, Gemini. Phase 5 (future): Grafana on Cloud Run, Vertex AI Agent Engine (optional upgrade).
 
@@ -410,6 +410,28 @@ Scout implements a recursive deep-research pipeline (Phase 2.5 Step 6): when it 
 
 ---
 
+### 12. Context Trio Files (`Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`)
+
+*Three owner-authored Markdown files that act as standing orders for every agent in the system — injected automatically into every agent's system prompt at boot via `_load_identity_file()`.*
+
+AI agents are stateless by default. Every invocation is a blank slate unless context is deliberately injected. The Context Trio solves this without per-orchestrator wiring: `_load_identity_file()` in `agents/__init__.py` calls `_load_context_trio()` and appends the three files after the agent-specific identity text. All 7 orchestrators gain the context with zero code changes at the orchestrator level.
+
+#### `about-me.md` — The Compass
+**What it does:** Defines the owner's professional identity, core mission, business goals (table), and KPIs. Includes a "NOTE TO USER" stub prompting the owner to fill in niche-specific details.
+**Why it exists:** Without it, agents optimize for a generic business — wrong industry assumptions, wrong success metrics, wrong risk tolerance. Every suggestion is filtered through *"does this solve a specific pain point?"* and *"does this deliver measurable value?"* only when this file is populated.
+
+#### `brand-voice.md` — The Persona
+**What it does:** Defines the **Transparent Champion** persona — a composite of Slack (human/plainspoken), Oatly (radically honest), and Nike (action-oriented). Includes a vocabulary table (use this, not that), a list of what to avoid, and agent instructions.
+**Why it exists:** Without it, all agent-generated content — sales sequences, status updates, chat replies — defaults to corporate jargon. The three reference brands give agents a concrete, blend-able target rather than a vague tone descriptor.
+
+#### `working-preferences.md` — The Constitution
+**What it does:** Defines operational rules of engagement: architectural philosophy (modular, minimum complexity), economic discipline ($2.50/month ceiling, math-backed recommendations), autonomy and control policies, communication style (5 words not 10), and a Workflow Policies table (Search Before Build, Automate by Default, Atomic Execution, etc.).
+**Why it exists:** Prevents agents from suggesting expensive, monolithic, or manual solutions. Overrides generic AI assistant defaults with the specific system and cost philosophy of this deployment.
+
+**Integration point:** `_load_context_trio()` reads all three files gracefully — if any file is absent (e.g., in a stripped container or unit test environment), it skips that file without error. The agent falls back to the identity-only prompt.
+
+---
+
 ## Document Index
 
 | File | Purpose | Length |
@@ -427,6 +449,9 @@ Scout implements a recursive deep-research pipeline (Phase 2.5 Step 6): when it 
 | `Docs/GAOS-Project-Glossary.md` | Canonical glossary of all abbreviations and technical terms | ~157 lines |
 | `Docs/GAOS-Doctor.md` | Health-check runbook for diagnosing deployment and runtime issues | ~55 lines |
 | `Docs/AI-Autocoding-Rules.md` | Coding rules enforced during AI-assisted development sessions | ~250 lines |
+| `Docs/about-me.md` | Context Trio — owner business context, priorities, and KPIs (The Compass) | ~67 lines |
+| `Docs/brand-voice.md` | Context Trio — Transparent Champion brand voice standard (The Persona) | ~66 lines |
+| `Docs/working-preferences.md` | Context Trio — operational rules of engagement, cost ceiling, workflow policies (The Constitution) | ~69 lines |
 | `Docs/agents/nexus-prime.md` | Identity file — Nexus-Prime (Root Orchestrator / General Manager) | — |
 | `Docs/agents/ledger.md` | Identity file — Ledger (Accounting Agent) | — |
 | `Docs/agents/beacon.md` | Identity file — Beacon (Marketing Agent) | — |
