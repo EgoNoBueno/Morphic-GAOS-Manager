@@ -1141,7 +1141,7 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 
 ---
 
-## 16. Phase 2 Exit Criteria Checklist
+## 15. Phase 2 Exit Criteria Checklist
 
 Phase 2 is complete — and Phase 3 (multi-agent orchestration) may begin — when **every item** below is checked:
 
