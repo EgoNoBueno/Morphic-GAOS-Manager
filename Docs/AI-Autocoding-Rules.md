@@ -423,4 +423,24 @@ If an abstraction already exists, it **must** be used — not re-implemented inl
 
 ---
 
+## 24. Capture Lessons Before Closing Every Session
+
+**Rule:** Before ending any session where a non-obvious problem was encountered or solved, capture all lessons in the following three places — in this order, without deferring to a follow-up commit:
+
+1. **Spec file warning callout** — Add a `> ⚠️ **Warning — [short label]:**` block at the exact location in the relevant spec where a future developer would encounter the problem. A warning buried in an appendix doesn't get read; place it where the trap is.
+2. **Repo memory** — Add a one-line bullet to `/memories/repo/gotchas.md` with a pointer to the full spec entry. This file is loaded into every future session automatically, giving instant recall without requiring a file read.
+3. **WORKLOG entry** — Write a timestamped entry at the top of `WORKLOG.md` covering: what was done, which files changed, what was learned, and what's next.
+
+**What triggers this rule:**
+- Any `⚠️ Warning` or `> **Lesson learned:**` callout that didn't exist before this session
+- A 404, 400, 429, or auth failure that required non-obvious diagnosis
+- A configuration gotcha discovered only through trial and error
+- Any finding that would have saved >15 minutes if it had been documented before
+
+**Do not defer.** Rule 13 requires doc updates in the same commit as the work. This rule extends that requirement to lessons discovered during debugging and setup — not just feature completions. If the session closes without capturing, the lesson is gone: session memory clears, conversation history is unrecoverable.
+
+**Trigger phrase:** Say *"capture lessons before we close"* at the end of any session with undocumented discoveries. The AI will write all three artifacts in one pass.
+
+---
+
 _Last updated: 2026-03-18_

@@ -81,6 +81,19 @@ except (SecretNotFoundError, SecretAccessDenied) as e:
 
 All Sheets operations. Uses `gspread` with a service account credential loaded from Secret Manager at module init. Respects the 300 req/min project quota and 60 req/min per-user quota.
 
+> ⚠️ **Warning — Tab names with spaces must be single-quoted in range strings:** The Sheets API v4 requires tab names that contain spaces (or special characters) to be wrapped in single quotes when used in A1 notation range strings. Omitting the quotes causes a `400 "Unable to parse range"` error even though the tab name itself is valid.
+>
+> ```python
+> # ❌ Wrong — produces 400 if tab name contains a space
+> range_str = f"Raw Data!C2:C"
+>
+> # ✅ Correct — embed the single quotes in the constant
+> RAW_TAB = "'Raw Data'"      # note the inner single quotes
+> range_str = f"{RAW_TAB}!C2:C"   # → 'Raw Data'!C2:C
+> ```
+>
+> **Reference:** [Google Sheets API concepts — A1 notation](https://developers.google.com/workspace/sheets/api/guides/concepts#a1_notation): *"Single quotes are required for sheet names with spaces or special characters."*
+
 ### Initialisation (module-level, called once per invocation)
 
 ```python

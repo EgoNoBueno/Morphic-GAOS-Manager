@@ -5,6 +5,72 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-18T22:47-03:00 — Phase 2 Observability Loop Complete ✅
+
+**`scripts/observability_loop.py` smoke test passing end-to-end.**
+
+- Ollama (`llama3:latest`) called successfully, 49 log rows sampled
+- `SYSTEM_THOUGHTS` row appended to Logs tab in Sheet ✅
+- Fixed `UnicodeEncodeError` in print statement (`→` → `->` + `sys.stdout.reconfigure(encoding='utf-8')`)
+- Root cause of prior `\r` error was OLLAMA_HOST secret containing `\r\n` — fixed in `agents/__init__.py` with `.strip().rstrip("/")`
+- Terminal buffer workaround established: redirect output to `out.txt`, read via file tool
+- **Files changed:** `scripts/observability_loop.py` (Unicode fix), `agents/__init__.py` (OLLAMA_HOST strip), `config/settings.yaml` (LOCAL_MODEL, timeout)
+- **Next:** Update Deploy Spec Phase 2 checklist → Phase 3
+
+---
+
+## 2026-03-18T16:30-03:00 — Phase 1 Complete ✅
+
+**Pub/Sub local subscriber smoke test passing. All Phase 1 non-[Phase 2.5] exit criteria complete.**
+
+| Item | Result |
+|---|---|
+| Pub/Sub local subscriber smoke test | PASS — `scripts/smoke_test_pubsub_sub.py` |
+| Phase 1 checklist | All non-[Phase 2.5] items now checked off |
+
+**Files changed:**
+- `scripts/smoke_test_pubsub_sub.py` — new script; creates temp pull sub, publishes synthetic APPROVAL_RESULT, pulls + prints proposal_id + new_status, acks, cleans up
+- `Docs/GAOS-Deploy-Spec.md` — §14 Pub/Sub subscriber item checked off
+
+**What's next:** Phase 2.5 remaining items — AppSheet deploy (UI-only, no API path), Approval Gate Chat-path E2E (requires Cloud Run deploy). Phase 2 (Ollama integration) can begin in parallel.
+
+---
+
+## 2026-03-18T13:00-03:00 — Smoke Tests 6+7: 8/8 Passing ✅
+
+**8/8 webhook HMAC tests passing. Phase 1 exit criteria: webhook items checked off.**
+
+| File | Change |
+|------|--------|
+| `config/settings.yaml` | Added `projects.morphic-gaos-prod` entry (same `sheet_id` + `drive_folder_id` as `default`) — required for `init_sheets_client('morphic-gaos-prod')` to resolve |
+| `Docs/GAOS-Deploy-Spec.md` | §14 checklist: checked off both webhook smoke test items. §0.5: Added warning — `settings.yaml` needs explicit named project entry, `default` is not a fallback. §0.6: Added warning — Project Registry `status` must be lowercase `'active'` (Apps Script strict equality check). |
+| `/memories/repo/gotchas.md` | Added two new gotcha bullets: Project Registry status case and settings.yaml named project entry requirement. |
+
+**Gotchas discovered this session:**
+- `init_sheets_client('morphic-gaos-prod')` → `WorkbookNotFoundError` unless `projects.morphic-gaos-prod` is in `settings.yaml` — `default` is not a fallback
+- Apps Script `isValidProject_()` uses `=== 'active'` (strict lowercase) — `'Active'` silently fails with `400 Unknown project_id`
+- Project Registry row for `morphic-gaos-prod` was missing entirely — added via Python script
+
+**Next:** AppSheet app deployment → Approval Gate Chat-path E2E validation.
+
+---
+
+No code changes. Documentation-only session capturing lessons from prior setup work.
+
+| File | Change |
+|------|--------|
+| `Docs/GAOS-Tools-Spec.md` | §3 (`google_sheets.py`): Added `⚠️ Warning` callout — Sheets API rejects unquoted tab names containing spaces in A1 notation range strings. Includes correct/incorrect code examples and canonical reference link. |
+| `/memories/repo/gotchas.md` | NEW — Repo-scoped quick-reference bullets for all four gotchas: SDK EOL, AI Studio keys, `GOOGLE_APPLICATION_CREDENTIALS` ADC override, Sheets tab quoting. The Deploy Spec already captured the first three; this file gives future sessions a single indexed lookup point. |
+
+**Gotchas already in spec files (no new edits needed):**
+- `GAOS-Deploy-Spec.md §0.3` — `google-generativeai` EOL; use `google-genai>=1.0.0`
+- `GAOS-Deploy-Spec.md §0.4` — `GOOGLE_APPLICATION_CREDENTIALS` silently overrides ADC
+- `GAOS-Deploy-Spec.md §3.1` — AI Studio keys live in Google's shared project, not your billing project
+
+**Next:** Resume Phase 2.5 work or run `python scripts/smoke_test_6_7.py` against the live endpoint.
+
+---
+
 ## 2026-03-18T06:06-03:00 — Smoke Tests 6+7: Webhook HMAC Script COMPLETE ✅
 
 **332 / 332 tests passing. Zero regressions. No new unit tests (integration-only).**

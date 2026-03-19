@@ -99,11 +99,15 @@ GAOS-Doctor is a manual health-check runbook — not a CLI tool. Refer to `Docs/
 
 Run through the GAOS-Doctor checklist whenever you suspect a configuration drift or after any infrastructure change.
 
+> ⚠️ **Warning — `settings.yaml` must have a named entry for every `project_id` used:** `init_sheets_client(project_id)` resolves the workbook by looking up `projects.<project_id>.sheet_id` in `settings.yaml`. The key `projects.default` is not a fallback — if the entry for your actual `project_id` is missing, you get `WorkbookNotFoundError` even if the sheet exists. For the system project itself, add `projects.morphic-gaos-prod` pointing to the same `sheet_id` and `drive_folder_id` as `projects.default`.
+
 ### 0.6 Google Sheets Control Plane
 
 The GAOS control plane is a **single** Google Sheets workbook with a 14-tab schema — not a separate "Dashboard" spreadsheet. The workbook is provisioned by `scripts/setup_workspace.py` in §4.1 and its ID is stored in `settings.yaml` under `sheet.workbook_id`.
 
 The 14 tabs are: `Project Registry`, `Accounting`, `Inventory`, `Contacts`, `Leads`, `Scheduling`, `Agent_Approvals`, `Authorized_Approvers`, `Logs`, `Error_Logs`, `Observability`, `Research`, `Tasks`, `Proposals`. No additional spreadsheet needs to be created.
+
+> ⚠️ **Warning — Project Registry `status` must be lowercase `'active'`:** The Apps Script `isValidProject_()` helper in `helpers.gs` checks `data[i][2] === 'active'` with a strict equality comparison. Capitalised values like `'Active'` or `'ACTIVE'` silently fail this check and cause the webhook to return `400 Unknown project_id` even when the project row exists in the tab. Always write `status = 'active'` (lowercase) when adding or updating Project Registry rows programmatically.
 
 ---
 
@@ -1109,9 +1113,9 @@ Phase 1 is complete when all of the following pass. Run them in order.
 Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **every item** below is checked:
 
 - [x] `tools/google_sheets.py` appends a row and reads a cell value without errors
-- [x] All 320 unit tests pass (`pytest` — green, 0 failures)
+- [x] All 332 unit tests pass (`pytest` — green, 0 failures)
 - [x] Apps Script `onEdit` trigger fires on Status cell change — stamps Approved By (col K), Approver Tier (col L), and writes an APPROVAL entry to the Logs tab ✅ (smoke test 4 passed 2026-03-17)
-- [ ] Local Python subscriber receives the Pub/Sub push and prints the proposal ID and new status
+- [x] Local Python subscriber receives the Pub/Sub push and prints the proposal ID and new status ✅ (`scripts/smoke_test_pubsub_sub.py` — PASS 2026-03-18)
 - [x] Cloud Scheduler TTL sweep job exists and can be triggered manually (HTTP 200 response)
 - [x] Cloud Scheduler nightly archive job exists with state `ENABLED` — `POST /archive` implemented in Phase 2 Item 3 (returns HTTP 200)
 - [x] **[Phase 2.5]** Google Chat App created in Google Cloud console; Chat API enabled; `nexus-prime-sa` added to the Chat space as the bot identity (authenticated via service account ADC — no Secret Manager token required)
@@ -1122,8 +1126,8 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [x] **[Phase 2.5]** Cloud Scheduler `doc-comment-poll` job created (every 5 minutes, `POST /poll-comments`, returns HTTP 200)
 - [x] **[Phase 2.5]** `POST /chat` endpoint returns HTTP 200; Nexus-Prime responds in Chat thread within 10 seconds
 - [ ] **[Phase 2.5]** Approval Gate Chat-path validated end-to-end: Chat card Approve tap → `APPROVAL_RESULT` published → Nexus-Prime resumes parked task → Sheet audit row written
-- [ ] All webhook smoke tests passing: `python scripts/smoke_test_6_7.py` prints `8/8 tests passed`
-- [ ] All 8 individual webhook test cases from `GAOS-Manager-Spec.md §14` confirmed via smoke_test_6_7.py output
+- [x] All webhook smoke tests passing: `python scripts/smoke_test_6_7.py` prints `8/8 tests passed` ✅ (2026-03-18)
+- [x] All 8 individual webhook test cases from `GAOS-Manager-Spec.md §14` confirmed via smoke_test_6_7.py output ✅ (2026-03-18)
 - [x] `setupProtections()` has been run; Status/Code/Hash columns are locked to owner
 - [x] Authorized Approvers tab has at least one row (owner, tier 5, active=TRUE)
 - [x] `settings.yaml` is complete with correct `workbook_id`, `knowledge_folder_id`, and model aliases
@@ -1137,7 +1141,24 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 
 ---
 
-## 15. Reference Index
+## 16. Phase 2 Exit Criteria Checklist
+
+Phase 2 is complete — and Phase 3 (multi-agent orchestration) may begin — when **every item** below is checked:
+
+- [x] Ollama installed locally (`ollama list` shows at least one model) ✅ (`llama3:latest`, `qwen2.5-coder:7b` — confirmed 2026-03-18)
+- [x] `LOCAL_MODEL` alias in `settings.yaml` resolves to an installed Ollama model (`ollama/llama3`) ✅ (2026-03-18)
+- [x] `LOCAL_MODEL_TIMEOUT_SECONDS` set high enough to avoid false Gemini fallback (`30`) ✅ (2026-03-18)
+- [x] `_call_model()` routes to Ollama when `web_access=False` and model is `LOCAL_MODEL` ✅ (confirmed via direct API call, HTTP 200)
+- [x] `scripts/observability_loop.py --once` completes with no errors and appends a `SYSTEM_THOUGHTS` row to the Logs tab ✅ (2026-03-18 — 49 rows sampled, `ollama/llama3`)
+- [x] All 332 unit tests still passing after Ollama integration ✅ (2026-03-18)
+
+> ⚠️ **Warning — OLLAMA_HOST secret has trailing `\r\n`:** `get_secret('OLLAMA_HOST', ...)` returns `'http://localhost:11434\r\n'`. Fixed in `agents/__init__.py` with `.strip().rstrip("/")` on the host value. If symptoms reappear (httpx raises `Invalid non-printable ASCII character in URL, '\r'`), verify the fix is in place or update the secret via `echo -n 'http://localhost:11434' | gcloud secrets versions add OLLAMA_HOST --data-file=- --project=...`.
+
+> ⚠️ **Warning — Windows charmap blocks Unicode in model responses:** On Windows, `sys.stdout` defaults to cp1252. If a model response contains non-ASCII characters (e.g. `→`, `—`), any `print()` of that text raises `UnicodeEncodeError`. Fix: add `sys.stdout.reconfigure(encoding='utf-8')` at script startup (after the `sys` import). All scripts that print model output must include this.
+
+---
+
+## 16. Reference Index
 
 | Topic | Location |
 |-------|----------|

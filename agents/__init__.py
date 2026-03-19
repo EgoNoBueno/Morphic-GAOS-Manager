@@ -118,7 +118,7 @@ def _call_model_ollama(
 
     try:
         from tools.secrets import get_secret
-        host = get_secret("OLLAMA_HOST", settings.GCP_PROJECT_ID).rstrip("/")
+        host = get_secret("OLLAMA_HOST", settings.GCP_PROJECT_ID).strip().rstrip("/")
     except Exception:
         host = "http://localhost:11434"
 
