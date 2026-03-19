@@ -23,6 +23,13 @@ models:
   FAST_MODEL: "gemini-2.5-flash"          # Moderate reasoning, routing, lookups
   DEEP_MODEL: "gemini-2.5-pro"            # Approval proposals, conflict resolution, evolution
   LOCAL_MODEL_FALLBACK: "gemini-2.5-flash"
+  # Seconds to wait for LOCAL_MODEL before routing to LOCAL_MODEL_FALLBACK.
+  # Default is 30 s — calibrated for llama3 on a consumer GPU (RTX 3070 or similar)
+  # where first-token latency at 8 k-token context is typically 10–25 s.
+  # Lower to 5–10 s if your hardware responds faster, or to 2 s to effectively
+  # prefer the cloud fallback on every call. Only background jobs (observability,
+  # log summarisation) use LOCAL_MODEL, so the extra wait does not affect
+  # interactive response time.
   LOCAL_MODEL_TIMEOUT_SECONDS: 30
 
 # Pub/Sub topic names that Nexus-Prime monitors and validates at boot.
