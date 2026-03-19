@@ -354,7 +354,7 @@ def main() -> None:
     project_id = args.project
     dry_run = args.dry_run
 
-    settings = get_settings()
+    get_settings()  # initialise settings singleton; fail fast if settings.yaml is missing
     get_secret("GEMINI_API_KEY", project_id)  # fail fast if credentials absent
 
     print("=== Nightly Knowledge Promotion ===")
