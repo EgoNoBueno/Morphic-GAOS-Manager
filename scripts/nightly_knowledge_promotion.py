@@ -386,7 +386,10 @@ def main() -> None:
     print(f"  Total incremented : {incremented}  |  proposed : {proposed}")
     print()
 
-    # Reload so promotion sweep sees rows whose status just changed to Approved.
+    # Reload so promotion sweep sees the latest sheet state (confidence sweep
+    # sets newly-threshold rows to Proposed, not Approved — but any rows that
+    # were already Approved before this run still need a fresh read to avoid
+    # operating on a stale snapshot).
     if not dry_run and (incremented > 0 or proposed > 0):
         rows = get_all_records("Pending_Knowledge", project_id)
 
