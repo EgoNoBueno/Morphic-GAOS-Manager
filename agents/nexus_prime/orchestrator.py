@@ -1566,8 +1566,9 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
 
         # Determine requesting agent topic
         source_agent = msg.source_agent  # set to "google-chat" for card-click path
-        # The actual requesting agent is stored in the payload when possible
-        requesting_agent = payload.get("agent_id", source_agent)
+        # The actual requesting agent is stored in the payload when possible.
+        # Use `or source_agent` so an empty/falsy agent_id falls back correctly.
+        requesting_agent = payload.get("agent_id") or source_agent
         topic = f"agent.{requesting_agent}.events"
 
         if status == "Approved":
