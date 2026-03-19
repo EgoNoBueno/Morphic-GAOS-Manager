@@ -762,11 +762,11 @@ projects:
     drive_folder_id: "<your-knowledge-folder-id>"  # from setup_workspace.py output
 
 models:
-  LOCAL_MODEL: "ollama/llama3.1"
-  LOCAL_MODEL_FALLBACK: "gemini-2.0-flash"
-  LOCAL_MODEL_TIMEOUT_SECONDS: 2
-  FAST_MODEL: "gemini-2.0-flash"
-  DEEP_MODEL: "gemini-2.0-pro"
+  LOCAL_MODEL: "ollama/llama3"
+  LOCAL_MODEL_FALLBACK: "gemini-2.5-flash"
+  LOCAL_MODEL_TIMEOUT_SECONDS: 30
+  FAST_MODEL: "gemini-2.5-flash"
+  DEEP_MODEL: "gemini-2.5-pro"
 
 pubsub:
   all_topics:                   # Nexus-Prime validates these exist at boot

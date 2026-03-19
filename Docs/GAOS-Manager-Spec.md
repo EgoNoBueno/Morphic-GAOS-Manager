@@ -273,7 +273,7 @@ Route tasks based on "intelligence requirements":
 Ollama runs on the local machine and is not guaranteed to be available 24/7 (machine sleep, process crash, restart). The system uses a **two-tier fallback** — no extra hardware required:
 
 ```
-Step 1: Ping LOCAL_MODEL (Ollama) — 2 second timeout
+Step 1: Ping LOCAL_MODEL (Ollama) — 30 second timeout
     ↓ reachable → use LOCAL_MODEL (free)
     ↓ unreachable →
 Step 2: Route to LOCAL_MODEL_FALLBACK (FAST_MODEL / Gemini Flash)
@@ -682,11 +682,11 @@ All model references in code and agent instructions use **role aliases**, never 
 
 ```yaml
 models:
-  FAST_MODEL: "gemini-2.0-flash"        # Speed-optimised cloud model
-  DEEP_MODEL: "gemini-2.0-pro"          # High-capability cloud model
-  LOCAL_MODEL: "ollama/llama3.1"        # Local zero-cost model (primary)
-  LOCAL_MODEL_FALLBACK: "gemini-2.0-flash"  # Cloud fallback when Ollama unreachable
-  LOCAL_MODEL_TIMEOUT_SECONDS: 2        # Ping timeout before switching to fallback
+  FAST_MODEL: "gemini-2.5-flash"        # Speed-optimised cloud model
+  DEEP_MODEL: "gemini-2.5-pro"          # High-capability cloud model
+  LOCAL_MODEL: "ollama/llama3"          # Local zero-cost model (primary)
+  LOCAL_MODEL_FALLBACK: "gemini-2.5-flash"  # Cloud fallback when Ollama unreachable
+  LOCAL_MODEL_TIMEOUT_SECONDS: 30       # Timeout before switching to fallback
 ```
 
 ### `DEEP_MODEL` — The Executive Kernel
