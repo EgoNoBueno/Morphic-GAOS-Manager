@@ -22,12 +22,19 @@ function onChangeApproval(e) {
   const proposalId = sheet.getRange(row, 1).getValue();
   const priority = getPriorityFromProposal_(sheet, row);
   // onChange events carry no user identity in the event object.
-  // getActiveUser() returns '' for installable triggers in some Workspace configs;
-  // fall back to getEffectiveUser(), then a canonical placeholder so audit logs
-  // are always traceable and never silently misattributed to the trigger owner.
-  const approverEmail = Session.getActiveUser().getEmail()
-                     || Session.getEffectiveUser().getEmail()
-                     || 'unknown@audit';
+  // getActiveUser() returns '' for installable triggers in some Workspace configs.
+  // getEffectiveUser() returns the SCRIPT DEPLOYER's identity, not the editor's —
+  // accepting it for RBAC decisions would silently misattribute every approval.
+  // If we cannot verify the active user, we must reject rather than guess.
+  const approverEmail = Session.getActiveUser().getEmail();
+  if (!approverEmail) {
+    revertAndAlert_(sheet, row, proposalId, 'unresolvable',
+                    'IDENTITY_UNRESOLVABLE: getActiveUser() returned empty — '
+                    + 'approval rejected to prevent misattribution');
+    console.warn('SECURITY: approval blocked — could not resolve active user identity '
+                 + 'for proposal ' + proposalId);
+    return;
+  }
 
   // Look up approver in Authorized Approvers tab
   const approver = getApprover_(approverEmail);
