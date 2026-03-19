@@ -416,6 +416,8 @@ def write_playbook(doc: "PlaybookDoc", body: str, project_id: str) -> str:
         doc:        PlaybookDoc instance — provides all front-matter fields
                     (title, domain, owner_agent, version, project_id,
                     created_from_vision, last_updated, approved_by, status, tags).
+                    **Defined in** ``models/__init__.py``; import as
+                    ``from models import PlaybookDoc``.
         body:       Markdown body text (Objective, Milestones, Constraints, etc.).
         project_id: AOS project namespace.
 
