@@ -70,8 +70,19 @@ def append_test_row(sheet: gspread.Worksheet) -> tuple[int, str]:
         "1",                                  # N: Priority (1 = any tier can approve)
     ]
     sheet.append_row(row_data, value_input_option="USER_ENTERED")
-    # Find the row we just added by searching for the unique test_id
-    cell = sheet.find(test_id, in_column=1)
+    # Find the row we just added by searching for the unique test_id.
+    # Retry a few times to handle transient Sheets API propagation delays.
+    cell = None
+    for attempt in range(5):
+        cell = sheet.find(test_id, in_column=1)
+        if cell is not None:
+            break
+        time.sleep(2)
+    if cell is None:
+        raise RuntimeError(
+            f"Could not locate test row for test_id={test_id!r} after 5 attempts. "
+            "The append may have failed or Sheets API is lagging."
+        )
     return cell.row, test_id
 
 
