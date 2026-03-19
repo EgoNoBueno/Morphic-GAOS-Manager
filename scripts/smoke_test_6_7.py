@@ -61,7 +61,13 @@ SETTINGS_PATH = _REPO_ROOT / "config" / "settings.yaml"
 def _load_project_id() -> str:
     with open(SETTINGS_PATH) as f:
         cfg = yaml.safe_load(f)
-    return cfg.get("gcp", {}).get("project_id", "morphic-gaos-prod")
+    project_id = (cfg.get("gcp") or {}).get("project_id")
+    if not project_id:
+        raise ValueError(
+            f"gcp.project_id is missing or empty in {SETTINGS_PATH}. "
+            "Set it before running smoke tests to avoid operating on the wrong project."
+        )
+    return project_id
 
 
 def _sign(secret: str, body_bytes: bytes) -> str:
