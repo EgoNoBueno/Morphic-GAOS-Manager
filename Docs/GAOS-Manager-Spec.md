@@ -715,6 +715,31 @@ When Google releases a new Gemini version or a better local model becomes availa
 
 **Rule:** No agent may pin a specific model version string in its own code. All model references must use an alias from `settings.yaml`.
 
+### 11.2 Model Version History
+
+#### 2026-03-18 — Forced migration: Gemini 2.0 → 2.5; llama3.1 → llama3
+
+| Field | Detail |
+|-------|--------|
+| **Type** | Forced deprecation migration (not a planned upgrade) |
+| **Trigger** | Live testing of fallback routing returned `404 NOT_FOUND: no longer available to new users` for `gemini-2.0-flash` and `gemini-2.0-pro` |
+| **Evaluation method** | Live API probe via `client.models.list()` + `PONG` task against candidate models |
+| **Dry-run** | `observability_loop.py --once` run successfully against `gemini-2.5-flash` (exit 0, 49 rows sampled, SYSTEM_THOUGHTS appended) |
+
+**Changes made:**
+
+| Alias | Before | After | Reason |
+|-------|--------|-------|--------|
+| `FAST_MODEL` | `gemini-2.0-flash` | `gemini-2.5-flash` | 2.0 deprecated (404); 2.5-flash confirmed live |
+| `DEEP_MODEL` | `gemini-2.0-pro` | `gemini-2.5-pro` | 2.0 deprecated (404); 2.5-pro confirmed via `models.list()` |
+| `LOCAL_MODEL` | `ollama/llama3.1` | `ollama/llama3` | `llama3.1` is not installed locally; only `llama3:latest` is present — using the old identifier would cause silent fallback on every call |
+| `LOCAL_MODEL_FALLBACK` | `gemini-2.0-flash` | `gemini-2.5-flash` | Matches FAST_MODEL migration above |
+| `LOCAL_MODEL_TIMEOUT_SECONDS` | `2` | `30` | 2 s was empirically insufficient for local Ollama inference; 30 s matches the observed p95 response time on this hardware. UX tradeoff: worst-case task start time increases by 28 s before cloud fallback kicks in — acceptable for background jobs (observability, summaries) that do not block interactive responses |
+
+**Approval Gate status:** Emergency migration — `gemini-2.0-flash` was returning 404 in production, making the fallback path non-functional. Change applied immediately under the deprecation-forced exception. A Priority 2 Approval Gate entry should be logged to the Audit Trail sheet tab before the next planned model change.
+
+> ⚠️ **Warning — llama3 vs llama3.1:** Ollama model identifiers are exact. `ollama/llama3.1` and `ollama/llama3` point to different installed image digests. Before changing `LOCAL_MODEL`, run `ollama list` to confirm which tag is installed. Using an uninstalled tag does not error — Ollama silently falls back, causing every local call to time out and route to the cloud fallback.
+
 ---
 
 ## 12. Vertex AI Memory Bank
