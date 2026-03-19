@@ -279,7 +279,7 @@ To approve: change the `Status` cell to `Approved`.
 To reject: change it to `Rejected`.
 To request changes: change it to `Needs Revision` and add a note in the Comments column.
 
-An Apps Script `onEdit` trigger fires the moment you press Enter and notifies the agent. You do not need to open a terminal or restart anything.
+An Apps Script `onChange` trigger fires the moment you press Enter and notifies the agent. You do not need to open a terminal or restart anything.
 
 ### Proposal priority levels
 

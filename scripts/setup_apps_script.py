@@ -406,13 +406,18 @@ def push() -> None:
 
     print("Uploading script files...")
     content = build_script_content()
-    script_service.projects().updateContent(
-        scriptId=script_id, body=content
-    ).execute()
+    try:
+        script_service.projects().updateContent(
+            scriptId=script_id, body=content
+        ).execute()
+    except HttpError as exc:
+        status = exc.resp.status if hasattr(exc, "resp") else "?"
+        print(f"  ❌ updateContent failed (HTTP {status}) for script_id={script_id}: {exc}")
+        sys.exit(1)
     print(f"  Uploaded {len(SCRIPT_FILES)} files + appsscript.json manifest")
     print(f"\n✅ Push complete — script ID: {script_id}")
     print("   Changes are live in the Apps Script editor (HEAD).")
-    print("   Existing Web App deployment unchanged; create a new one with --redeploy if needed.")
+    print("   Existing Web App deployment unchanged; create a new one if needed.")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

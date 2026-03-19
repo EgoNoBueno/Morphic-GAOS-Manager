@@ -2,11 +2,13 @@
 Create 13 placeholder seed knowledge files in the Drive Knowledge/ folder.
 Safe to re-run — skips files that already exist.
 """
-import yaml
-import googleapiclient.discovery
-from google.auth.transport.requests import Request
-import google.auth
 import io
+
+import google.auth
+import googleapiclient.discovery
+import googleapiclient.http
+import yaml
+from google.auth.transport.requests import Request
 
 SEED_FILES = [
     # (subfolder, filename, short content)
@@ -25,15 +27,8 @@ SEED_FILES = [
     ("workflows", "weekly_reporting.md", "# Weekly Reporting Workflow\n\nPlaceholder — to be completed.\n"),
 ]
 
-settings = yaml.safe_load(open("config/settings.yaml"))
-knowledge_folder_id = settings["projects"]["default"]["drive_folder_id"]
 
-creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/drive"])
-creds.refresh(Request())
-svc = googleapiclient.discovery.build("drive", "v3", credentials=creds, cache_discovery=False)
-
-# Get or create subfolders
-def get_or_create_folder(name: str, parent_id: str) -> str:
+def get_or_create_folder(svc, name: str, parent_id: str) -> str:
     q = f"'{parent_id}' in parents and name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
     results = svc.files().list(q=q, fields="files(id,name)").execute().get("files", [])
     if results:
@@ -43,34 +38,48 @@ def get_or_create_folder(name: str, parent_id: str) -> str:
     print(f"  Created folder: {name}")
     return f["id"]
 
-# Check if file exists
-def file_exists(name: str, parent_id: str) -> bool:
+
+def file_exists(svc, name: str, parent_id: str) -> bool:
     q = f"'{parent_id}' in parents and name='{name}' and trashed=false"
     results = svc.files().list(q=q, fields="files(id)").execute().get("files", [])
     return bool(results)
 
-folder_cache: dict[str, str] = {}
-created = 0
-skipped = 0
 
-for subfolder, filename, content in SEED_FILES:
-    if subfolder not in folder_cache:
-        folder_cache[subfolder] = get_or_create_folder(subfolder, knowledge_folder_id)
-    parent_id = folder_cache[subfolder]
+def main() -> None:
+    with open("config/settings.yaml") as _f:
+        settings = yaml.safe_load(_f)
+    knowledge_folder_id = settings["projects"]["default"]["drive_folder_id"]
 
-    if file_exists(filename, parent_id):
-        print(f"  SKIP (exists): {subfolder}/{filename}")
-        skipped += 1
-        continue
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/drive"])
+    creds.refresh(Request())
+    svc = googleapiclient.discovery.build("drive", "v3", credentials=creds, cache_discovery=False)
 
-    media = googleapiclient.http.MediaIoBaseUpload(
-        io.BytesIO(content.encode()),
-        mimetype="text/plain",
-        resumable=False,
-    )
-    meta = {"name": filename, "parents": [parent_id]}
-    svc.files().create(body=meta, media_body=media, fields="id").execute()
-    print(f"  CREATED: {subfolder}/{filename}")
-    created += 1
+    folder_cache: dict[str, str] = {}
+    created = 0
+    skipped = 0
 
-print(f"\nDone. Created: {created}, Skipped (already existed): {skipped}")
+    for subfolder, filename, content in SEED_FILES:
+        if subfolder not in folder_cache:
+            folder_cache[subfolder] = get_or_create_folder(svc, subfolder, knowledge_folder_id)
+        parent_id = folder_cache[subfolder]
+
+        if file_exists(svc, filename, parent_id):
+            print(f"  SKIP (exists): {subfolder}/{filename}")
+            skipped += 1
+            continue
+
+        media = googleapiclient.http.MediaIoBaseUpload(
+            io.BytesIO(content.encode()),
+            mimetype="text/plain",
+            resumable=False,
+        )
+        meta = {"name": filename, "parents": [parent_id]}
+        svc.files().create(body=meta, media_body=media, fields="id").execute()
+        print(f"  CREATED: {subfolder}/{filename}")
+        created += 1
+
+    print(f"\nDone. Created: {created}, Skipped (already existed): {skipped}")
+
+
+if __name__ == "__main__":
+    main()

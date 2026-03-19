@@ -1568,7 +1568,6 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
         requesting_agent = payload.get("agent_id", source_agent)
         topic = f"agent.{requesting_agent}.events"
 
-        settings = get_settings()
         if status == "Approved":
             reply = A2AMessage(
                 source_agent="nexus-prime",

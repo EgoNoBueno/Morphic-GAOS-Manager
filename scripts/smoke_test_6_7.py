@@ -41,6 +41,7 @@ import hmac
 import json
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -112,7 +113,7 @@ def _make_valid_payload(project_id: str, smoke_id: str) -> dict:
             "issue": "Automated smoke test — safe to delete",
             "trigger_reason": "SMOKE_TEST",
         },
-        "timestamp": "2026-03-18T00:00:00+00:00",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -156,8 +157,8 @@ def main() -> None:
         print("   Ensure WEBHOOK_URL and WEBHOOK_HMAC_SECRET exist in Secret Manager.")
         sys.exit(1)
 
-    print(f"   WEBHOOK_URL: {webhook_url[:60]}…")
-    print(f"   WEBHOOK_HMAC_SECRET: {hmac_secret[:6]}… (truncated)")
+    print(f"   WEBHOOK_URL: {'*' * 8} (present, {len(webhook_url)} chars)")
+    print(f"   WEBHOOK_HMAC_SECRET: {'*' * 8} (present, {len(hmac_secret)} chars)")
 
     # ── Build the canonical valid payload once ────────────────────────────────
     smoke_id = f"SMOKE67-{uuid.uuid4().hex[:8].upper()}"

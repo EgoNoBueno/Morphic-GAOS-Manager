@@ -173,15 +173,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-        failures = []
-        if not stamped:
-            failures.append("trigger did not stamp K/L within timeout")
-        if not logged:
-            failures.append("no APPROVAL entry in Logs tab")
-        print("❌  SMOKE TEST 4 FAILED: " + "; ".join(failures))
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

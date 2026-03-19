@@ -99,7 +99,7 @@ GAOS-Doctor is a manual health-check runbook — not a CLI tool. Refer to `Docs/
 
 Run through the GAOS-Doctor checklist whenever you suspect a configuration drift or after any infrastructure change.
 
-> ⚠️ **Warning — `settings.yaml` must have a named entry for every `project_id` used:** `init_sheets_client(project_id)` resolves the workbook by looking up `projects.<project_id>.sheet_id` in `settings.yaml`. The key `projects.default` is not a fallback — if the entry for your actual `project_id` is missing, you get `WorkbookNotFoundError` even if the sheet exists. For the system project itself, add `projects.morphic-gaos-prod` pointing to the same `sheet_id` and `drive_folder_id` as `projects.default`.
+> ⚠️ **Warning — `settings.yaml` must have a named entry for every `project_id` used:** `init_sheets_client(project_id)` resolves the workbook by doing an exact key lookup of `projects.<project_id>.sheet_id` in `settings.yaml`. **It does not consult `projects.default` as a fallback** — there is no fallback mechanism. If `projects.<project_id>` is absent, `init_sheets_client` raises `WorkbookNotFoundError` immediately, even if `projects.default` exists with a valid `sheet_id`. Every distinct `project_id` passed to `init_sheets_client` must have its own entry. For the system project, add a `projects.morphic-gaos-prod` block with the same `sheet_id` and `drive_folder_id` values as `projects.default` — this is an explicit copy, not an automatic alias.
 
 ### 0.6 Google Sheets Control Plane
 
@@ -628,8 +628,8 @@ python scripts/_seed_knowledge_files.py
 > ⚠️ **Warning — ADC Drive scope:** Standard `gcloud auth application-default login` only grants `cloud-platform` scope. The Drive API requires explicit OAuth scopes. Refresh ADC with:
 > ```powershell
 > # Run in a standalone PowerShell window (not VS Code terminal — browser redirect fails there)
-> gcloud auth application-default login \
->   --client-id-file=oauth-client.json \
+> gcloud auth application-default login `
+>   --client-id-file=oauth-client.json `
 >   --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/script.projects,https://www.googleapis.com/auth/script.deployments,https://www.googleapis.com/auth/cloud-platform"
 > ```
 

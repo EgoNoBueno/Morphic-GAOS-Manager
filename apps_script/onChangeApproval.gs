@@ -21,10 +21,13 @@ function onChangeApproval(e) {
   const row = range.getRow();
   const proposalId = sheet.getRange(row, 1).getValue();
   const priority = getPriorityFromProposal_(sheet, row);
+  // onChange events carry no user identity in the event object.
   // getActiveUser() returns '' for installable triggers in some Workspace configs;
-  // fall back to getEffectiveUser() (the account that authorised the trigger).
+  // fall back to getEffectiveUser(), then a canonical placeholder so audit logs
+  // are always traceable and never silently misattributed to the trigger owner.
   const approverEmail = Session.getActiveUser().getEmail()
-                     || Session.getEffectiveUser().getEmail();
+                     || Session.getEffectiveUser().getEmail()
+                     || 'unknown@audit';
 
   // Look up approver in Authorized Approvers tab
   const approver = getApprover_(approverEmail);

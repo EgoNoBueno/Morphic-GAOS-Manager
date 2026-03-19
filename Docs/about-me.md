@@ -16,7 +16,7 @@
 
 Our North Star is delivering massive, measurable value to customers. We do not chase vanity metrics or fluff.
 
-- **High-Quality Output:** Every deliverable must meet a premium standard of excellence — no filler, no filler content.
+- **High-Quality Output:** Every deliverable must meet a premium standard of excellence — no filler, no fluff.
 - **Pain Point Resolution:** We build products and services that solve specific, acute problems for our target audience.
 - **Customer-Centricity:** Every marketing decision starts with the end-user's needs and psychological triggers, not internal assumptions.
 

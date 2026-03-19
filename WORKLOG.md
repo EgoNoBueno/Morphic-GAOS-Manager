@@ -5,6 +5,26 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-18T23:30-03:00 — Code Review Fixes ✅
+
+**Applied 15 findings from code review across 13 files. 332 tests green.**
+
+- `.env.example`: clarified `gcloud secrets create` vs `versions add` for Google Search secrets
+- `.github/copilot-instructions.md`: replaced `&&` with PS 5.1-compatible `if ($LASTEXITCODE -eq 0)` sequence; noted PS7+ required for `&&`
+- `Docs/GAOS-Deploy-Spec.md`: backtick-fixed `gcloud auth` PowerShell example; clarified `projects.default` is not a fallback for `init_sheets_client`
+- `Docs/GAOS-Project-Glossary.md`: TL;DR moved before TLS (alphabetical); definition updated (beginning, not end)
+- `Docs/about-me.md`: "no filler, no filler content" → "no filler, no fluff"
+- `README.md`: `onEdit` → `onChange` at line 282 (matches diagram and `.gs` file name)
+- `apps_script/onChangeApproval.gs`: `approverEmail` now falls back to `'unknown@audit'` when both Session methods return empty
+- `scripts/_seed_knowledge_files.py`: all module-level side effects moved into `main()`; helpers accept `svc` as param; `if __name__` guard added; `base64` dead import removed; `googleapiclient.http` import made explicit
+- `scripts/setup_apps_script.py`: `updateContent` call wrapped in `try/except HttpError`; removed nonexistent `--redeploy` from printed message
+- `scripts/smoke_test_4.py`: duplicate failures block + duplicate `if __name__` guard removed
+- `scripts/smoke_test_6_7.py`: secret values redacted in output (masked); hardcoded timestamp replaced with `datetime.now(timezone.utc).isoformat()`
+- `scripts/smoke_test_pubsub_sub.py`: hardcoded `PROJECT_ID` replaced with `--project` argparse flag; helpers refactored to accept paths as params; `base64` dead import removed
+- `agents/nexus_prime/orchestrator.py`: dead `settings = get_settings()` assignment removed
+
+---
+
 ## 2026-03-18T22:47-03:00 — Phase 2 Observability Loop Complete ✅
 
 **`scripts/observability_loop.py` smoke test passing end-to-end.**

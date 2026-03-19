@@ -15,7 +15,7 @@ Exit code 0 = pass, 1 = fail.
 """
 from __future__ import annotations
 
-import base64
+import argparse
 import json
 import sys
 import uuid
@@ -24,38 +24,33 @@ from datetime import datetime, timezone
 from google.api_core.exceptions import AlreadyExists, NotFound
 from google.cloud import pubsub_v1
 
-PROJECT_ID = "morphic-gaos-prod"
 TOPIC_NAME = "agent.approvals.events"
-SUB_NAME = f"local-smoketest-sub-{uuid.uuid4().hex[:8]}"
-
-TOPIC_PATH = f"projects/{PROJECT_ID}/topics/{TOPIC_NAME}"
-SUB_PATH = f"projects/{PROJECT_ID}/subscriptions/{SUB_NAME}"
 
 
-def ensure_topic(publisher: pubsub_v1.PublisherClient) -> None:
+def ensure_topic(publisher: pubsub_v1.PublisherClient, topic_path: str) -> None:
     try:
-        publisher.create_topic(request={"name": TOPIC_PATH})
+        publisher.create_topic(request={"name": topic_path})
         print(f"  [setup] Created topic {TOPIC_NAME}")
     except AlreadyExists:
         print(f"  [setup] Topic {TOPIC_NAME} already exists — OK")
 
 
-def create_sub(subscriber: pubsub_v1.SubscriberClient) -> None:
+def create_sub(subscriber: pubsub_v1.SubscriberClient, sub_path: str, topic_path: str) -> None:
     subscriber.create_subscription(
-        request={"name": SUB_PATH, "topic": TOPIC_PATH, "ack_deadline_seconds": 30}
+        request={"name": sub_path, "topic": topic_path, "ack_deadline_seconds": 30}
     )
-    print(f"  [setup] Created pull subscription {SUB_NAME}")
+    print(f"  [setup] Created pull subscription {sub_path.split('/')[-1]}")
 
 
-def delete_sub(subscriber: pubsub_v1.SubscriberClient) -> None:
+def delete_sub(subscriber: pubsub_v1.SubscriberClient, sub_path: str) -> None:
     try:
-        subscriber.delete_subscription(request={"subscription": SUB_PATH})
-        print(f"  [cleanup] Deleted subscription {SUB_NAME}")
+        subscriber.delete_subscription(request={"subscription": sub_path})
+        print(f"  [cleanup] Deleted subscription {sub_path.split('/')[-1]}")
     except NotFound:
         pass
 
 
-def publish_test_message(publisher: pubsub_v1.PublisherClient) -> str:
+def publish_test_message(publisher: pubsub_v1.PublisherClient, topic_path: str) -> str:
     proposal_id = str(uuid.uuid4())
     payload = {
         "message_type": "APPROVAL_RESULT",
@@ -65,18 +60,18 @@ def publish_test_message(publisher: pubsub_v1.PublisherClient) -> str:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     data = json.dumps(payload).encode("utf-8")
-    future = publisher.publish(TOPIC_PATH, data=data)
+    future = publisher.publish(topic_path, data=data)
     future.result()
     print(f"  [publish] Sent synthetic APPROVAL_RESULT — proposal_id={proposal_id}")
     return proposal_id
 
 
-def pull_message(subscriber: pubsub_v1.SubscriberClient, expected_proposal_id: str) -> bool:
+def pull_message(subscriber: pubsub_v1.SubscriberClient, sub_path: str, expected_proposal_id: str) -> bool:
     import time
     deadline = time.monotonic() + 15  # 15-second window
     while time.monotonic() < deadline:
         response = subscriber.pull(
-            request={"subscription": SUB_PATH, "max_messages": 1},
+            request={"subscription": sub_path, "max_messages": 1},
             timeout=5,
         )
         if not response.received_messages:
@@ -99,7 +94,7 @@ def pull_message(subscriber: pubsub_v1.SubscriberClient, expected_proposal_id: s
         print()
 
         subscriber.acknowledge(
-            request={"subscription": SUB_PATH, "ack_ids": [msg.ack_id]}
+            request={"subscription": sub_path, "ack_ids": [msg.ack_id]}
         )
 
         if proposal_id != expected_proposal_id:
@@ -116,21 +111,31 @@ def pull_message(subscriber: pubsub_v1.SubscriberClient, expected_proposal_id: s
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Pub/Sub local subscriber smoke test")
+    parser.add_argument("--project", default="morphic-gaos-prod",
+                        help="GCP project ID (default: morphic-gaos-prod)")
+    args = parser.parse_args()
+    project_id = args.project
+
+    sub_name = f"local-smoketest-sub-{uuid.uuid4().hex[:8]}"
+    topic_path = f"projects/{project_id}/topics/{TOPIC_NAME}"
+    sub_path = f"projects/{project_id}/subscriptions/{sub_name}"
+
     publisher = pubsub_v1.PublisherClient()
     subscriber = pubsub_v1.SubscriberClient()
 
     print("=== Pub/Sub local subscriber smoke test ===")
-    print(f"Project : {PROJECT_ID}")
+    print(f"Project : {project_id}")
     print(f"Topic   : {TOPIC_NAME}")
     print()
 
     try:
-        ensure_topic(publisher)
-        create_sub(subscriber)
-        proposal_id = publish_test_message(publisher)
-        passed = pull_message(subscriber, proposal_id)
+        ensure_topic(publisher, topic_path)
+        create_sub(subscriber, sub_path, topic_path)
+        proposal_id = publish_test_message(publisher, topic_path)
+        passed = pull_message(subscriber, sub_path, proposal_id)
     finally:
-        delete_sub(subscriber)
+        delete_sub(subscriber, sub_path)
 
     if passed:
         print("RESULT: PASS — local subscriber received APPROVAL_RESULT ✓")
