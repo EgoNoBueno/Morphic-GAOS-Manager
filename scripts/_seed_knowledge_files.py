@@ -29,7 +29,8 @@ SEED_FILES = [
 
 
 def get_or_create_folder(svc, name: str, parent_id: str) -> str:
-    q = f"'{parent_id}' in parents and name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    escaped_name = name.replace("\\", "\\\\").replace("'", "\\'")
+    q = f"'{parent_id}' in parents and name='{escaped_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
     results = svc.files().list(q=q, fields="files(id,name)").execute().get("files", [])
     if results:
         return results[0]["id"]
@@ -40,7 +41,8 @@ def get_or_create_folder(svc, name: str, parent_id: str) -> str:
 
 
 def file_exists(svc, name: str, parent_id: str) -> bool:
-    q = f"'{parent_id}' in parents and name='{name}' and trashed=false"
+    escaped_name = name.replace("\\", "\\\\").replace("'", "\\'")
+    q = f"'{parent_id}' in parents and name='{escaped_name}' and trashed=false"
     results = svc.files().list(q=q, fields="files(id)").execute().get("files", [])
     return bool(results)
 
