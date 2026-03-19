@@ -1619,7 +1619,7 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
 
     # ── Inbound request path ──────────────────────────────────────────────────
     package_name: str = payload.get("package_name", "")
-    agent_id: str = payload.get("agent_id", msg.source_agent)
+    agent_id: str = payload.get("agent_id") or msg.source_agent
     reason: str = payload.get("reason", "")
     pypi_url: str = payload.get("pypi_url", "")
 
