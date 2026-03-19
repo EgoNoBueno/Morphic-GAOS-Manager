@@ -19,11 +19,11 @@ projects:
 
 # LLM model aliases — update this section to upgrade models, no code changes needed
 models:
-  LOCAL_MODEL: "ollama/llama3.1"          # Free, local — formatting, summaries, logging
-  FAST_MODEL: "gemini-2.0-flash"          # Moderate reasoning, routing, lookups
-  DEEP_MODEL: "gemini-2.0-pro"            # Approval proposals, conflict resolution, evolution
-  LOCAL_MODEL_FALLBACK: "gemini-2.0-flash"
-  LOCAL_MODEL_TIMEOUT_SECONDS: 2
+  LOCAL_MODEL: "ollama/llama3"            # Free, local — formatting, summaries, logging
+  FAST_MODEL: "gemini-2.5-flash"          # Moderate reasoning, routing, lookups
+  DEEP_MODEL: "gemini-2.5-pro"            # Approval proposals, conflict resolution, evolution
+  LOCAL_MODEL_FALLBACK: "gemini-2.5-flash"
+  LOCAL_MODEL_TIMEOUT_SECONDS: 30
 
 # Pub/Sub topic names that Nexus-Prime monitors and validates at boot.
 pubsub:
