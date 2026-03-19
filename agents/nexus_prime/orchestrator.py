@@ -189,6 +189,8 @@ def _create_sheet_workbook(new_pid: str) -> str:
     from config import get_settings
     settings = get_settings()
     template_id = settings.sheet.workbook_id
+    # Full drive scope required: files().copy() on a pre-existing template file
+    # (not created by this SA) cannot be authorised with drive.file scope.
     creds, _ = google.auth.default(
         scopes=["https://www.googleapis.com/auth/drive"]
     )

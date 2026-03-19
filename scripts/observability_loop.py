@@ -26,7 +26,8 @@ from datetime import datetime, timezone
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 
 # Ensure stdout handles full Unicode (e.g. model responses with em-dashes, arrows)
-if hasattr(sys.stdout, "reconfigure"):
+import io as _io
+if isinstance(sys.stdout, _io.TextIOWrapper):
     sys.stdout.reconfigure(encoding="utf-8")
 
 from agents import _call_model
