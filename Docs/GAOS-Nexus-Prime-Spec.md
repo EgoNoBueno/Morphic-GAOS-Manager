@@ -93,7 +93,7 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
 
 ### 3.1 Node Inventory
 
-Nexus-Prime's `StateGraph` has 15 nodes. The router node determines which branch to execute based on message type.
+Nexus-Prime's `StateGraph` has 16 nodes. The router node determines which branch to execute based on message type.
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -115,7 +115,7 @@ Nexus-Prime's `StateGraph` has 15 nodes. The router node determines which branch
 └────────────────────────────────────────────────────────────────┘
 ```
 
-Node abbreviations: diag=diagnose, know=knowledge\_review, init=init\_project, conf=conflict\_resolve, park=park\_or\_broadcast, vision=vision\_blueprint, iter=iterate\_plan, prop=propose\_gate, prom=promote, notif=notify\_agents, think=think
+Node abbreviations: diag=diagnose, know=knowledge\_review, init=init\_project, conf=conflict\_resolve, park=park\_or\_broadcast, vision=vision\_blueprint, iter=iterate\_plan, skill=handle\_skill\_request, prop=propose\_gate, prom=promote, notif=notify\_agents, think=think
 
 ### 3.2 Node Definitions
 
@@ -135,7 +135,7 @@ def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
     # Ensure all Pub/Sub topics exist (idempotent)
     for topic in settings.pubsub.all_topics:
-        ensure_topic_exists(topic, pid)
+        ensure_topic_exists(topic)
 
     # Load parked proposals — store IDs only (consistent with list[str])
     all_proposals = get_all_records("Agent_Approvals", pid)
@@ -198,6 +198,7 @@ def route(state: NexusPrimeWorkingMemory) -> str:
         MessageType.VISION_SUBMITTED:    "vision_blueprint", # Owner vision → Blueprint Doc
         MessageType.PLAN_REVIEW:         "iterate_plan",     # Owner comment on Blueprint
         MessageType.COMMENT_RECEIVED:    "iterate_plan",     # Doc comment poll found new comment
+        MessageType.SKILL_REQUEST:       "handle_skill_request",  # Agent requests package install approval
     }
     return routing_table.get(msg.message_type, "record")
 
@@ -694,7 +695,7 @@ def notify_agents(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
     for agent in ("ledger", "beacon", "pursuit", "foreman", "steward", "scout"):
         try:
-            publish(f"agent.{agent}.events", broadcast, state["project_id"])
+            publish(f"agent.{agent}.events", broadcast)
         except Exception:
             pass
 
@@ -732,7 +733,7 @@ def conflict_resolve(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
         for agent in ("ledger", "beacon", "pursuit", "foreman", "steward", "scout"):
             try:
-                publish(f"agent.{agent}.events", broadcast, state["project_id"])
+                publish(f"agent.{agent}.events", broadcast)
             except Exception:
                 pass
 
@@ -758,7 +759,10 @@ def park_or_broadcast(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory
     new_status = msg.payload.get("status", "Parked") if msg.payload else "Parked"
 
     if proposal_id:
-        update_row("Agent_Approvals", proposal_id, {"Status": new_status}, state["project_id"])
+        try:
+            update_row("Agent_Approvals", proposal_id, {"Status": new_status}, state["project_id"])
+        except Exception:
+            pass
 
     return state
 ```
@@ -802,7 +806,7 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         payload={"summary": heartbeat_text},
     )
     try:
-        publish("agent.nexus-prime.events", heartbeat, state["project_id"])
+        publish("agent.nexus-prime.events", heartbeat)
     except Exception:
         pass
 
@@ -836,31 +840,53 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     blueprint_id = msg.task_id
     project_id   = state["project_id"]
 
-    prompt   = _build_vision_prompt(vision_text, project_id)
-    doc_text = _call_llm(prompt, model=settings.models.DEEP_MODEL)
+    settings = get_settings()
+    prompt = _build_vision_prompt(vision_text, project_id)
+    resp = _call_model(prompt, model=settings.models.DEEP_MODEL, parse_json=False)
+    state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+    blueprint_content = resp.text.strip()
 
     try:
-        doc_id = create_document(title=f"Blueprint: {blueprint_id}",
-                                  content=doc_text, project_id=project_id)
-        state.setdefault("active_blueprints", {})[blueprint_id] = doc_id
+        doc_id = create_document(
+            title=f"Blueprint — {vision_text[:60]}",
+            project_id=project_id,
+            folder_id=settings.docs.blueprints_folder_id,
+            initial_content=blueprint_content,
+        )
+        active: dict = state.get("active_blueprints") or {}
+        active[blueprint_id] = doc_id
+        state["active_blueprints"] = active
     except Exception as exc:
-        logger.error("vision_blueprint: create_document failed: %s", exc)
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"vision_blueprint: doc creation failed: {exc}", "ERROR")
         return state
 
     try:
         append_row("Project_Incubator",
-                   [blueprint_id, doc_id, "Pending", msg.payload.get("submitted_by", "")],
+                   {"id": blueprint_id, "vision_text": vision_text[:500],
+                    "submitted_by": (msg.payload or {}).get("submitted_by", ""),
+                    "doc_id": doc_id, "status": "Pending"},
                    project_id)
     except Exception as exc:
-        logger.warning("vision_blueprint: append_row failed: %s", exc)
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"vision_blueprint: append_row failed: {exc}", "WARNING")
 
     try:
-        space = (msg.payload or {}).get("space_name") or settings.chat.owner_space
-        send_approval_card(space_name=space, proposal_id=blueprint_id,
-                           summary=f"Blueprint ready for review: {doc_id}",
-                           project_id=project_id)
+        from tools.google_chat import send_approval_card
+        owner_space = (msg.payload or {}).get("space_name") or settings.chat.owner_space
+        send_approval_card(
+            space_name=owner_space,
+            proposal_id=blueprint_id,
+            agent_id="nexus-prime",
+            issue_summary=f"Blueprint ready for review — doc_id: {doc_id}",
+            proposed_action="Review the Blueprint Doc and approve or request changes.",
+            priority=2,
+            cost_usd=resp.cost_usd,
+            reasoning_summary="",
+        )
     except Exception as exc:
-        logger.warning("vision_blueprint: send_approval_card failed: %s", exc)
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"vision_blueprint: send_approval_card failed: {exc}", "WARNING")
 
     return state
 ```
@@ -910,6 +936,77 @@ def iterate_plan(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     return state
 ```
 
+#### `handle_skill_request`
+
+*(Phase 2.5)* Handles `SKILL_REQUEST` messages from domain orchestrators that encounter a `ModuleNotFoundError` on a library outside the import allowlist. Two sub-paths based on payload content:
+
+**Inbound request** (`status` absent from payload): Posts a `send_skill_import_card()` Chat card to the owner's space, writes an audit row to `Agent_Approvals`, and parks the `proposal_id` in `state["parked_proposals"]`.
+
+**Resolution** (`status: Approved | Rejected`): Updates the `Agent_Approvals` row, removes the `proposal_id` from `parked_proposals`. If Approved, re-publishes `SKILL_REQUEST` to the requesting agent so its Write-Test-Refine loop can resume. If Rejected, publishes `ALERT` to trigger a hard-stop on the requesting agent with reason `skill_request_rejected`.
+
+```python
+def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    from config import get_settings
+    from tools.google_chat import send_skill_import_card
+    from tools.google_sheets import append_row, update_row
+    from tools.pubsub import publish
+
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+
+    payload = msg.payload or {}
+    project_id = state["project_id"]
+    task_id = state.get("task_id", str(uuid.uuid4()))
+    status = payload.get("status", "")
+
+    if status in ("Approved", "Rejected"):
+        # Resolution path — update audit row and notify requesting agent
+        proposal_id = payload.get("proposal_id", "")
+        if proposal_id:
+            try:
+                update_row("Agent_Approvals", proposal_id,
+                           {"Status": status, "Approved By": payload.get("approved_by", "")},
+                           project_id)
+            except Exception:
+                pass
+            state["parked_proposals"] = [
+                p for p in state.get("parked_proposals", []) if p != proposal_id
+            ]
+
+        out_type = MessageType.SKILL_REQUEST if status == "Approved" else MessageType.ALERT
+        try:
+            publish(f"agent.{msg.source_agent}.events",
+                    A2AMessage(source_agent="nexus-prime", target_agent=msg.source_agent,
+                               project_id=project_id, task_id=task_id,
+                               message_type=out_type, priority=3,
+                               payload={**payload, "status": status}))
+        except Exception:
+            pass
+    else:
+        # Inbound request path — create audit row and send owner Chat card
+        proposal_id = str(uuid.uuid4())
+        row = {"ID": proposal_id, "Agent ID": msg.source_agent,
+               "Issue": payload.get("package_name", "unknown"),
+               "Status": "Pending", "Trigger Reason": "SKILL_REQUEST",
+               "Timestamp": utcnow_iso()}
+        try:
+            append_row("Agent_Approvals", row, project_id)
+            state["parked_proposals"].append(proposal_id)
+            send_skill_import_card(
+                space_name=get_settings().chat.owner_space,
+                proposal_id=proposal_id,
+                agent_id=msg.source_agent,
+                package_name=payload.get("package_name", ""),
+                reason=payload.get("reason", ""),
+            )
+        except Exception as exc:
+            _log_cloud("nexus-prime", project_id, "task", task_id,
+                       f"handle_skill_request error: {exc}", "ERROR")
+
+    return state
+```
+
 ### 3.3 Graph Assembly
 
 ```python
@@ -918,43 +1015,69 @@ from langgraph.graph import StateGraph, END
 def build_nexus_prime_graph() -> Any:
     graph = StateGraph(NexusPrimeWorkingMemory)
 
-    graph.add_node("boot",             boot)
-    graph.add_node("monitor",          monitor)
-    graph.add_node("route",            route)
-    graph.add_node("diagnose",         diagnose)
-    graph.add_node("propose_gate",     propose_gate)
-    graph.add_node("knowledge_review", knowledge_review)
-    graph.add_node("promote",          promote)
-    graph.add_node("init_project",     init_project)
-    graph.add_node("notify_agents",    notify_agents)
-    graph.add_node("conflict_resolve", conflict_resolve)
-    graph.add_node("park_or_broadcast", park_or_broadcast)
-    graph.add_node("record",           record)
+    graph.add_node("boot",                 boot)
+    graph.add_node("monitor",              monitor)
+    graph.add_node("route",                route)
+    graph.add_node("think",                think)
+    graph.add_node("diagnose",             diagnose)
+    graph.add_node("propose_gate",         propose_gate)
+    graph.add_node("knowledge_review",     knowledge_review)
+    graph.add_node("promote",              promote)
+    graph.add_node("init_project",         init_project)
+    graph.add_node("notify_agents",        notify_agents)
+    graph.add_node("conflict_resolve",     conflict_resolve)
+    graph.add_node("park_or_broadcast",    park_or_broadcast)
+    graph.add_node("record",               record)
+    graph.add_node("vision_blueprint",     vision_blueprint)
+    graph.add_node("iterate_plan",         iterate_plan)
+    graph.add_node("handle_skill_request", handle_skill_request)
 
     graph.set_entry_point("boot")
     graph.add_edge("boot", "monitor")
     graph.add_edge("monitor", "route")
 
-    # Conditional routing from route node
-    graph.add_conditional_edges("route", route, {
-        "diagnose":          "diagnose",
-        "knowledge_review":  "knowledge_review",
-        "init_project":      "init_project",
-        "conflict_resolve":  "conflict_resolve",
-        "promote":           "promote",
-        "park_or_broadcast": "park_or_broadcast",
-        "record":            "record",
-    })
+    # route() returns a node name string for each MessageType
+    graph.add_conditional_edges(
+        "route",
+        route,
+        {
+            "think":                "think",
+            "diagnose":             "diagnose",
+            "knowledge_review":     "knowledge_review",
+            "init_project":         "init_project",
+            "conflict_resolve":     "conflict_resolve",
+            "promote":              "promote",
+            "park_or_broadcast":    "park_or_broadcast",
+            "record":               "record",
+            "vision_blueprint":     "vision_blueprint",
+            "iterate_plan":         "iterate_plan",
+            "handle_skill_request": "handle_skill_request",
+        },
+    )
 
-    graph.add_edge("diagnose",          "propose_gate")
-    graph.add_edge("propose_gate",      "record")
-    graph.add_edge("knowledge_review",  "record")
-    graph.add_edge("promote",           "record")
-    graph.add_edge("init_project",      "notify_agents")
-    graph.add_edge("notify_agents",     "record")
-    graph.add_edge("conflict_resolve",  "record")
-    graph.add_edge("park_or_broadcast", "record")
-    graph.add_edge("record",            END)
+    # think routes to diagnose, knowledge_review, or record based on message type
+    graph.add_conditional_edges(
+        "think",
+        _route_from_think,
+        {
+            "diagnose":         "diagnose",
+            "knowledge_review": "knowledge_review",
+            "record":           "record",
+        },
+    )
+
+    graph.add_edge("diagnose",             "propose_gate")
+    graph.add_edge("propose_gate",         "record")
+    graph.add_edge("knowledge_review",     "record")
+    graph.add_edge("promote",              "record")
+    graph.add_edge("init_project",         "notify_agents")
+    graph.add_edge("notify_agents",        "record")
+    graph.add_edge("conflict_resolve",     "record")
+    graph.add_edge("park_or_broadcast",    "record")
+    graph.add_edge("vision_blueprint",     "record")
+    graph.add_edge("iterate_plan",         "record")
+    graph.add_edge("handle_skill_request", "record")
+    graph.add_edge("record",               END)
 
     return graph.compile(checkpointer=MemorySaver())
 ```
