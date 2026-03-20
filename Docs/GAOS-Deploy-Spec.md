@@ -716,7 +716,7 @@ Then create all 6 tables:
 | `approval_history` | `log_date` | 730 days | Full approval gate history |
 | `observability_weekly` | — | indefinite | Weekly summary archive |
 | `memory_entries` | — | indefinite | Structured metadata for Vertex AI RAG entries |
-| `monologue_frames` | `log_date` | 90 days | Think node reasoning traces (`GAOS-Persona-Spec.md` §4) |
+| `monologue_frames` | `timestamp` | 90 days | Think node reasoning traces (`GAOS-Persona-Spec.md` §4) |
 
 The `memory_entries` table holds the structured `MemoryEntry` metadata (agent_id, knowledge_type,
 active flag, version, etc.) so that `load_domain_memory()` can filter by agent and active status
@@ -765,10 +765,11 @@ table = bigquery.Table(
         bigquery.SchemaField('partial_result_available', 'BOOL'),
         bigquery.SchemaField('response_mode', 'STRING'),   # Direct|Reframe|Research|Tactical
         bigquery.SchemaField('reasoning_summary', 'STRING'),
-        bigquery.SchemaField('timestamp', 'STRING'),       # ISO 8601 from utcnow_iso()
+        bigquery.SchemaField('timestamp', 'TIMESTAMP'),    # UTC event time; insert_rows_json accepts ISO 8601 strings for TIMESTAMP columns
     ],
 )
 table.time_partitioning = bigquery.TimePartitioning(
+    field='timestamp',                # partition on logical event time, not ingestion time
     expiration_ms=90 * 86_400_000,
 )
 client.create_table(table, exists_ok=True)
