@@ -87,7 +87,7 @@ No agent can deploy its own code unilaterally. Code that fails either gate never
 | **Knowledge Atlas** | **Google Doc (Memory Mirror)** | **Permanent audit trail — human-readable view of all promoted entries** |
 
 <div align="center">
-<img src="Docs/assets/Layer-Memory-Stack.png" alt="5-Layer Memory Stack" width="70%"/>
+<img src="Docs/assets/Layer-Memory-Stack.png" alt="6-Layer Memory Stack including Knowledge Atlas" width="70%"/>
 </div>
 
 ### Hybrid LLM Strategy
