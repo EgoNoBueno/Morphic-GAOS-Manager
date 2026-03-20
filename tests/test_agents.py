@@ -803,10 +803,12 @@ class TestOllamaFallbackCounter:
                         _call_model("prompt", model="ollama/llama3.1")
 
         mock_logger.warning.assert_called_once()
-        warning_args = mock_logger.warning.call_args[0]
-        # The format string is the first arg; positional args follow
-        assert "ConnectError" in warning_args[1]  # exc type name
-        assert "llama3.1" in warning_args[3]       # ollama model name
+        ca = mock_logger.warning.call_args
+        format_str = ca.args[0]
+        fmt_args = ca.args[1:]
+        formatted = format_str % fmt_args if fmt_args else format_str
+        assert "ConnectError" in formatted
+        assert "llama3.1" in formatted
 
 
 # ── Web search tool ────────────────────────────────────────────────────────
