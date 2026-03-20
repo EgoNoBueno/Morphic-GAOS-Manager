@@ -561,7 +561,7 @@ def flush_observations(observations: list[dict], project_id: str) -> None:
 
 ---
 
-## 9. Knowledge Proposals — Approval Gate Integration
+## 10. Knowledge Proposals — Approval Gate Integration
 
 When confidence reaches threshold, the agent automatically generates a structured proposal and submits it to the standard Approval Gate. The proposal priority depends on what type of knowledge is being added or changed.
 
@@ -661,7 +661,7 @@ async def handle_knowledge_approval(proposal: KnowledgeProposal,
 
 ---
 
-## 10. Procedural Document Update Flow
+## 11. Procedural Document Update Flow
 
 When an orchestrator believes a workflow, policy, or procedure needs updating:
 
@@ -704,7 +704,7 @@ This means every previous version is available for audit. The archive folder is 
 
 ---
 
-## 11. Guardrail Update Flow
+## 12. Guardrail Update Flow
 
 Guardrail updates (`knowledge_type = guardrail_update`) modify an agent's Do/Don't identity file constraints. These are the highest-risk memory modifications in the system.
 
@@ -718,7 +718,7 @@ Guardrail updates (`knowledge_type = guardrail_update`) modify an agent's Do/Don
 
 ---
 
-## 12. Knowledge Retrieval Patterns
+## 13. Knowledge Retrieval Patterns
 
 ### Pattern 1 — Context-Augmented Task Start (primary pattern)
 
@@ -795,7 +795,7 @@ def load_procedure(domain: str, procedure_name: str,
 
 ---
 
-## 13. Memory Governance & Security
+## 14. Memory Governance & Security
 
 ### Write Permissions Summary
 
@@ -825,7 +825,7 @@ An agent must not increment confidence for the same `task_id` more than once (pa
 
 ---
 
-## 14. Cost Profile
+## 15. Cost Profile
 
 Memory operations have a direct cost impact via Vertex AI Memory Bank. The following rules keep memory costs within the §9.4 budget.
 
@@ -843,7 +843,7 @@ Memory operations have a direct cost impact via Vertex AI Memory Bank. The follo
 
 ---
 
-## 15. Data Retention
+## 16. Data Retention
 
 | Layer | Store | Retention | Archive |
 |-------|-------|-----------|---------|
@@ -855,7 +855,7 @@ Memory operations have a direct cost impact via Vertex AI Memory Bank. The follo
 
 ---
 
-## 16. Testing Requirements
+## 17. Testing Requirements
 
 ### Memory Layer Tests
 
@@ -874,7 +874,7 @@ Memory operations have a direct cost impact via Vertex AI Memory Bank. The follo
 
 ---
 
-## 17. Reference Index
+## 18. Reference Index
 
 | Topic | Location |
 |-------|----------|

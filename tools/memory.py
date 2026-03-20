@@ -90,7 +90,7 @@ def flush_observations(observations: list[dict[str, Any]], project_id: str) -> N
     Write buffered observations to the ``Pending_Knowledge`` Sheet tab.
     Applies deduplication by ``content_hash`` before writing.
 
-    Full implementation: GAOS-Memory-Spec.md §8.
+    Full implementation: GAOS-Memory-Spec.md §9.
 
     Raises:
         MemoryBankError: Write failure after retry exhaustion.
