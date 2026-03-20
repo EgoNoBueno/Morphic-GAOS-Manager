@@ -278,7 +278,7 @@ def send_approval_card(
     section_action: dict = {
         "header": "⚡ Decision Required",
         "widgets": [
-            {"textParagraph": {"text": f"<b>Proposed action:</b> {html.escape(proposed_action)}"}},  
+            {"textParagraph": {"text": f"<b>Proposed action:</b> {html.escape(proposed_action)}"}},
             {"buttonList": {"buttons": buttons}},
         ],
     }
@@ -443,19 +443,27 @@ def parse_chat_event(body: dict) -> dict:
                 if key:
                     parameters[key] = value
 
-        # Extract image/file attachments (MESSAGE events only)
+        # Extract image/file attachments — only present on MESSAGE events.
         attachments: list[dict] = []
-        for att in message.get("attachment", []):
-            att_ref: dict = att.get("attachmentDataRef", {})
-            download_uri: str = att_ref.get("downloadUri", "")
-            resource_name: str = att_ref.get("resourceName", "")
-            if download_uri or resource_name:
-                attachments.append({
-                    "content_type": att.get("contentType", "application/octet-stream"),
-                    "content_name": att.get("contentName", ""),
-                    "resource_name": att.get("name", resource_name),
-                    "download_uri": download_uri,
-                })
+        if event_type == "MESSAGE":
+            for att in message.get("attachment", []):
+                att_ref: dict = att.get("attachmentDataRef", {})
+                download_uri: str = att_ref.get("downloadUri", "")
+                # media_resource_name: opaque token from attachmentDataRef used with
+                #   the Chat media.download API to fetch the raw file bytes.
+                media_resource_name: str = att_ref.get("resourceName", "")
+                if download_uri or media_resource_name:
+                    attachments.append({
+                        "content_type": att.get("contentType", "application/octet-stream"),
+                        "content_name": att.get("contentName", ""),
+                        # attachment_message_name: the Chat message-side resource name
+                        #   for this attachment (e.g. "spaces/.../messages/.../attachments/...").
+                        "attachment_message_name": att.get("name", ""),
+                        # media_resource_name: the attachmentDataRef token used to
+                        #   download the file via the Chat media API.
+                        "media_resource_name": media_resource_name,
+                        "download_uri": download_uri,
+                    })
 
         return {
             "event_type": event_type,
