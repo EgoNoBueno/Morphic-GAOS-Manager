@@ -92,7 +92,7 @@ Files fixed:
 **Implemented Directive 2: Strategic Architect `think` node for Nexus-Prime.**
 
 ### What was done
-- `models/__init__.py` — Added `MonologueFrame` Pydantic model (7 fields: `task_id`, `project_id`, `knowledge_gap_detected`, `knowledge_gap_description`, `partial_result_available`, `response_mode`, `reasoning_summary`, `timestamp`)
+- `models/__init__.py` — Added `MonologueFrame` Pydantic model (8 fields: `task_id`, `project_id`, `knowledge_gap_detected`, `knowledge_gap_description`, `partial_result_available`, `response_mode`, `reasoning_summary`, `timestamp`)
 - `agents/nexus_prime/orchestrator.py`:
   - Added `_load_context_trio` to imports; added `MonologueFrame` to model imports
   - Extended `NexusPrimeWorkingMemory` with `_next_node: str` and `monologue_frame: Optional[dict]`
