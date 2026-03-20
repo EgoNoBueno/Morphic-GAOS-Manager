@@ -299,7 +299,7 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 | `reasoning_summary` | `str` | One-sentence rationale |
 | `timestamp` | `str` | ISO 8601 from `utcnow_iso()` |
 
-> ⚠️ **Warning — think node is Tier 1 only:** Do not add a `think` node to Tier 2 orchestrators. Their output patterns are audited periodically by Nexus-Prime's Weekly Review Loop instead.
+> ⚠️ **Warning — think node is Tier 1 only:** Do not add a `think` node to Tier 2 orchestrators. Their output patterns are audited periodically by Nexus-Prime's Weekly Review Loop instead. *(Weekly Review Loop specification to be added in a future phase.)*
 
 #### `diagnose`
 
