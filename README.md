@@ -84,6 +84,7 @@ No agent can deploy its own code unilaterally. Code that fails either gate never
 | Observation buffer | Google Sheets | 14 days |
 | Semantic memory | Vertex AI Memory Bank | Indefinite, versioned |
 | Procedural knowledge | Google Drive (Markdown) | Version-controlled |
+| **Knowledge Atlas** | **Google Doc (Memory Mirror)** | **Permanent audit trail — human-readable view of all promoted entries** |
 
 <div align="center">
 <img src="Docs/assets/Layer-Memory-Stack.png" alt="5-Layer Memory Stack" width="70%"/>

@@ -960,6 +960,13 @@ apps_script:
   script_id: ""
   deployment_id: ""
   webhook_url: ""
+
+# Google Docs — Blueprint Factory + Knowledge Atlas (Memory Mirror)
+docs:
+  service_account_key: ""      # Leave empty to use ADC (recommended)
+  blueprints_folder_id: ""     # Drive folder ID for Blueprint Docs (Project_Incubator/)
+  knowledge_atlas_doc_id: ""   # Google Doc ID for the Knowledge Atlas
+                               # See §17 for one-time setup steps.
 ```
 
 ---
@@ -1383,6 +1390,76 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 
 ---
 
+## 17. Knowledge Atlas Google Doc (Memory Mirror)
+
+The **Knowledge Atlas** is the human-readable glass-box view of every approved `MemoryEntry` in Vertex AI Memory Bank. Each time Nexus-Prime auto-promotes a knowledge candidate, `tools.memory_mirror.sync_to_atlas()` appends a structured text block to this doc. When an entry supersedes an earlier one, a `⛔ SUPERSEDED` audit marker is appended so the full retirement history is visible.
+
+> **Why a Google Doc and not a Sheet?** The Atlas is designed for owner **reading**, not querying. A Google Doc is shareable, searchable with Cmd+F, and opens in a browser without any API setup. It is an audit trail, not a database.
+
+### Setup (one-time, manual)
+
+**Step 1 — Create the document:**
+
+1. Open Google Drive in the account that owns the GAOS project.
+2. Navigate to the `Knowledge/` root folder (the same Drive folder whose ID is in `settings.yaml → projects.default.drive_folder_id`).
+3. Create a new Google Doc: **+ New → Google Docs → Blank document**.
+4. Name it: **GAOS Knowledge Atlas — \<project_name\>** (e.g. `GAOS Knowledge Atlas — Morphic-G`).
+5. Add a header line at the top of the document body:
+
+```
+GAOS Knowledge Atlas
+Approved memory entries are appended automatically by Nexus-Prime.
+---
+```
+
+**Step 2 — Copy the document ID:**
+
+The document ID is the long string in the URL between `/d/` and `/edit`:
+
+```
+https://docs.google.com/document/d/<DOCUMENT_ID>/edit
+```
+
+**Step 3 — Paste the ID into `settings.yaml`:**
+
+```yaml
+docs:
+  service_account_key: ""
+  blueprints_folder_id: ""
+  knowledge_atlas_doc_id: "1AbCdEfGhIjKlMnOpQrStUvWxYz"   # ← paste here
+```
+
+**Step 4 — Verify (optional but recommended):**
+
+Run the following in a Python shell (with the venv active) to confirm the doc is accessible:
+
+```powershell
+python -c "
+from config import get_settings; from tools.google_docs import read_document
+s = get_settings()
+print(read_document(s.docs.knowledge_atlas_doc_id, s.GCP_PROJECT_ID)[:200])
+"
+```
+
+Expected output: the first 200 characters of the document body (the header you added in Step 1).
+
+> ⚠️ **Do not leave `knowledge_atlas_doc_id` empty in production.** If it is empty, every knowledge auto-promotion logs a `WARNING` and the Atlas entry is skipped. The Vertex AI write still succeeds — but the Atlas will be incomplete. Set the ID before the first `KNOWLEDGE_CANDIDATE` message is processed.
+
+### Verification Command
+
+```powershell
+# After pasting the doc ID into settings.yaml:
+python -c "
+from config import get_settings
+s = get_settings()
+print('Atlas doc ID:', s.docs.knowledge_atlas_doc_id or '[NOT SET]')
+"
+```
+
+Expected: prints the document ID string (not `[NOT SET]`).
+
+---
+
 ## 15. Phase 2 Exit Criteria Checklist
 
 Phase 2 is complete — and Phase 3 (multi-agent orchestration) may begin — when **every item** below is checked:
@@ -1393,6 +1470,7 @@ Phase 2 is complete — and Phase 3 (multi-agent orchestration) may begin — wh
 - [x] `_call_model()` routes to Ollama when `web_access=False` and model is `LOCAL_MODEL` ✅ (confirmed via direct API call, HTTP 200)
 - [x] `scripts/observability_loop.py --once` completes with no errors and appends a `SYSTEM_THOUGHTS` row to the Logs tab ✅ (2026-03-18 — 49 rows sampled, `ollama/llama3`)
 - [x] All 332 unit tests still passing after Ollama integration ✅ (2026-03-18)
+- [x] Knowledge Atlas Google Doc created in Drive and `docs.knowledge_atlas_doc_id` set in `settings.yaml` ✅ (see §17)
 
 > ⚠️ **Warning — OLLAMA_HOST secret has trailing `\r\n`:** `get_secret('OLLAMA_HOST', ...)` returns `'http://localhost:11434\r\n'`. Fixed in `agents/__init__.py` with `.strip().rstrip("/")` on the host value. If symptoms reappear (httpx raises `Invalid non-printable ASCII character in URL, '\r'`), verify the fix is in place or update the secret via `echo -n 'http://localhost:11434' | gcloud secrets versions add OLLAMA_HOST --data-file=- --project=...`.
 
@@ -1414,4 +1492,5 @@ Phase 2 is complete — and Phase 3 (multi-agent orchestration) may begin — wh
 | Agent boot sequence | `GAOS-Agent-Spec.md` §6 |
 | Tool module API reference | `GAOS-Tools-Spec.md` |
 | Memory Bank corpus usage | `GAOS-Memory-Spec.md` §6 |
+| Knowledge Atlas (Memory Mirror) | `GAOS-Tools-Spec.md` §18 · §17 (this doc) |
 | Nexus-Prime construction requirements | `GAOS-Nexus-Prime-Spec.md` |

@@ -527,7 +527,9 @@ def propose_gate(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
 #### `knowledge_review`
 
-Evaluates a `KNOWLEDGE_CANDIDATE` message from a domain orchestrator. Uses `DEEP_MODEL` to check confidence, freshness, and uniqueness against the Memory Bank.
+Evaluates a `KNOWLEDGE_CANDIDATE` message from a domain orchestrator. Uses `DEEP_MODEL` to check confidence, freshness, and uniqueness against the Memory Bank. On successful auto-promotion, mirrors the entry to the Knowledge Atlas Google Doc via `tools.memory_mirror.sync_to_atlas()`.
+
+The LLM prompt (`_build_knowledge_review_prompt`) now explicitly asks whether the candidate **supersedes** an existing memory entry, returning a `supersedes_memory_id` field in addition to `confidence` and `is_duplicate`. The `MemoryEntry` constructor sets `approved_at=datetime.now(UTC)` and `supersedes` from that field so both are always populated on auto-promoted entries.
 
 ```python
 def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
@@ -557,9 +559,10 @@ def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     is_dup = resp.data.get("is_duplicate", True)
 
     if confidence >= 0.80 and not is_dup:
-        # Auto-promote: write directly to Memory Bank
+        # Auto-promote: write directly to Memory Bank, then mirror to Atlas
         try:
             from models import MemoryEntry
+
             entry = MemoryEntry(
                 project_id=state["project_id"],
                 agent_id=msg.source_agent,
@@ -568,9 +571,22 @@ def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                 content=candidate.get("content", ""),
                 confidence=float(resp.data.get("confidence", 0.8)),
                 approved_by="nexus-prime",
+                approved_at=datetime.now(UTC),                          # always set
+                supersedes=resp.data.get("supersedes_memory_id") or None,
                 tags=candidate.get("tags", []),
             )
             write_approved_memory(entry=entry, project_id=state["project_id"])
+            # Mirror to Knowledge Atlas — non-blocking; WARNING logged on failure
+            try:
+                from tools.memory_mirror import sync_to_atlas
+                sync_to_atlas(entry)
+            except Exception as mirror_exc:
+                _log_cloud(
+                    "nexus-prime", state["project_id"], "task",
+                    state.get("task_id", ""),
+                    f"knowledge_review: Atlas sync failed (non-fatal): {mirror_exc}",
+                    "WARNING",
+                )
         except Exception:
             _write_to_pending_knowledge(state, candidate, resp)
     else:
@@ -579,6 +595,19 @@ def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
     return state
 ```
+
+**Prompt schema returned by `_build_knowledge_review_prompt`:**
+
+```json
+{
+  "confidence": 0.92,
+  "is_duplicate": false,
+  "rationale": "New observation with no contradicting Memory Bank entry.",
+  "supersedes_memory_id": null
+}
+```
+
+`supersedes_memory_id` is the `memory_id` of an existing entry that this candidate refines or replaces (`null` if the candidate is purely additive). When set, `write_approved_memory` marks the old entry `active=False` in Vertex AI and `sync_to_atlas` appends a `⛔ SUPERSEDED` audit line to the Knowledge Atlas.
 
 #### `promote`
 

@@ -1487,6 +1487,7 @@ and in local dev with `oauth-client.json`).
 docs:
   service_account_key: ""      # Optional path to SA key JSON; leave empty for ADC
   blueprints_folder_id: ""     # Default Drive folder ID for Blueprint Docs
+  knowledge_atlas_doc_id: ""   # Google Doc ID for the Knowledge Atlas (Memory Mirror)
 ```
 
 ### Usage Rule
@@ -1554,3 +1555,75 @@ google_search:
 `tools/google_search.py` is called exclusively from Scout's `_discover` node. No other orchestrator calls it directly. Nexus-Prime triggers Scout via a `RESEARCH_MANDATE` Pub/Sub message — it does not call the search tool itself.
 
 > ⚠️ **Rate limit:** Free tier is 100 queries/day. `max_queries_per_mandate` (default 15) ensures a single mandate never exceeds 15% of the daily quota. Monitor usage in GCP Console → APIs & Services → Google Custom Search API.
+
+---
+
+## 18. `tools/memory_mirror.py`
+
+Mirrors every approved `MemoryEntry` to a human-readable Google Doc called the **Knowledge Atlas** — a plain-text glass-box view of all knowledge the system has promoted to Vertex AI Memory Bank. Added in Phase 2.5 Step 7 (Memory Mirror).
+
+> **Spec reference:** `GAOS-Memory-Spec.md §6 (Layer 4 — Semantic Memory)` · `Docs/GAOS-Nexus-Prime-Spec.md — knowledge_review node`
+
+```python
+def sync_to_atlas(entry: MemoryEntry) -> None:
+    """
+    Append an approved MemoryEntry to the Knowledge Atlas Google Doc.
+
+    Each entry is formatted as a structured text block (ID, agent, domain,
+    type, content, confidence, approval timestamp, tags). When
+    ``entry.supersedes`` is set, a ⛔ SUPERSEDED audit marker is also appended
+    so the Atlas retains a permanent record of which entry retired which.
+
+    The Atlas doc must be pre-created in Google Drive — this function never
+    auto-creates it. Copy the document ID into
+    ``settings.docs.knowledge_atlas_doc_id``.
+
+    Raises:
+        MemoryMirrorError: ``knowledge_atlas_doc_id`` is not configured, or
+            the Docs API call failed.  Callers (knowledge_review node) must
+            catch this and log a WARNING — it must never block the Vertex
+            AI write path.
+    """
+```
+
+### Error Types
+
+```python
+class MemoryMirrorError(Exception):
+    """
+    Raised when the Atlas sync fails.  The Vertex AI write always wins —
+    callers must catch this, log a WARNING, and continue.
+    """
+```
+
+### Entry Format (appended per approved MemoryEntry)
+
+```
+---
+ID:         <memory_id UUID>
+Agent:      <agent_id>
+Domain:     <domain>
+Type:       <knowledge_type>
+Content:    <content>
+Confidence: 92%
+Approved:   2026-03-20T10:00:00Z
+Tags:       sales, q4
+Supersedes: <old_memory_id>          ← only if entry.supersedes is set
+⛔ SUPERSEDED: Entry <old> retired by <new>   ← only if entry.supersedes is set
+```
+
+### Settings Required
+
+```yaml
+docs:
+  knowledge_atlas_doc_id: ""   # Google Doc ID for the Knowledge Atlas
+                               # Pre-create the doc in Drive; paste its ID here.
+                               # Leave empty to disable mirroring (Vertex write
+                               # still succeeds — a WARNING is logged instead).
+```
+
+### Usage Rule
+
+`sync_to_atlas()` is called exclusively from `knowledge_review` in Nexus-Prime's orchestrator, immediately after `write_approved_memory()`. It runs inside its own nested `try/except` — `MemoryMirrorError` is logged as a `WARNING` and never propagates. The Vertex AI write path is always primary.
+
+> ⚠️ **Pre-create the Atlas doc manually.** Do not set `knowledge_atlas_doc_id` to an empty string and expect auto-creation — `sync_to_atlas()` raises `MemoryMirrorError` immediately if the ID is missing. Auto-creation during cold start risks duplicate Atlas documents if multiple agents boot simultaneously. Create the doc once in Google Drive, note its document ID from the URL (`/d/<ID>/edit`), and paste it into `settings.yaml`.

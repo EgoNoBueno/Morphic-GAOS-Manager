@@ -305,6 +305,12 @@ def write_approved_memory(entry: "MemoryEntry", project_id: str) -> str:
     return record.memory_id
 ```
 
+After `write_approved_memory()` returns, `knowledge_review` immediately calls
+`tools.memory_mirror.sync_to_atlas(entry)` to mirror the same entry to the
+**Knowledge Atlas** Google Doc (Layer 4 glass-box view). The Atlas call runs in
+its own `try/except` — a `MemoryMirrorError` is logged as `WARNING` but never
+blocks the Vertex AI write. See `GAOS-Tools-Spec.md §18` for full Atlas spec.
+
 ### Memory Conflict Resolution
 
 If two orchestrators hold contradictory memories about the same stated fact (e.g., Ledger says "Vendor X payment terms are Net-30" and Pursuit says "Net-45"):
@@ -630,7 +636,7 @@ async def handle_knowledge_approval(proposal: KnowledgeProposal,
             evidence=proposal.evidence,
             confidence=proposal.confidence,
             approved_by=proposal.approved_by,
-            approved_at=datetime.utcnow(),
+            approved_at=datetime.now(UTC),
             version=1 if not proposal.existing_memory_id else _next_version(proposal.existing_memory_id),
             supersedes=proposal.existing_memory_id,
             active=True,

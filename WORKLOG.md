@@ -3,6 +3,34 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-03-20T10:00-03:00 — Layer 4 Memory Mirror + doc audit
+
+**What was done:** Implemented the Memory Mirror feature (Layer 4 Knowledge Atlas) and updated all affected specifications.
+
+### Code changes (commit `af24f79`)
+
+- **`tools/memory_mirror.py`** — New tool. `sync_to_atlas(entry: MemoryEntry) -> None` appends each approved MemoryEntry to a pre-created Knowledge Atlas Google Doc via `append_content()`. When `entry.supersedes` is set, a `⛔ SUPERSEDED` audit marker is appended. Raises `MemoryMirrorError` on all failures; caller (knowledge_review node) catches and logs `WARNING` — the Vertex AI write is never blocked.
+- **`tests/test_memory_mirror.py`** — 9 unit tests: happy path, supersedes marker, `approved_at=None` fallback rendering, `DocsApiError` wrapping, `DocumentNotFoundError` wrapping, unexpected exception wrapping, missing config guard (doc ID not set), append not called when config missing. All 405 tests passing.
+- **`config/__init__.py`** — `DocsConfig` gets `knowledge_atlas_doc_id: str = ""`.
+- **`config/settings.yaml.template`** — `docs:` block updated with `knowledge_atlas_doc_id` field and inline comment.
+- **`agents/nexus_prime/orchestrator.py`** — Two changes:
+  - `_build_knowledge_review_prompt()`: updated to ask the LLM whether the candidate supersedes an existing `memory_id`; returns `supersedes_memory_id` field in JSON (null if additive, existing `memory_id` if retiring an old entry).
+  - `knowledge_review()`: `MemoryEntry` constructor now sets `approved_at=datetime.now(UTC)` and `supersedes=resp.data.get("supersedes_memory_id") or None`; `sync_to_atlas(entry)` called in a nested `try/except` after `write_approved_memory()`.
+
+### Doc changes (this commit)
+
+- **`Docs/GAOS-Tools-Spec.md`** — Added §18 `tools/memory_mirror.py`; updated §16 `docs:` settings block to include `knowledge_atlas_doc_id`.
+- **`Docs/GAOS-Memory-Spec.md`** — Added post-`write_approved_memory()` note explaining the Atlas mirror call; fixed `approved_at=datetime.utcnow()` → `datetime.now(UTC)` in the promote pseudocode example.
+- **`Docs/GAOS-Nexus-Prime-Spec.md`** — Replaced pre-implementation `knowledge_review` code block with the actual implementation (approved_at, supersedes, sync_to_atlas nested try/except); added JSON schema doc for `_build_knowledge_review_prompt` return value.
+- **`Docs/GAOS-Deploy-Spec.md`** — New §17 "Knowledge Atlas Google Doc (Memory Mirror)" with step-by-step setup (create doc, copy ID, paste into settings.yaml, verification command); updated §8 settings.yaml example to include `docs:` block; added Atlas item to Phase 2 exit checklist; updated §16 reference index.
+- **`README.md`** — Added Knowledge Atlas row to the memory layer table.
+
+**What was learned:** The `_build_knowledge_review_prompt()` function was previously returning only `{"confidence": float, "is_duplicate": bool, "rationale": str}` — no `supersedes` field. Without asking the LLM to identify which existing memory_id is being retired, the `supersedes` field in `MemoryEntry` would always be None and the supersession chain would be broken. The prompt update is the load-bearing change that makes active learning work.
+
+**What's next:** Create the Knowledge Atlas Google Doc in Drive (GAOS-Deploy-Spec.md §17) and paste its ID into `config/settings.yaml`. Once set, the first `KNOWLEDGE_CANDIDATE` auto-promotion will populate the Atlas.
+
+---
+
 ## 2026-03-20T03:00-03:00 — Migrate CI/CD auth to Workload Identity Federation
 
 **What was done:** Replaced the long-lived SA key (`GCP_SA_KEY`) in the GitHub Actions
