@@ -7,6 +7,8 @@
 # and deployment complexity compared to per-agent images.
 
 terraform {
+  required_version = "~> 1.8"  # OpenTofu 1.8.x through 1.x; blocks accidental 2.x upgrades
+
   required_providers {
     google = {
       source  = "hashicorp/google"
