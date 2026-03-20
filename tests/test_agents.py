@@ -1488,7 +1488,8 @@ class TestMultimodalVisionPath:
 
         assert mock_client.models.generate_content.called
         call_args = mock_client.models.generate_content.call_args
-        contents = call_args.kwargs.get("contents") if call_args.kwargs.get("contents") is not None else call_args.args[1]
+        kw = call_args.kwargs.get("contents")
+        contents = kw if kw is not None else call_args.args[1]
         # Multimodal call produces a list, not a plain str
         assert isinstance(contents, list), "Expected a list of Parts for multimodal call"
         assert len(contents) == 2
@@ -1516,7 +1517,8 @@ class TestMultimodalVisionPath:
             )
 
         call_args = mock_client.models.generate_content.call_args
-        contents = call_args.kwargs.get("contents") if call_args.kwargs.get("contents") is not None else call_args.args[1]
+        kw = call_args.kwargs.get("contents")
+        contents = kw if kw is not None else call_args.args[1]
         assert isinstance(contents, list)
         assert len(contents) == 2
         assert result.text == "Vision description"
@@ -1544,7 +1546,8 @@ class TestMultimodalVisionPath:
             )
 
         call_args = mock_client.models.generate_content.call_args
-        contents = call_args.kwargs.get("contents") if call_args.kwargs.get("contents") is not None else call_args.args[1]
+        kw = call_args.kwargs.get("contents")
+        contents = kw if kw is not None else call_args.args[1]
         assert isinstance(contents, str)
         assert result.text == "Text response."
 
