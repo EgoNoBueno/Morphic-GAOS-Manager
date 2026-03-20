@@ -1435,6 +1435,12 @@ class TestMultimodalVisionPath:
     M5  _call_model returns ModelResponse with text from multimodal response.
     """
 
+    # Intentionally overrides the module-level load_test_settings autouse fixture.
+    # load_test_settings runs first and loads SETTINGS_YAML (which contains literal
+    # version strings like "gemini-2.0-flash").  These tests exercise _call_model_gemini
+    # directly and mock the genai client, so version-string-free aliases are required to
+    # avoid triggering the U3 version-string scan.  _reset_for_testing() + load_settings()
+    # are called here to keep each test isolated despite the dual-fixture setup.
     @pytest.fixture(autouse=True)
     def _settings(self, tmp_path):
         import config
