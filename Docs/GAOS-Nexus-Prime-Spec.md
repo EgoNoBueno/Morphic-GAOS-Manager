@@ -93,13 +93,15 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
 
 ### 3.1 Node Inventory
 
-Nexus-Prime's `StateGraph` has 14 nodes. The router node determines which branch to execute based on message type.
+Nexus-Prime's `StateGraph` has 15 nodes. The router node determines which branch to execute based on message type.
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │                       Nexus-Prime Graph                        │
 │                                                                │
 │  [boot] ──► [monitor] ──► [route]                              │
+│                               │                                │
+│                           [think]                              │
 │                               │                                │
 │    ┌───────┬───────┬───────┬───────┬───────┬───────┐   │
 │    │       │       │       │       │       │       │   │
@@ -113,7 +115,7 @@ Nexus-Prime's `StateGraph` has 14 nodes. The router node determines which branch
 └────────────────────────────────────────────────────────────────┘
 ```
 
-Node abbreviations: diag=diagnose, know=knowledge\_review, init=init\_project, conf=conflict\_resolve, park=park\_or\_broadcast, vision=vision\_blueprint, iter=iterate\_plan, prop=propose\_gate, prom=promote, notif=notify\_agents
+Node abbreviations: diag=diagnose, know=knowledge\_review, init=init\_project, conf=conflict\_resolve, park=park\_or\_broadcast, vision=vision\_blueprint, iter=iterate\_plan, prop=propose\_gate, prom=promote, notif=notify\_agents, think=think
 
 ### 3.2 Node Definitions
 
