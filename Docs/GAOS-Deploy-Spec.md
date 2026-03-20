@@ -889,8 +889,7 @@ bq rm --force morphic-gaos-prod:aos_logs.monologue_frames_new
 
 | Format | Example | Notes |
 |--------|---------|-------|
-| ISO 8601 with UTC offset | `"2026-03-20T10:30:00Z"` | `utcnow_iso()` already produces this format — no code change needed |
-| ISO 8601 with explicit offset | `"2026-03-20T10:30:00+00:00"` | Also accepted |
+| ISO 8601 UTC string | `"2026-03-20T10:30:00.123456+00:00"` or `"2026-03-20T10:30:00Z"` | `utcnow_iso()` emits the `+00:00` form; the `Z` suffix is an equivalent UTC representation and also accepted — no code change needed |
 | Python `datetime` (timezone-aware) | `datetime.now(timezone.utc)` | Automatically serialized by the BQ client |
 
 `MonologueFrame.timestamp` is typed as `str` and populated via `utcnow_iso()` (`datetime.now(timezone.utc).isoformat()`), which produces `"2026-03-20T10:30:00.123456+00:00"` — a valid ISO 8601 UTC timestamp that BigQuery accepts for `TIMESTAMP` columns through `insert_rows_json`. No changes to `models/__init__.py` or `agents/nexus_prime/orchestrator.py` are required.
