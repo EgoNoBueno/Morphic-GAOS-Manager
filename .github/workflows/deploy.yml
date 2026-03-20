@@ -16,6 +16,12 @@ on:
   push:
     branches: [master]
 
+# Prevent overlapping deployments to the same branch. A newer push cancels
+# any pending run for the same branch so stale plans never reach Apply.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   id-token: write   # Required: allows the workflow to request an OIDC token for WIF
   contents: read
