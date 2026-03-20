@@ -564,7 +564,8 @@ async def chat(request: Request) -> JSONResponse:
                 "annotation visible. Output plain text only."
             )
             try:
-                vision_resp = _call_model(
+                vision_resp = await asyncio.to_thread(
+                    _call_model,
                     prompt=vision_extract_prompt,
                     model=settings.models.DEEP_MODEL,
                     image_bytes=img_bytes,
