@@ -472,13 +472,13 @@ Volume includes the `think` node (`GAOS-Persona-Spec.md` §4) and weekly frictio
 | **Cloud Run** (agent runtime + triggers) | $0.000024/vCPU-sec + $0.0000025/GB-sec | ~500 agent invocations × 2 s × 0.25 vCPU + 2 scheduled jobs | **~$0.01** |
 | **Cloud Scheduler** | $0.10/job/month (first 3 free) | 3 jobs (TTL sweep + archive + daily-kickoff); 4th job `doc-comment-poll` = $0.10/month (Phase 2.5 Step 5) | **$0.00** (3 jobs within free tier); **$0.10** when Phase 2.5 Step 5 is deployed |
 | **Gemini Flash (`FAST_MODEL`)** | ~$0.075/1M input + ~$0.30/1M output tokens | ~700K in + 150K out (routing, Scout synthesis, fallback tasks) | **~$0.10** |
-| **Gemini Pro (`DEEP_MODEL`)** | ~$1.25/1M input + ~$5.00/1M output tokens | ~400K in + 100K out (approvals, think node, diagnostics, weekly review) | **~$1.00** |
+| **Gemini Pro (`DEEP_MODEL`)** | ~$1.25/1M input + ~$5.00/1M output tokens | ~800K in + 200K out (approvals, think node, diagnostics, weekly review) | **~$2.00** |
 | **Vertex AI Code Execution** | ~$0.001/session | ~10 sessions (evolution tasks) | **~$0.01** |
-| **Vertex AI Memory Bank** | ~$0.005/write, ~$0.002/read | ~100 writes + 300 reads (7-agent boot cycles) | **~$1.10** |
+| **Vertex AI Memory Bank** | ~$0.005/write, ~$0.002/read | ~200 writes + 800 reads (7-agent boot cycles + frequent knowledge checks) | **~$2.50** |
 | **Google Secret Manager** | Free first 6 secrets; $0.06/10K accesses | 6 secrets, ~1K accesses | **$0.00** |
 | **BigQuery** | $0.02/GB storage after 10 GB free | ~1 GB cold archive | **$0.00** (under free tier) |
 | **Vertex AI Agent Engine** | ~$50–$135/month (1 vCPU / 2 GB, always-on) | **Not used in Phase 1–4** | **$0.00** *(deferred)* |
-| **Total (Phase 1–4)** | | | **≈ $2.50/month** |
+| **Total (Phase 1–4)** | | | **≈ $5/month** |
 
 > **Budget trigger:** If monthly spend exceeds **$5.00**, Nexus-Prime publishes a Priority-4 `ALERT`. Review and adjust this threshold after three months of live operation based on actual usage data.
 

@@ -5,7 +5,7 @@
 > This document is the step-by-step guide for standing up every Google Cloud and Google Workspace resource the system requires. Follow the sections in order. Each section ends with a verification step — do not proceed to the next section until verification passes.
 >
 > **Estimated time:** 2–3 hours for a first-time setup, 30 minutes for a repeat deployment.
-> **Estimated monthly cost after setup:** ≈ $2.50 (see `GAOS-Manager-Spec.md` §9.4 for breakdown).
+> **Estimated monthly cost after setup:** ≈ $5 (see `GAOS-Manager-Spec.md` §9.4 for breakdown).
 
 ---
 

@@ -4,7 +4,7 @@
 
 > This document is a frank assessment of what data the AOS stores and transmits, who can access it, and what options exist to reduce exposure. Each mitigation is clearly labeled as **Optional Enhancement**, **Recommended**, or **Required for Compliance** so you can choose the right level for your use case.
 >
-> **This is not a compliance certification.** It is an honest map of the risk surface and a menu of tools to reduce it.  
+> **This is not a compliance certification.** It is an honest map of the risk surface and a menu of tools to reduce it.
 > **Prerequisites:** `GAOS-Deploy-Spec.md` (infrastructure), `GAOS-Manager-Spec.md` §9 (cost profile), `GAOS-Agent-Spec.md` §2.2 (`AgentInput` schema).
 
 ---

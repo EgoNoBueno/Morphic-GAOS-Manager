@@ -6,7 +6,7 @@
 # Morphic-G AOS
 ### The Intelligent Workforce for Small Business
 
-**A self-evolving team of AI agents** that runs your accounting, marketing, sales, operations, admin, and research — autonomously — on Google's cloud ecosystem, for roughly **$2.50/month**.
+**A self-evolving team of AI agents** that runs your accounting, marketing, sales, operations, admin, and research — autonomously — on Google's cloud ecosystem, for roughly **$5/month**.
 
 [![Spec Status](https://img.shields.io/badge/specs-complete-brightgreen)](#documentation)
 [![Cloud](https://img.shields.io/badge/platform-Google%20Cloud-4285F4?logo=googlecloud&logoColor=white)](#setup)
@@ -398,11 +398,11 @@ Infrastructure as Code powered by [OpenTofu](https://opentofu.org) — an open-s
 | Ollama (local machine) | $0.00 | Logging, formatting, summarization |
 | Cloud Run (scale-to-zero) | ~$0.01 | 7 services, event-driven only |
 | Gemini Flash (`FAST_MODEL`) | ~$0.10 | Routing, Scout synthesis, fallback |
-| Gemini Pro (`DEEP_MODEL`) | ~$1.00 | Approvals, think node, diagnostics, weekly review |
-| Vertex AI Memory Bank | ~$1.10 | 7-agent boot reads + knowledge writes |
+| Gemini Pro (`DEEP_MODEL`) | ~$2.00 | Approvals, think node, diagnostics, weekly review |
+| Vertex AI Memory Bank | ~$2.50 | 7-agent boot reads + knowledge writes |
 | Vertex AI Code Execution | ~$0.01 | ~10 evolution task sessions/month |
 | Everything else (Pub/Sub, Scheduler, Logging, BigQuery) | Free tier | Within Google quotas |
-| **Total** | **≈ $2.50/month** | Worst-case, Phase 1–4 load |
+| **Total** | **≈ $5/month** | Worst-case, Phase 1–4 load |
 
 > **Budget alert:** Nexus-Prime publishes a Priority-4 `ALERT` if monthly spend exceeds **$5.00**. Set a GCP billing alert at $10/month as a second layer. See `GAOS-Manager-Spec.md §9.4` for full volume assumptions.
 
