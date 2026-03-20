@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import time
 import uuid
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -116,12 +116,25 @@ def _build_diagnosis_prompt(msg: A2AMessage, similar: list, recent_errors: list)
 
 
 def _build_knowledge_review_prompt(candidate: dict, duplicates: list) -> str:
+    dup_block = (
+        "\n".join(
+            f"  - (memory_id={d.get('memory_id', '?')}) {d.get('content', str(d))}"
+            for d in duplicates[:5]
+        )
+        if duplicates
+        else "  (none)"
+    )
     return (
         f"Candidate knowledge entry:\n{candidate.get('content', '')}\n\n"
-        f"Potential duplicates ({len(duplicates)}) in Memory Bank:\n"
-        + "\n".join(f"  - {d}" for d in duplicates[:5])
-        + "\n\nAssess confidence and duplication.\n"
-        'Return JSON: {"confidence": float, "is_duplicate": bool, "rationale": str}'
+        f"Existing Memory Bank entries for this domain ({len(duplicates)} retrieved):\n"
+        + dup_block
+        + "\n\nAssess the candidate's confidence and uniqueness.\n"
+        "If the candidate REFINES or REPLACES one of the existing entries (same concept, "
+        "updated or corrected information), set supersedes_memory_id to that entry's memory_id. "
+        "If it is purely new information with no existing entry to retire, set "
+        "supersedes_memory_id to null.\n\n"
+        'Return JSON: {"confidence": float, "is_duplicate": bool, "rationale": str, '
+        '"supersedes_memory_id": str | null}'
     )
 
 
@@ -724,9 +737,24 @@ def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                 content=candidate.get("content", ""),
                 confidence=float(resp.data.get("confidence", 0.8)),
                 approved_by="nexus-prime",
+                approved_at=datetime.now(UTC),
+                supersedes=resp.data.get("supersedes_memory_id") or None,
                 tags=candidate.get("tags", []),
             )
             write_approved_memory(entry=entry, project_id=state["project_id"])
+            try:
+                from tools.memory_mirror import sync_to_atlas
+
+                sync_to_atlas(entry)
+            except Exception as mirror_exc:
+                _log_cloud(
+                    "nexus-prime",
+                    state["project_id"],
+                    "task",
+                    state.get("task_id", ""),
+                    f"knowledge_review: Atlas sync failed (non-fatal): {mirror_exc}",
+                    "WARNING",
+                )
         except Exception:
             _write_to_pending_knowledge(state, candidate, resp)
     else:

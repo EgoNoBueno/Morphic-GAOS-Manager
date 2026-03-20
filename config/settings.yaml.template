@@ -85,6 +85,7 @@ vertex_search:
 docs:
   service_account_key: ""      # e.g. config/keys/nexus-prime-sa.json
   blueprints_folder_id: ""     # Drive folder ID for Blueprint Docs (Project_Incubator/)
+  knowledge_atlas_doc_id: ""   # Google Doc ID for the Knowledge Atlas (Memory Mirror — Layer 4)
 
 # Google Custom Search — Scout deep research (Phase 2.5 Step 6)
 # Store actual values in GCP Secret Manager; the names below are the secret IDs.
