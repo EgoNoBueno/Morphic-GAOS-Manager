@@ -190,6 +190,8 @@ The onboarding script (`tools/onboarding.py`) automates most of the `GAOS-Deploy
 
 ## 3. Onboarding Script — `tools/onboarding.py`
 
+> ⚠️ **Status — Planned, Not Yet Implemented:** `tools/onboarding.py` is the target design for a full interactive CLI wizard. It does not exist yet. For now, use `scripts/setup_workspace.py` for Drive/Sheets provisioning (Step 3 of the manual sequence) and complete the remaining steps in `GAOS-Deploy-Spec.md` manually. This section documents the intended implementation.
+
 The onboarding script is an interactive CLI wizard that:
 1. Checks that all required tools are installed and reachable
 2. Collects configuration values interactively
@@ -439,8 +441,8 @@ def write_settings_yaml(cfg: dict, state: dict):
         ok("settings.yaml already written — skipping")
         return
 
-    fast_model  = "gemini-2.0-flash"
-    deep_model  = "gemini-2.0-pro"
+    fast_model  = "gemini-2.5-flash"
+    deep_model  = "gemini-2.5-pro"
     local_model = f"ollama/{cfg['ollama_model']}"
 
     if cfg["privacy_topology"] == "local-first":
@@ -461,56 +463,46 @@ gcp:
 sheet:
   workbook_id: ""    # Fill in after creating the Google Sheet (GAOS-Deploy-Spec.md §4)
 
-drive:
-  knowledge_folder_id: ""    # Fill in after creating Drive folder (GAOS-Deploy-Spec.md §6)
+projects:
+  default:
+    sheet_id: ""            # Same as sheet.workbook_id above
+    drive_folder_id: ""     # Fill in after creating Drive folder (GAOS-Deploy-Spec.md §6)
 
 models:
   LOCAL_MODEL: "{local_model}"
   LOCAL_MODEL_FALLBACK: "{local_fallback}"
-  LOCAL_MODEL_TIMEOUT_SECONDS: 2
+  LOCAL_MODEL_TIMEOUT_SECONDS: 30
   FAST_MODEL: "{fast_model}"
   DEEP_MODEL: "{deep_model}"
 
-privacy:
-  topology: "{cfg['privacy_topology']}"   # standard | local-first
-  # data_classification enforcement — see GAOS-Privacy-Spec.md §4 Option A
-  # Set to true to enable the optional data_classification field on AgentInput
-  enable_data_classification: false
+memory_bank:
+  region: "us-central1"    # Change to us-west1 if corpora were created there
+  corpora: {{}}              # Populated by scripts/_create_corpora.py
 
 pubsub:
-  topic_prefix: "agent"
-  ack_deadline_seconds: 60
+  all_topics:
+    - agent.nexus-prime.events
+    - agent.ledger.events
+    - agent.beacon.events
+    - agent.pursuit.events
+    - agent.foreman.events
+    - agent.steward.events
+    - agent.scout.events
+    - agent.approvals.events
 
-bigquery:
-  dataset: "aos_logs"
+apps_script:
+  script_id: ""           # Fill in after Apps Script deploy (GAOS-Deploy-Spec.md §4.4)
+  deployment_id: ""       # Fill in after Apps Script deploy
+  webhook_url: ""         # Fill in after Apps Script deploy
 
-logging:
-  retention_days: 7
+chat:
+  owner_space: ""         # spaces/<id> — owner DM for morning briefings
 
-cost:
-  monthly_budget_alert_usd: {cfg['budget_usd']}
+docs:
+  blueprints_folder_id: ""  # Drive folder ID for Blueprint Docs
 
-operator:
-  owner_email: "{cfg['owner_email']}"
-  project_name: "{cfg['project_name']}"
-  onboarding_completed: "{datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')}"
-
-code_safety:
-  allowed_imports:
-    - google
-    - vertexai
-    - langchain
-    - pydantic
-    - datetime
-    - json
-    - re
-    - math
-    - typing
-    - collections
-    - itertools
-    - functools
-    - logging
-    - gspread
+# Note: code_safety.allowed_imports is NOT configured here.
+# The import allowlist is hardcoded in agents/__init__.py._ALLOWED_IMPORTS.
 """
 
     Path("config/settings.yaml").write_text(settings_content)
@@ -540,7 +532,7 @@ def run_smoke_tests(cfg: dict, state: dict):
         import google.genai as genai
         client = genai.Client(api_key=cfg["gemini_api_key"])
         resp = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents="Reply with the single word: READY"
         )
         gemini_ok = "READY" in (resp.text or "")
@@ -668,6 +660,9 @@ if __name__ == "__main__":
 Use this checklist after running the onboarding script. Check each item before starting the first agent.
 
 ### Automated by the script ✓
+
+> ⚠️ **`tools/onboarding.py` is not yet implemented.** All items below are manual until the script is built. Use `scripts/setup_workspace.py` for Drive/Sheets provisioning; complete the rest per `GAOS-Deploy-Spec.md`.
+
 - [ ] All prerequisite tools installed and reachable
 - [ ] GCP APIs enabled
 - [ ] 8 service accounts created
@@ -799,7 +794,7 @@ echo -n "<new-api-key>" | gcloud secrets versions add GEMINI_API_KEY \
   --data-file=- --project=$PROJECT
 
 # 2. Verify new version works (run smoke test)
-python tools/onboarding.py --resume   # only smoke tests run if rest is marked done
+python scripts/smoke_test_4.py   # verify Gemini API key works
 
 # 3. Disable old version (does not delete — keeps it for audit)
 OLD_VERSION=$(gcloud secrets versions list GEMINI_API_KEY \
