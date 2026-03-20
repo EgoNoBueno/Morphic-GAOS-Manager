@@ -63,7 +63,7 @@ class A2AMessage(BaseModel):
     message_type: MessageType
     priority: int = Field(ge=1, le=5)        # 1 (low) → 5 (critical)
     payload: dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(
+    timestamp: datetime = Field(  # datetime — published via Pub/Sub; model_dump_json() handles serialization
         default_factory=lambda: datetime.now(timezone.utc)
     )
     requires_ack: bool = False
@@ -98,7 +98,7 @@ class ApprovalProposal(BaseModel):
     total_cost_usd: float = 0.0
     proposed_code: str = ""
     status: ApprovalStatus = ApprovalStatus.PENDING
-    timestamp: datetime = Field(
+    timestamp: datetime = Field(  # datetime — to_sheet_row() calls .isoformat() explicitly; not written to BQ directly
         default_factory=lambda: datetime.now(timezone.utc)
     )
     approved_by: str = ""
@@ -150,7 +150,7 @@ class AgentOutput(BaseModel):
     status: Literal["success", "escalated", "failed"]
     result: dict[str, Any] = Field(default_factory=dict)  # Task-specific output
     cost_usd: float = 0.0       # Accumulated model cost for this task
-    timestamp: datetime = Field(
+    timestamp: datetime = Field(  # datetime — Pydantic-only; not written to BigQuery directly
         default_factory=lambda: datetime.now(timezone.utc)
     )
 
@@ -270,7 +270,7 @@ class MonologueFrame(BaseModel):
     partial_result_available: bool
     response_mode: Literal["Research", "Direct", "Reframe", "Tactical"]
     reasoning_summary: str
-    timestamp: str = Field(  # ISO 8601
+    timestamp: str = Field(  # str (not datetime) — model_dump() feeds insert_rows_json(); datetime is not JSON-serializable
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
 
@@ -292,7 +292,7 @@ class PlaybookDoc(BaseModel):
     project_id: str
     version: int = 1
     created_from_vision: str = ""  # task_id or Chat submission reference
-    last_updated: str = Field(
+    last_updated: str = Field(  # str (not datetime) — written to Drive as JSON; datetime is not JSON-serializable
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
     approved_by: str = ""
