@@ -461,11 +461,11 @@ gcp:
   region: "{cfg['region']}"
 
 sheet:
-  workbook_id: ""    # Fill in after creating the Google Sheet (GAOS-Deploy-Spec.md §4)
+  workbook_id: ""    # Template sheet cloned when provisioning new projects (GAOS-Deploy-Spec.md §4)
 
 projects:
   default:
-    sheet_id: ""            # Same as sheet.workbook_id above
+    sheet_id: ""            # Runtime workbook for the default project — set to the same ID as sheet.workbook_id in single-project deployments
     drive_folder_id: ""     # Fill in after creating Drive folder (GAOS-Deploy-Spec.md §6)
 
 models:
@@ -507,6 +507,15 @@ docs:
 
     Path("config/settings.yaml").write_text(settings_content)
     ok("config/settings.yaml written")
+
+> **Why two sheet fields?** `sheet.workbook_id` is the **template spreadsheet** — Nexus-Prime clones
+> it when provisioning each new project (`_clone_project_sheet()`). `projects.<id>.sheet_id` is the
+> **runtime workbook** that `tools/google_sheets.py` uses for every read/write operation. In a
+> single-project deployment both fields hold the same spreadsheet ID; in multi-project setups the
+> template remains pristine while each project's `sheet_id` points to its own clone.
+>
+> **Sync rule:** If you ever rotate or replace the spreadsheet, update **both** fields together.
+> `setup_workspace.py` always prints both lines side-by-side to reinforce this.
 
     mark_done(state, "settings_yaml_written")
     save_state(state)
