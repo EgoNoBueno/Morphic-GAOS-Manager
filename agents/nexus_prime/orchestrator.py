@@ -308,36 +308,45 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     state["_next_node"] = next_node  # type: ignore[typeddict-item]
 
     priority = _compute_priority(state)
-    context_trio = _load_context_trio()
-    prompt = _build_think_prompt(state, msg, priority)
 
-    try:
-        resp = _call_model(
-            prompt,
-            model=settings.models.FAST_MODEL,
-            system_prompt=context_trio,
-            parse_json=True,
-        )
-    except Exception as exc:
-        _log_cloud(
-            "nexus-prime", project_id, "task", task_id,
-            f"think: _call_model failed — {exc}", "WARNING",
-        )
-        return state
-
-    state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
-    state["tokens_used"] = state.get("tokens_used", 0) + resp.tokens_used
-
-    data = resp.data or {}
-
-    # Tactical override — priority >= 4 is always time-critical
+    # Tactical fast-path — skip the LLM call when priority >= 4; the mode is always
+    # "Tactical" regardless of what the model would return, so calling it wastes tokens.
     if priority >= 4:
-        data["response_mode"] = "Tactical"
+        data: dict = {
+            "response_mode": "Tactical",
+            "knowledge_gap_detected": False,
+            "knowledge_gap_description": "",
+            "partial_result_available": False,
+            "reasoning_summary": "High-priority message; Tactical mode applied without model call.",
+        }
+    else:
+        context_trio = _load_context_trio()
+        prompt = _build_think_prompt(state, msg, priority)
 
-    # Validate and normalise response_mode
-    _VALID_MODES = {"Research", "Direct", "Reframe", "Tactical"}
-    if data.get("response_mode") not in _VALID_MODES:
-        data["response_mode"] = "Research" if data.get("knowledge_gap_detected") else "Direct"
+        try:
+            resp = _call_model(
+                prompt,
+                model=settings.models.FAST_MODEL,
+                system_prompt=context_trio,
+                parse_json=True,
+            )
+        except Exception as exc:
+            _log_cloud(
+                "nexus-prime", project_id, "task", task_id,
+                f"think: _call_model failed — {exc}", "WARNING",
+            )
+            return state
+
+        state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+        state["tokens_used"] = state.get("tokens_used", 0) + resp.tokens_used
+
+        data = resp.data or {}
+        data.setdefault("reasoning_summary", resp.text[:500])
+
+        # Validate and normalise response_mode
+        _VALID_MODES = {"Research", "Direct", "Reframe", "Tactical"}
+        if data.get("response_mode") not in _VALID_MODES:
+            data["response_mode"] = "Research" if data.get("knowledge_gap_detected") else "Direct"
 
     try:
         frame = MonologueFrame(
@@ -347,7 +356,7 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             knowledge_gap_description=str(data.get("knowledge_gap_description", "")),
             partial_result_available=bool(data.get("partial_result_available", False)),
             response_mode=data["response_mode"],
-            reasoning_summary=str(data.get("reasoning_summary", resp.text[:500])),
+            reasoning_summary=str(data.get("reasoning_summary", "")),
             timestamp=utcnow_iso(),
         )
     except Exception as exc:

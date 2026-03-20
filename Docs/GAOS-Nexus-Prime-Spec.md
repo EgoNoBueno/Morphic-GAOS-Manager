@@ -239,31 +239,39 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     state["_next_node"] = next_node
 
     priority = _compute_priority(state)
-    context_trio = _load_context_trio()
-    prompt = _build_think_prompt(state, msg, priority)
 
-    try:
-        resp = _call_model(
-            prompt,
-            model=settings.models.FAST_MODEL,
-            system_prompt=context_trio,
-            parse_json=True,
-        )
-    except Exception as exc:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"think: _call_model failed — {exc}", "WARNING")
-        return state   # Fallback: skip MonologueFrame, don't block pipeline
-
-    data = resp.data or {}
-
-    # Tactical override — priority >= 4 is always time-critical
+    # Tactical fast-path — skip the LLM call when priority >= 4; result is always "Tactical"
     if priority >= 4:
-        data["response_mode"] = "Tactical"
+        data = {
+            "response_mode": "Tactical",
+            "knowledge_gap_detected": False,
+            "knowledge_gap_description": "",
+            "partial_result_available": False,
+            "reasoning_summary": "High-priority message; Tactical mode applied without model call.",
+        }
+    else:
+        context_trio = _load_context_trio()
+        prompt = _build_think_prompt(state, msg, priority)
 
-    # Validate response_mode
-    _VALID_MODES = {"Research", "Direct", "Reframe", "Tactical"}
-    if data.get("response_mode") not in _VALID_MODES:
-        data["response_mode"] = "Research" if data.get("knowledge_gap_detected") else "Direct"
+        try:
+            resp = _call_model(
+                prompt,
+                model=settings.models.FAST_MODEL,
+                system_prompt=context_trio,
+                parse_json=True,
+            )
+        except Exception as exc:
+            _log_cloud("nexus-prime", project_id, "task", task_id,
+                       f"think: _call_model failed — {exc}", "WARNING")
+            return state   # Fallback: skip MonologueFrame, don't block pipeline
+
+        data = resp.data or {}
+        data.setdefault("reasoning_summary", resp.text[:500])
+
+        # Validate and normalise response_mode
+        _VALID_MODES = {"Research", "Direct", "Reframe", "Tactical"}
+        if data.get("response_mode") not in _VALID_MODES:
+            data["response_mode"] = "Research" if data.get("knowledge_gap_detected") else "Direct"
 
     frame = MonologueFrame(
         task_id=task_id,
