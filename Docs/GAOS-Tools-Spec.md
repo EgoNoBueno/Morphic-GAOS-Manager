@@ -920,6 +920,330 @@ class ChatConfigError(Exception):
     """Chat is not configured (missing space or credentials)."""
 
 class ChatEventParseError(Exception):
+    """Inbound Chat event body is missing required fields."""
+```
+
+---
+
+## 12. `tools/web_search.py`
+
+Lightweight DuckDuckGo Instant Answer lookup used exclusively by `_call_model()` (§10) to inject real-world context into Ollama prompts when `web_access=True`. Requires no API key and has no per-query cost.
+
+> **Do not call this module directly from orchestrators.** It is an internal dependency of `_call_model()`. Orchestrators enable web context by passing `web_access=True` to `_call_model()`.
+
+```python
+def web_search(query: str, max_results: int = 5) -> str:
+    """
+    Query the DuckDuckGo Instant Answer API and return a formatted snippet string.
+
+    Called internally by ``_call_model()`` when ``web_access=True``.
+
+    Args:
+        query:       Natural-language search query.
+        max_results: Maximum number of related-topic snippets to include (default 5).
+
+    Returns:
+        Formatted string with AbstractText + up to max_results RelatedTopics,
+        suitable for prepending to an Ollama prompt.
+        Returns empty string ``""`` if the request fails for any reason
+        (timeout, network error, JSON parse failure, or empty results).
+        Failure is silent — the caller still receives a valid (non-web-augmented)
+        response from Ollama.
+    """
+```
+
+### Implementation Notes
+
+- **No API key:** Uses the public DuckDuckGo Instant Answer API (`https://api.duckduckgo.com/?format=json`).
+- **Timeout:** 5 seconds. Faster than Ollama's own timeout — failures do not block the LLM call.
+- **Silent failure:** All exceptions (`TimeoutException`, `ConnectError`, `HTTPStatusError`, `ValueError`) are caught and logged as `WARNING`; the function returns `""`. This ensures `_call_model()` never fails due to a web search error.
+- **No `project_id`:** DuckDuckGo is a public endpoint — no GCP scoping needed.
+- **Privacy note:** The query string is sent to DuckDuckGo in plaintext. Do not call with prompts containing PII or customer data. See `AI-Autocoding-Rules.md §7`.
+
+---
+
+## 15. `tools/vertex_search.py`
+
+Semantic search over the project's `Knowledge/` Drive corpus indexed by Vertex AI Search (Discovery Engine). Provides read-only ranked retrieval — indexing and sync are configured at the GCP project level and are outside this module's scope.
+
+> **Spec reference:** `GAOS-Memory-Spec.md §3 (Layer 5b — Blueprint Factory)`
+
+```python
+from google.cloud import discoveryengine_v1 as discoveryengine
+
+def search_knowledge(
+    query: str,
+    project_id: str,
+    datastore_id: str,
+    max_results: int = 5,
+) -> list[dict]:
+    """
+    Run a semantic search against a Vertex AI Search datastore.
+
+    Args:
+        query:        Natural-language search query.
+        project_id:   AOS project namespace (used to resolve GCP project ID from settings).
+        datastore_id: Vertex AI Search datastore short-form ID
+                      (e.g., ``"gaos-playbooks_1234567890123"``).
+        max_results:  Maximum number of results to return (default 5).
+
+    Returns:
+        List of dicts with keys: ``id``, ``title``, ``snippet``, ``link``.
+        Returns an empty list if the query is blank or yields no results.
+
+    Raises:
+        DatastoreNotConfiguredError: ``datastore_id`` is empty.
+        VertexSearchError:           Discovery Engine API failure.
+    """
+
+def query_playbooks(
+    query: str,
+    project_id: str,
+    max_results: int = 5,
+) -> list[dict]:
+    """
+    Convenience wrapper: search the configured playbooks datastore.
+
+    Uses ``settings.vertex_search.playbook_datastore_id``.
+
+    Raises:
+        DatastoreNotConfiguredError: ``playbook_datastore_id`` not set in settings.yaml.
+        VertexSearchError: API failure.
+    """
+
+def query_domain_knowledge(
+    query: str,
+    project_id: str,
+    max_results: int = 5,
+) -> list[dict]:
+    """
+    Convenience wrapper: search the configured general-knowledge datastore.
+
+    Uses ``settings.vertex_search.knowledge_datastore_id``.
+
+    Raises:
+        DatastoreNotConfiguredError: ``knowledge_datastore_id`` not set in settings.yaml.
+        VertexSearchError: API failure.
+    """
+```
+
+### Error Types
+
+```python
+class VertexSearchError(Exception):
+    """Unrecoverable Vertex AI Search (Discovery Engine) API error."""
+
+class DatastoreNotConfiguredError(Exception):
+    """Required datastore ID is missing from settings.yaml."""
+```
+
+### Settings Keys
+
+| Key | Description |
+|-----|-------------|
+| `vertex_search.location` | Discovery Engine location (default: `"global"`) |
+| `vertex_search.playbook_datastore_id` | Datastore ID for `query_playbooks()` |
+| `vertex_search.knowledge_datastore_id` | Datastore ID for `query_domain_knowledge()` |
+
+### Access Pattern
+
+Orchestrators call `query_playbooks()` or `query_domain_knowledge()` at boot time or on-demand. Results are passed directly into the agent's reasoning prompt. The module uses deferred import of `google.cloud.discoveryengine_v1` to avoid import-time SDK cost when the module is not used.
+
+---
+
+## 16. `tools/google_docs.py`
+
+Google Docs integration for creating and reading Blueprint Docs and Playbooks. Used by the Blueprint Factory (`vision_blueprint` node in Nexus-Prime) to generate structured project documents, and by the `ITERATE_PLAN` node to poll for owner comments.
+
+> **Spec reference:** `GAOS-Memory-Spec.md §3 (Layer 5b — Blueprint Factory)`
+
+```python
+from googleapiclient.discovery import build
+
+def create_document(
+    title: str,
+    project_id: str,
+    folder_id: str | None = None,
+    initial_content: str = "",
+) -> str:
+    """
+    Create a new Google Doc and optionally place it in a Drive folder.
+
+    Args:
+        title:           Document title (required, non-empty).
+        project_id:      AOS project namespace (for audit context).
+        folder_id:       Drive folder ID to place the document in. If ``None``,
+                         uses ``settings.docs.blueprints_folder_id``; if that is
+                         also empty, the document is created in the account root.
+        initial_content: Optional text to insert into the document body immediately
+                         after creation.
+
+    Returns:
+        The document ID string of the newly created Google Doc.
+
+    Raises:
+        ValueError:   ``title`` is empty.
+        DocsApiError: Google Docs or Drive API failure.
+    """
+
+def read_document(doc_id: str, project_id: str) -> str:
+    """
+    Read the full plain-text content of a Google Doc.
+
+    Args:
+        doc_id:      The document ID.
+        project_id:  AOS project namespace.
+
+    Returns:
+        The document body as a plain-text string (newlines preserved).
+        Returns an empty string if the document has no text content.
+
+    Raises:
+        DocumentNotFoundError: The document does not exist or is not accessible.
+        DocsApiError:          Google Docs API failure (non-404).
+    """
+
+def append_content(doc_id: str, content: str, project_id: str) -> None:
+    """
+    Append text to the end of an existing Google Doc.
+
+    The text is inserted at the last valid body index, preserving all existing
+    content. Empty ``content`` is a no-op.
+
+    Args:
+        doc_id:      The document ID.
+        content:     Text to append.
+        project_id:  AOS project namespace.
+
+    Raises:
+        DocumentNotFoundError: The document does not exist or is not accessible.
+        DocsApiError:          Google Docs API failure.
+    """
+
+def list_comments(doc_id: str, project_id: str) -> list[dict]:
+    """
+    List all unresolved comments on a Google Doc via the Drive Comments API.
+
+    Used by the ``doc-comment-poll`` Cloud Scheduler job to feed owner feedback
+    into the ``ITERATE_PLAN`` node in Nexus-Prime.
+
+    Args:
+        doc_id:      The document ID (same as the Drive file ID).
+        project_id:  AOS project namespace.
+
+    Returns:
+        List of comment dicts, each with keys:
+            ``id``         — comment resource ID
+            ``content``    — comment text
+            ``author``     — commenter's display name
+            ``created_at`` — ISO 8601 timestamp string
+            ``resolved``   — ``True`` if the comment thread is resolved
+
+    Raises:
+        DocumentNotFoundError: The document does not exist or is not accessible.
+        DocsApiError:          Google Drive API failure.
+    """
+```
+
+### Error Types
+
+```python
+class DocsApiError(Exception):
+    """Unrecoverable Google Docs or Drive API error."""
+
+class DocumentNotFoundError(Exception):
+    """The requested document does not exist or is not accessible."""
+```
+
+### Authentication
+
+Uses a Google service account with `documents` + `drive` scopes. Key path is loaded from `settings.docs.service_account_key`; falls back to ADC (Application Default Credentials — preferred on Cloud Run and in local dev with `oauth-client.json`).
+
+### Settings Keys
+
+| Key | Description |
+|-----|-------------|
+| `docs.service_account_key` | Path to service account JSON key (optional; ADC used if absent) |
+| `docs.blueprints_folder_id` | Drive folder ID where Blueprint Docs are created by default |
+
+---
+
+## 17. `tools/google_search.py`
+
+Google Custom Search API wrapper for Scout's deep web research during `RESEARCH_MANDATE` tasks. Requires a Custom Search Engine (CX) and an API key, both stored in Secret Manager.
+
+> **Spec reference:** `GAOS-Agent-Spec.md` (Scout `_discover` node) · `GAOS-Project-Glossary.md` (CX, RESEARCH_MANDATE)
+
+```python
+def search(
+    query: str,
+    project_id: str,
+    num: int = 10,
+) -> list[dict]:
+    """
+    Execute a single Google Custom Search query.
+
+    Secrets fetched at call time: ``GOOGLE_SEARCH_API_KEY``, ``GOOGLE_SEARCH_CX``.
+
+    Args:
+        query:      Search query string.
+        project_id: GCP project for Secret Manager access (API key + CX).
+        num:        Max results to return (1–10; Google API hard cap is 10).
+
+    Returns:
+        List of dicts: ``[{title, url, snippet, date}, ...]``
+        Returns empty list when query is blank or no results found.
+
+    Raises:
+        GoogleSearchError: API error response, quota exceeded (429/403), or
+                           credentials not available in Secret Manager.
+    """
+
+def research_topic(
+    queries: list[str],
+    project_id: str,
+    max_queries: int = 15,
+) -> list[dict]:
+    """
+    Execute multiple Google Custom Search queries, deduplicating results by URL.
+
+    Queries are executed in order up to ``max_queries``. Failed individual
+    queries are logged as ``WARNING`` and skipped — remaining queries still run.
+    Results from all queries are merged into a single deduplicated list.
+
+    Args:
+        queries:     List of search query strings.
+        project_id:  GCP project for Secret Manager access.
+        max_queries: Hard cap on total queries executed (default 15, matching
+                     ``settings.google_search.max_queries_per_mandate``).
+
+    Returns:
+        Deduplicated list of result dicts: ``[{title, url, snippet, date}, ...]``
+        Empty list if all queries fail or the input list is empty.
+    """
+```
+
+### Error Types
+
+```python
+class GoogleSearchError(Exception):
+    """Search API call failed, quota exceeded, or credentials unavailable."""
+```
+
+### Rate Limit
+
+The Google Custom Search API free tier allows **100 queries per day**. `research_topic()` caps execution at `max_queries` (default 15) per mandate to prevent inadvertent quota exhaustion. Monitor daily usage in Cloud Monitoring if Scout runs multiple mandates per day.
+
+### Secrets Required
+
+| Secret Name | Description |
+|-------------|-------------|
+| `GOOGLE_SEARCH_API_KEY` | Google API key with Custom Search API enabled |
+| `GOOGLE_SEARCH_CX` | Custom Search Engine ID (CX), created in Google Programmable Search Engine console |
+
+Both secrets are fetched via `tools.secrets.get_secret()` at call-time — never stored in `settings.yaml` or environment variables.
+
+class ChatEventParseError(Exception):
     """Inbound Chat push payload is missing required fields."""
 ```
 
