@@ -776,6 +776,53 @@ client.create_table(table, exists_ok=True)
 print('monologue_frames: created')
 ```
 
+> ⚠️ **Warning — `exists_ok=True` will NOT alter an existing table:** If `monologue_frames` already exists with `timestamp STRING` and ingestion-time partitioning, `create_table(..., exists_ok=True)` silently succeeds without applying any schema changes. The new schema only takes effect on a fresh table.
+
+> ⚠️ **Warning — breaking change for existing deployments:** Switching from `STRING` to `TIMESTAMP` and from ingestion-time to field-based partitioning is a non-backward-compatible change. Existing rows written with a plain ISO 8601 string into a `STRING` column will not be compatible with the new `TIMESTAMP` schema without a migration.
+
+**Migration path for existing deployments:**
+
+```sql
+-- Step 1: Create the replacement table with the correct schema (run the script above with a temp name).
+--         Replace 'monologue_frames_new' in the script, then run it.
+
+-- Step 2: Copy existing data, casting the STRING timestamp to TIMESTAMP.
+INSERT INTO `morphic-gaos-prod.aos_logs.monologue_frames_new`
+SELECT
+  task_id,
+  project_id,
+  knowledge_gap_detected,
+  knowledge_gap_description,
+  partial_result_available,
+  response_mode,
+  reasoning_summary,
+  CAST(timestamp AS TIMESTAMP) AS timestamp
+FROM `morphic-gaos-prod.aos_logs.monologue_frames`;
+
+-- Step 3: Verify row counts match.
+SELECT COUNT(*) FROM `morphic-gaos-prod.aos_logs.monologue_frames`;
+SELECT COUNT(*) FROM `morphic-gaos-prod.aos_logs.monologue_frames_new`;
+
+-- Step 4: Drop the old table and rename the new one.
+DROP TABLE `morphic-gaos-prod.aos_logs.monologue_frames`;
+ALTER TABLE `morphic-gaos-prod.aos_logs.monologue_frames_new`
+  RENAME TO `monologue_frames`;
+```
+
+> **Note:** Steps 2–4 require `roles/bigquery.dataEditor` on the dataset and `roles/bigquery.dataViewer` on the source table. No IAM changes to existing service accounts are required for the migration itself.
+
+**Writer compatibility — TIMESTAMP-compatible values:**
+
+`insert_rows_json` accepts both Python `datetime` objects and ISO 8601 strings for `TIMESTAMP` columns. All writers sending to `monologue_frames` must use one of the following formats:
+
+| Format | Example | Notes |
+|--------|---------|-------|
+| ISO 8601 with UTC offset | `"2026-03-20T10:30:00Z"` | `utcnow_iso()` already produces this format — no code change needed |
+| ISO 8601 with explicit offset | `"2026-03-20T10:30:00+00:00"` | Also accepted |
+| Python `datetime` (timezone-aware) | `datetime.now(timezone.utc)` | Automatically serialized by the BQ client |
+
+`MonologueFrame.timestamp` is typed as `str` and populated via `utcnow_iso()` (`datetime.now(timezone.utc).isoformat()`), which produces `"2026-03-20T10:30:00.123456+00:00"` — a valid ISO 8601 UTC timestamp that BigQuery accepts for `TIMESTAMP` columns through `insert_rows_json`. No changes to `models/__init__.py` or `agents/nexus_prime/orchestrator.py` are required.
+
 **Verification:** In BigQuery console, expand `aos_logs` dataset — 6 tables listed.
 
 ---
