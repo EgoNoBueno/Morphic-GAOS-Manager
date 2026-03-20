@@ -96,11 +96,22 @@ Code that fails either gate is a hard stop — log the failure, do not submit, d
 > ⚠️ **Warning — patch where the name is *used*, not where it's *defined*:** When an orchestrator does `from agents import _log_cloud` at module level, Python creates a **local binding** in that module at import time. `patch("agents._log_cloud")` replaces the attribute on the `agents` package but does **not** affect the already-bound local reference in the cached submodule — the real function still runs. Always target the consuming module instead:
 >
 > ```python
-> # ❌ Wrong — patches the source, not the consumer's local copy
+> # agents/nexus_prime/orchestrator.py (the consuming module) has at its top:
+> #   from agents import _log_cloud, _write_heartbeat
+> # These lines bind the names inside orchestrator's own namespace at import time.
+> # Patching the source module after that point has no effect on the local copies.
+>
+> # ❌ Wrong — patches agents._log_cloud in the source package, but
+> #            orchestrator._log_cloud already points to the real function
 > with patch("agents._log_cloud"):
 >
-> # ✅ Correct — patches the reference the orchestrator actually calls
+> # ✅ Correct — patches the local binding in the consuming module that the
+> #              orchestrator actually calls at runtime
 > with patch("agents.nexus_prime.orchestrator._log_cloud"):
+>
+> # Apply the same pattern to every from-import you need to intercept:
+> #   patch("agents.nexus_prime.orchestrator._write_heartbeat")  ✅
+> #   patch("agents.beacon.orchestrator._log_cloud")             ✅
 > ```
 >
 > **Violation symptom:** test hangs indefinitely on a gRPC `next_event()` call inside Cloud Logging. Apply this pattern to every module-level `from X import Y` that you need to intercept — `_log_cloud`, `_write_heartbeat`, and any future shared helpers imported the same way.
