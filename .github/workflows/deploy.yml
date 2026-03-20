@@ -16,11 +16,11 @@ on:
   push:
     branches: [master]
 
-# Prevent overlapping deployments to the same branch. A newer push cancels
-# any pending run for the same branch so stale plans never reach Apply.
-concurrency:
-  group: deploy-${{ github.ref }}
-  cancel-in-progress: true
+# Prevent overlapping deployments to the same branch. Concurrency is enforced
+# per-job so that a newer push can cancel a stale build or plan, but can never
+# interrupt an in-flight apply and leave infrastructure half-applied.
+# The apply job additionally relies on the "production" GitHub Environment, which
+# provides a required-reviewer gate and its own serialization across all runs.
 
 permissions:
   id-token: write   # Required: allows the workflow to request an OIDC token for WIF
@@ -37,6 +37,11 @@ jobs:
   build:
     name: Build & Push Image
     runs-on: ubuntu-latest
+    # A newer push cancels any queued or in-progress build — stale images should not
+    # block the queue. Safe to cancel because no infra state is touched here.
+    concurrency:
+      group: build-${{ github.ref }}
+      cancel-in-progress: true
 
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +68,11 @@ jobs:
     name: OpenTofu Plan
     runs-on: ubuntu-latest
     needs: build
+    # A newer push cancels any queued or in-progress plan — stale plans must not
+    # reach the apply gate. Safe to cancel because tofu plan makes no changes.
+    concurrency:
+      group: plan-${{ github.ref }}
+      cancel-in-progress: true
 
     steps:
       - uses: actions/checkout@v4
@@ -99,6 +109,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: plan
     environment: production   # GitHub Environment with required reviewer — this is the human gate
+    # cancel-in-progress: false (the default) — an in-flight apply must never be
+    # interrupted mid-run or infrastructure will be left in a partial state.
+    # Serialization across concurrent runs is handled by the 'production' GitHub
+    # Environment, which queues additional runs until the active one completes.
+    concurrency:
+      group: apply-${{ github.ref }}
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@v4
