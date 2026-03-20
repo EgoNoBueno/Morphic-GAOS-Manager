@@ -471,7 +471,7 @@ projects:
 models:
   LOCAL_MODEL: "{local_model}"
   LOCAL_MODEL_FALLBACK: "{local_fallback}"
-  LOCAL_MODEL_TIMEOUT_SECONDS: 30
+  LOCAL_MODEL_TIMEOUT_SECONDS: 30  # Seconds before falling back to LOCAL_MODEL_FALLBACK; 30 s accommodates slower CPU-only inference — lower if your GPU responds faster
   FAST_MODEL: "{fast_model}"
   DEEP_MODEL: "{deep_model}"
 
