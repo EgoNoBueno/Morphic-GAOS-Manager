@@ -1,7 +1,7 @@
 """
 tests/test_google_chat.py — Unit tests for tools/google_chat.py and the POST /chat endpoint.
 
-TestGoogleChatTool (12 tests):
+TestGoogleChatTool (14 tests):
   C1   send_message raises ChatConfigError on empty space_name.
   C2   send_message truncates text longer than 4096 chars.
   C3   send_message calls Chat API with correct parent and body.
@@ -9,21 +9,24 @@ TestGoogleChatTool (12 tests):
   C5   send_card raises ChatConfigError on empty space_name.
   C6   send_card builds a cardsV2 body and calls the API.
   C7   send_approval_card raises ChatConfigError on empty proposal_id.
-  C8   send_approval_card card contains Approve and Reject buttons.
+  C8   send_approval_card card contains Approve and Reject buttons (any section).
   C9   send_approval_card includes View Blueprint button only when doc_url provided.
   C10  send_skill_import_card raises ChatConfigError on empty package_name.
   C11  send_skill_import_card card contains Install and Deny buttons.
   C12  parse_chat_event raises ChatEventParseError on missing 'type' field.
+  C13  send_approval_card with reasoning_summary creates a dedicated reasoning section.
+  C14  send_approval_card without reasoning_summary produces exactly two sections.
 
-TestParseChatEvent (6 tests):
+TestParseChatEvent (7 tests):
   P1   MESSAGE event returns correct event_type, text, sender_email.
   P2   CARD_CLICKED approve event returns action_name='approve' + parameters.
   P3   CARD_CLICKED reject returns action_name='reject'.
   P4   CARD_CLICKED skill_approve returns action_name and package_name parameter.
   P5   ADDED_TO_SPACE returns event_type without error.
   P6   Unknown CARD_CLICKED action still parses without exception.
+  P7   MESSAGE with image attachment extracts download_uri and content_type.
 
-TestChatEndpoint (7 tests):
+TestChatEndpoint (8 tests):
   E1   POST /chat with MESSAGE body dispatches CHAT_MESSAGE to agent.run().
   E2   POST /chat with CARD_CLICKED approve dispatches APPROVAL_RESULT.
   E3   POST /chat with CARD_CLICKED reject dispatches APPROVAL_RESULT with status Rejected.
@@ -31,6 +34,7 @@ TestChatEndpoint (7 tests):
   E5   POST /chat with ADDED_TO_SPACE returns 200 without calling agent.run().
   E6   POST /chat with unrecognised action returns 200 without calling agent.run().
   E7   POST /chat returns 404 when AGENT_NAME != nexus-prime.
+  E8   POST /chat with image attachment dispatches VISION_SUBMITTED via vision extract.
 """
 from __future__ import annotations
 
@@ -189,8 +193,9 @@ class TestGoogleChatTool:
             send_approval_card(_SPACE, _PROPOSAL_ID, "beacon", "issue text", "action text", 4, 0.01)
 
         card = captured["body"]["cardsV2"][0]["card"]
-        widgets = card["sections"][0]["widgets"]
-        button_list = next(w for w in widgets if "buttonList" in w)
+        # Buttons live in the last (Decision) section; search all sections for robustness.
+        all_widgets = [w for sec in card["sections"] for w in sec["widgets"]]
+        button_list = next(w for w in all_widgets if "buttonList" in w)
         action_names = [
             b["onClick"]["action"]["actionMethodName"]
             for b in button_list["buttonList"]["buttons"]
@@ -210,14 +215,46 @@ class TestGoogleChatTool:
             )
 
         card = captured["body"]["cardsV2"][0]["card"]
-        widgets = card["sections"][0]["widgets"]
-        button_list = next(w for w in widgets if "buttonList" in w)
+        all_widgets = [w for sec in card["sections"] for w in sec["widgets"]]
+        button_list = next(w for w in all_widgets if "buttonList" in w)
         open_link_texts = [
             b["text"]
             for b in button_list["buttonList"]["buttons"]
             if "openLink" in b.get("onClick", {})
         ]
         assert "View Blueprint" in open_link_texts
+
+    # C13
+    def test_send_approval_card_reasoning_summary_creates_section(self):
+        captured: dict = {}
+        svc = _fake_service(captured)
+        with patch("tools.google_chat._get_chat_service", return_value=svc):
+            send_approval_card(
+                _SPACE, _PROPOSAL_ID, "beacon", "issue", "action", 4, 0.0,
+                reasoning_summary="Detected 3 unmatched invoices; shifting to Research mode.",
+            )
+
+        card = captured["body"]["cardsV2"][0]["card"]
+        # With reasoning_summary, card must have 3 sections.
+        assert len(card["sections"]) == 3
+        # Second section must contain the reasoning text.
+        reasoning_widgets = card["sections"][1]["widgets"]
+        texts = [
+            w["textParagraph"]["text"]
+            for w in reasoning_widgets
+            if "textParagraph" in w
+        ]
+        assert any("unmatched invoices" in t for t in texts)
+
+    # C14
+    def test_send_approval_card_without_reasoning_produces_two_sections(self):
+        captured: dict = {}
+        svc = _fake_service(captured)
+        with patch("tools.google_chat._get_chat_service", return_value=svc):
+            send_approval_card(_SPACE, _PROPOSAL_ID, "beacon", "issue", "action", 4, 0.0)
+
+        card = captured["body"]["cardsV2"][0]["card"]
+        assert len(card["sections"]) == 2
 
     # C10
     def test_send_skill_import_card_raises_on_empty_package_name(self):
@@ -327,6 +364,35 @@ class TestParseChatEvent:
         event = parse_chat_event(self._card_clicked_body("unknown_action"))
         assert event["action_name"] == "unknown_action"
         assert event["parameters"] == {}
+
+    # P7
+    def test_message_with_image_attachment_extracts_attachment_info(self):
+        body = {
+            "type": "MESSAGE",
+            "space": {"name": _SPACE},
+            "user": {"email": "owner@example.com"},
+            "message": {
+                "text": "",
+                "name": f"{_SPACE}/messages/msg-3",
+                "attachment": [
+                    {
+                        "name": f"{_SPACE}/messages/msg-3/attachments/att-1",
+                        "contentType": "image/jpeg",
+                        "contentName": "blueprint.jpg",
+                        "attachmentDataRef": {
+                            "resourceName": "spaces/.../attachments/...",
+                            "downloadUri": "https://chat.googleapis.com/v1/media/attach-xyz",
+                        },
+                    }
+                ],
+            },
+        }
+        event = parse_chat_event(body)
+        assert len(event["attachments"]) == 1
+        att = event["attachments"][0]
+        assert att["content_type"] == "image/jpeg"
+        assert att["content_name"] == "blueprint.jpg"
+        assert att["download_uri"] == "https://chat.googleapis.com/v1/media/attach-xyz"
 
 
 # ── TestChatEndpoint ──────────────────────────────────────────────────────
@@ -520,3 +586,56 @@ class TestChatEndpoint:
             patcher.stop()
 
         assert resp.status_code == 404
+
+    # E8
+    def test_image_attachment_dispatches_vision_submitted(self):
+        """MESSAGE with an image attachment should dispatch VISION_SUBMITTED after
+        vision extraction via _call_model, not CHAT_MESSAGE."""
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(return_value=MagicMock(task_id="t8"))
+
+        body = {
+            "type": "MESSAGE",
+            "space": {"name": self._SPACE},
+            "user": {"email": "owner@example.com"},
+            "message": {
+                "text": "",
+                "name": f"{self._SPACE}/messages/m8",
+                "attachment": [
+                    {
+                        "name": f"{self._SPACE}/messages/m8/attachments/att-1",
+                        "contentType": "image/jpeg",
+                        "contentName": "vision.jpg",
+                        "attachmentDataRef": {
+                            "downloadUri": "https://chat.googleapis.com/v1/media/fake",
+                        },
+                    }
+                ],
+            },
+        }
+
+        from agents import ModelResponse
+
+        mock_vision_resp = ModelResponse(
+            text="A whiteboard showing a loyalty workflow with 5 steps.",
+            cost_usd=0.0,
+            tokens_used=120,
+            data={},
+        )
+
+        client, main_mod, patcher = self._reloaded_client(mock_agent)
+        try:
+            with (
+                patch.object(main_mod, "_download_chat_attachment", return_value=b"fake-image-bytes"),
+                patch("agents._call_model", return_value=mock_vision_resp),
+            ):
+                resp = client.post("/chat", json=body, headers=self._HEADERS)
+        finally:
+            patcher.stop()
+
+        assert resp.status_code == 200
+        msg = _extract_envelope(mock_agent.run.call_args)
+        assert msg["message_type"] == "VISION_SUBMITTED"
+        assert "whiteboard" in msg["payload"]["vision_text"]
+        assert msg["payload"]["vision_source"] == "image"
+        assert msg["payload"]["submitted_by"] == "owner@example.com"

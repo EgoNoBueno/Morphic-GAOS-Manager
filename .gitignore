@@ -73,3 +73,9 @@ SKILLS_LOG.md
 
 test_quality.txt
 test_results_fresh.txt
+
+# OpenTofu / Terraform
+.terraform/
+*.tfplan
+crash.log
+crash.*.log

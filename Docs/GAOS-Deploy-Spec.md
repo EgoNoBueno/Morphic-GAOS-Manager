@@ -171,6 +171,10 @@ done
 # Apps Script service account (for Sheets + Drive access from Apps Script)
 gcloud iam service-accounts create apps-script-sa \
   --display-name="Apps Script Sheets/Drive Integration"
+
+# CI/CD deployer service account (used by GitHub Actions — no human login)
+gcloud iam service-accounts create deployer-sa \
+  --display-name="OpenTofu CI/CD Deployer"
 ```
 
 ### 2.2 Assign IAM Roles
@@ -210,7 +214,35 @@ done
 # No project-level IAM needed. Sheets and Drive access for apps-script-sa is
 # granted at the file level when setup_workspace.py shares the root Drive folder
 # with all service account emails (see §4.1). No gcloud command required here.
+
+# ── CI/CD Deployer SA — used by GitHub Actions OpenTofu pipeline (see §9.3) ──
+# Cloud Run admin: create/update services
+gcloud projects add-iam-policy-binding $PROJECT \
+  --member="serviceAccount:deployer-sa@${PROJECT}.iam.gserviceaccount.com" \
+  --role="roles/run.admin"
+# Artifact Registry: push container images
+gcloud artifacts repositories add-iam-policy-binding cloud-run-source-deploy \
+  --location=us-central1 --project=$PROJECT \
+  --member="serviceAccount:deployer-sa@${PROJECT}.iam.gserviceaccount.com" \
+  --role="roles/artifactregistry.writer"
+# GCS: read/write OpenTofu state in the tfstate bucket
+gcloud storage buckets add-iam-policy-binding gs://morphic-gaos-tfstate \
+  --member="serviceAccount:deployer-sa@${PROJECT}.iam.gserviceaccount.com" \
+  --role="roles/storage.objectAdmin"
+# actAs: deployer-sa must be allowed to assign each agent SA to its Cloud Run
+# service. Bound per-SA (not project-level) per the principle of least privilege.
+for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
+  gcloud iam service-accounts add-iam-policy-binding \
+    ${agent}-sa@${PROJECT}.iam.gserviceaccount.com \
+    --member="serviceAccount:deployer-sa@${PROJECT}.iam.gserviceaccount.com" \
+    --role="roles/iam.serviceAccountUser" \
+    --project=$PROJECT
+done
 ```
+
+> ⚠️ **Warning — `roles/iam.serviceAccountUser` must be scoped per-SA, not project-wide.**
+> A project-level binding lets the deployer impersonate any SA in the project, including
+> those with elevated permissions. Always bind on the individual agent SA resource.
 
 ### 2.3 Service Account Identity
 
@@ -714,22 +746,26 @@ print('memory_entries: created')
 
 ```python
 # Schema: monologue_frames
+# Written by Nexus-Prime's think node before each output-producing decision.
+# IAM: nexus-prime-sa already holds roles/bigquery.dataEditor on the dataset
+#       — no additional table-level grants required.
 from google.cloud import bigquery
 client = bigquery.Client(project='morphic-gaos-prod')
 table = bigquery.Table(
     'morphic-gaos-prod.aos_logs.monologue_frames',
     schema=[
-        bigquery.SchemaField('frame_id', 'STRING'),
-        bigquery.SchemaField('project_id', 'STRING'),
         bigquery.SchemaField('task_id', 'STRING'),
-        bigquery.SchemaField('response_mode', 'STRING'),
+        bigquery.SchemaField('project_id', 'STRING'),
+        bigquery.SchemaField('knowledge_gap_detected', 'BOOL'),
+        bigquery.SchemaField('knowledge_gap_description', 'STRING'),
+        bigquery.SchemaField('partial_result_available', 'BOOL'),
+        bigquery.SchemaField('response_mode', 'STRING'),   # Direct|Reframe|Research|Tactical
         bigquery.SchemaField('reasoning_summary', 'STRING'),
-        bigquery.SchemaField('log_date', 'DATE'),
-        bigquery.SchemaField('created_at', 'TIMESTAMP'),
+        bigquery.SchemaField('timestamp', 'STRING'),       # ISO 8601 from utcnow_iso()
     ],
 )
 table.time_partitioning = bigquery.TimePartitioning(
-    field='log_date', expiration_ms=90 * 86_400_000,
+    expiration_ms=90 * 86_400_000,
 )
 client.create_table(table, exists_ok=True)
 print('monologue_frames: created')
@@ -808,6 +844,11 @@ apps_script:
 ## 9. Cloud Run Services
 
 ### 9.1 Build and Deploy Each Agent
+
+> **OpenTofu supersession:** The IaC pipeline in §9.3 supersedes the manual Cloud Run
+> deployment loop in this section (Step 2 onward). The prerequisites block and Step 1
+> (image build) remain here for reference and one-time bootstrap. All other provisioning
+> steps (Secrets, BQ, Sheets) in §§3–8 remain authoritative and are not managed by OpenTofu.
 
 All 7 agents share a single codebase and a single Dockerfile at the project root. `main.py` is the FastAPI entry point for every service. The `AGENT_NAME` environment variable tells it which orchestrator to instantiate.
 
@@ -965,6 +1006,67 @@ foreach ($agent in @('nexus-prime','ledger','beacon','pursuit','foreman','stewar
 }
 ```
 Expected: `ok` for each of the 7 services.
+
+---
+
+### 9.3 Infrastructure as Code (OpenTofu)
+
+The `infra/main.tf` blueprint and `.github/workflows/deploy.yml` pipeline supersede the
+manual Cloud Run deployment loop in §9.1 Step 2. All other provisioning steps
+(Secrets, BigQuery, Sheets — §§3–8) remain authoritative and are not managed by OpenTofu.
+
+**One-time bootstrap** — run these commands manually before the first CI run:
+
+```bash
+PROJECT=morphic-gaos-prod
+
+# 1. Create the GCS bucket for OpenTofu state (must exist before `tofu init` runs)
+gcloud storage buckets create gs://morphic-gaos-tfstate \
+  --location=us-central1 --project=$PROJECT
+
+# 2. Create Artifact Registry Docker repository (must exist before first docker push)
+gcloud artifacts repositories create cloud-run-source-deploy \
+  --repository-format=docker \
+  --location=us-central1 \
+  --project=$PROJECT
+
+# 3. Download a key for the deployer SA and store it as a GitHub Secret
+#    Secret name: GCP_SA_KEY (repo → Settings → Secrets and variables → Actions)
+gcloud iam service-accounts keys create deployer-key.json \
+  --iam-account=deployer-sa@${PROJECT}.iam.gserviceaccount.com
+# Paste the content of deployer-key.json into GitHub Secret GCP_SA_KEY, then delete it:
+Remove-Item deployer-key.json   # PowerShell
+```
+
+> ⚠️ **Warning — never commit `deployer-key.json` to the repository.** Delete it immediately
+> after copying its contents into the GitHub Secret. It is listed in `.gitignore` as a safety net,
+> but physical deletion is the only guarantee.
+
+**Create the GitHub Environment (one-time, via GitHub UI):**
+
+1. Repository → Settings → Environments → New environment → name: `production`
+2. Enable "Required reviewers" → add yourself
+3. Save
+
+This environment is the human approval gate. After the Plan job completes, GitHub pauses
+the Apply job and sends a review notification. Click "Approve and deploy" to proceed.
+
+**Artifact retention:** `tfplan` artifacts expire after 3 days. A plan older than 3 days
+cannot be applied — push a new commit to regenerate. This prevents stale plans from
+deploying configuration that no longer matches the current infrastructure state.
+
+**Workflow summary:**
+
+| Trigger | Job | Action |
+|---------|-----|--------|
+| `push` to `master` | `build` | `docker build` + `docker push` to Artifact Registry (SHA tag) |
+| after `build` | `plan` | `tofu plan -var="image_tag=<sha>" -out=tfplan` → upload artifact (3 days) |
+| after `plan` + human approval | `apply` | Download `tfplan` → `tofu apply tfplan` |
+
+**Migration to WIF (Phase 3 task):** The current auth mechanism uses a SA key stored as a
+GitHub Secret (`GCP_SA_KEY`). Migrate to Workload Identity Federation (WIF) in Phase 3 to
+eliminate long-lived credentials entirely. WIF requires creating a pool and provider in GCP —
+tracked as a Phase 3 deploy task.
 
 ---
 

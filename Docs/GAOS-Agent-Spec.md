@@ -100,7 +100,7 @@ Local (`LOCAL_MODEL`) agents produce a plain-text summary line in addition to th
 
 ### 2.5 Cost Tracking
 
-Every agent must accumulate `cost_usd` for each model call made during a task and return the total in `AgentOutput`. Where token counts are unavailable, use the per-model cost estimates from `GAOS-Manager-Spec.md` §9.4.
+Every agent must accumulate `cost_usd` for each model call made during a task and return the total in `AgentOutput`. Both model tiers currently return `cost_usd = 0.0` — Ollama is free (local), and Gemini calls go through the AI Studio free tier via `GEMINI_API_KEY`. `tokens_used` is still tracked in `ModelResponse` for usage monitoring even though no charge is incurred. Re-evaluate if the system moves to a paid Vertex AI or Gemini API quota.
 
 ---
 

@@ -5,6 +5,95 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-20T02:30-03:00 — OpenTofu IaC Pipeline ✅
+
+**Implemented Push-to-Deploy infrastructure as code for all 7 Cloud Run agents.**
+
+### What was done
+- `infra/main.tf` — OpenTofu blueprint: GCS backend (morphic-gaos-tfstate), `image_tag` variable, `for_each` over 7 agents, 512Mi/1CPU/concurrency=1 per spec, per-agent SA identity
+- `.github/workflows/deploy.yml` — 3-job pipeline: `build` (docker build+push to AR), `plan` (tofu plan -out=tfplan, 3-day artifact retention), `apply` (manual gate via `production` GitHub Environment, downloads tfplan from same run)
+- `Docs/GAOS-Deploy-Spec.md` — §2.1: added `deployer-sa` creation; §2.2: added deployer SA IAM (run.admin, artifactregistry.writer on repo, storage.objectAdmin on bucket, per-SA actAs × 7 with warning); §9.1: supersession note; §9.3: new IaC section (bootstrap commands, GH Environment setup, artifact retention policy, WIF migration note)
+- `README.md` — Added "Deployment Architecture: The OpenTofu Pipeline" section (SHA-pinned, plan integrity, drift-correcting, scope boundary)
+
+### Architecture decisions baked in
+- Single-run integrity: all jobs in same run ID → no cross-run artifact downloads
+- Per-SA `actAs` binding (not project-level) — least privilege
+- Docker AR auth step explicit in workflow (gcloud auth configure-docker) — prevents 403
+- `roles/artifactregistry.writer` on repo resource (not project) — scoped correctly
+- 3-day artifact retention: Friday push survives to Monday approval
+- `concurrency=1` comment references LangGraph state rationale
+- WIF migration flagged as Phase 3 task in §9.3
+
+### What's next
+- One-time bootstrap: create `morphic-gaos-tfstate` bucket, `cloud-run-source-deploy` AR repo, `deployer-sa`, and set `GCP_SA_KEY` GitHub Secret
+- Create `production` GitHub Environment with required reviewer
+- First live `tofu init` + plan run to validate
+
+---
+
+## 2026-03-20T01:11-03:00 — Phase 5 Interactive Hub + Test Fix Sweep ✅
+
+**Implemented Phase 5 Google Chat Interactive Hub: multimodal vision, approval cards, JWT auth, and systematic test-mock fixes.**
+
+### What was done — Phase 5 Implementation
+
+- `agents/__init__.py` — `_call_model` + `_call_model_gemini`: added `image_bytes: bytes | None = None` parameter; multimodal content sent as `[Part.from_bytes(...), Part.from_text(...)]`; Ollama + image_bytes logs warning and strips bytes
+- `tools/google_chat.py` — `send_approval_card`: 3-section card (Context + conditional Reasoning + Decision with Approve/Reject buttons); `parse_chat_event`: returns `"attachments"` list from `message.get("attachment", [])`
+- `main.py` — Added `_CHAT_ISSUER`, `_CHAT_CERTS_URL`, `_verify_chat_jwt()`, `_download_chat_attachment()`; `/chat` handler: JWT verify → image attachment detection → download → `_call_model` with vision prompt + `image_bytes` → `VISION_SUBMITTED` dispatch
+- `agents/nexus_prime/orchestrator.py` — `propose_gate`: sends card with `reasoning_summary` from `monologue_frame`; `vision_blueprint`: appends image timestamp note + BQ cost log when `vision_source == "image"`
+- `tests/test_google_chat.py` — 29 tests passing; C8/C9 updated for 3-section card; added C13/C14 (reasoning sections), P7 (attachment parsing), E8 (vision dispatch)
+- `tests/test_agents.py` — Added `TestMultimodalVisionPath` (M1–M5 + 3 code quality): all 8 passing
+
+### What was done — Test Mock Fix Sweep
+
+Systematic fix for `patch("agents._log_cloud")` and `patch("agents._write_heartbeat")` targets that hung on real Cloud Logging gRPC. Root cause: Python `from X import Y` creates a local binding in the importing module; `patch("agents._log_cloud")` replaces the attribute on the `agents` package but does NOT affect the already-bound local reference in cached submodules like `agents.steward.orchestrator`.
+
+**Correct pattern:** `patch("agents.<submodule>.orchestrator._log_cloud")`
+
+Files fixed:
+- `tests/test_agents.py` — TestU4: steward + beacon `_log_cloud` / `_write_heartbeat` targets
+- `tests/test_agents.py` — TestU5: dynamic `f"{orchestrator_module.__name__}._log_cloud"` + steward target
+- `tests/test_agents.py` — TestArchiveJob: added `patch("agents.nexus_prime.orchestrator._log_cloud")` to all 7 `handle_archive` tests
+- `tests/test_agents.py` — TestNexusPrimeThinkNode: added autouse `_patch_log_cloud` fixture for all 10 `think()` tests
+
+### Test result
+393 passed, 1 warning (datetime.utcnow deprecation in main.py:529) in 16.72s
+
+### What's next
+- Fix `datetime.utcnow()` deprecation in main.py
+- WORKLOG rules compliance: spec and docs are complete in same commit
+- Phase 5 exit criteria verification
+
+---
+
+## 2026-03-19T00:30-03:00 — think node + MonologueFrame ✅
+
+**Implemented Directive 2: Strategic Architect `think` node for Nexus-Prime.**
+
+### What was done
+- `models/__init__.py` — Added `MonologueFrame` Pydantic model (7 fields: `task_id`, `project_id`, `knowledge_gap_detected`, `knowledge_gap_description`, `partial_result_available`, `response_mode`, `reasoning_summary`, `timestamp`)
+- `agents/nexus_prime/orchestrator.py`:
+  - Added `_load_context_trio` to imports; added `MonologueFrame` to model imports
+  - Extended `NexusPrimeWorkingMemory` with `_next_node: str` and `monologue_frame: Optional[dict]`
+  - Added `_build_think_prompt()` helper with full Strategic Architect reasoning instructions
+  - Added `_route_from_think()` sub-router (reads `state["_next_node"]`)
+  - Added `think()` node: uses `FAST_MODEL` + Context Trio system prompt + `parse_json=True`; Tactical mode forced on priority >= 4; graceful fallback on model or BQ failure; logs `MonologueFrame` to `aos_logs.monologue_frames`
+  - Updated `route()` routing table: ESCALATION/EVOLUTION_REQUEST/KNOWLEDGE_CANDIDATE now → `"think"` (then think → diagnose or knowledge_review)
+  - Updated `build_nexus_prime_graph()`: added `think` node; updated `add_conditional_edges` from `route` to include `"think"`; added `add_conditional_edges` from `think` via `_route_from_think`
+  - Updated `initial_state` in `NexusPrimeAgent.run()` with `_next_node: "record"` and `monologue_frame: None`
+- `Docs/GAOS-Deploy-Spec.md` — Updated `monologue_frames` BQ schema to match `MonologueFrame` fields; added IAM note (nexus-prime-sa already has dataset-level write via `bigquery.dataEditor`)
+- `Docs/GAOS-Nexus-Prime-Spec.md` — Updated `route()` routing table; added full `think` node section between `route` and `diagnose` with code listing, field table, and Tier 1-only warning callout
+- `tests/test_agents.py` — Added `TestNexusPrimeThinkNode` (12 tests): routing for each message type, Tactical mode overrides at p4/p5, BQ insert shape, context trio in system_prompt, call_model fallback, BQ fallback, `_route_from_think` default behavior
+
+### Test result
+59 passed, 12 deselected (chronic process-launchers: TestU4MissingSecretCausesExit, TestArchiveJob)
+
+### What's next
+- WORKLOG rules compliance: spec and docs are complete in same commit
+- GAOS-Persona-Spec.md §4 references `monologue_frames` — verify it's consistent with new schema
+
+---
+
 ## 2026-03-18T23:30-03:00 — Code Review Fixes ✅
 
 **Applied 15 findings from code review across 13 files. 332 tests green.**

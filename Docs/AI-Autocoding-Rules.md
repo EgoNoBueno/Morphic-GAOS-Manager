@@ -93,6 +93,18 @@ Code that fails either gate is a hard stop — log the failure, do not submit, d
 
 **Mocking:** All GCP service calls must be patched using `unittest.mock.patch` or `pytest-mock`. Never make live API calls in the test suite. Mock at the SDK boundary (e.g., `google.cloud.bigquery.Client`), not at the tool-wrapper level, so the wrapper's logic is actually exercised.
 
+> ⚠️ **Warning — patch where the name is *used*, not where it's *defined*:** When an orchestrator does `from agents import _log_cloud` at module level, Python creates a **local binding** in that module at import time. `patch("agents._log_cloud")` replaces the attribute on the `agents` package but does **not** affect the already-bound local reference in the cached submodule — the real function still runs. Always target the consuming module instead:
+>
+> ```python
+> # ❌ Wrong — patches the source, not the consumer's local copy
+> with patch("agents._log_cloud"):
+>
+> # ✅ Correct — patches the reference the orchestrator actually calls
+> with patch("agents.nexus_prime.orchestrator._log_cloud"):
+> ```
+>
+> **Violation symptom:** test hangs indefinitely on a gRPC `next_event()` call inside Cloud Logging. Apply this pattern to every module-level `from X import Y` that you need to intercept — `_log_cloud`, `_write_heartbeat`, and any future shared helpers imported the same way.
+
 ---
 
 ## 9. Boot Sequence Is Ordered and Non-Negotiable

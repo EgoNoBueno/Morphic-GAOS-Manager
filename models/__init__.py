@@ -252,6 +252,27 @@ class KnowledgeProposal(BaseModel):
     observation_count: int = 0
 
 
+# ── MonologueFrame ────────────────────────────────────────────────────────────────
+
+
+class MonologueFrame(BaseModel):
+    """
+    Structured pre-response reasoning record written by Nexus-Prime's ``think``
+    node before every output-producing decision (diagnose, knowledge_review).
+    Logged to BigQuery ``aos_logs.monologue_frames``.
+    Defined in GAOS-Nexus-Prime-Spec.md §3.2.
+    """
+
+    task_id: str
+    project_id: str
+    knowledge_gap_detected: bool
+    knowledge_gap_description: str
+    partial_result_available: bool
+    response_mode: Literal["Research", "Direct", "Reframe", "Tactical"]
+    reasoning_summary: str
+    timestamp: str  # ISO 8601
+
+
 # ── PlaybookDoc ───────────────────────────────────────────────────────────────────
 
 

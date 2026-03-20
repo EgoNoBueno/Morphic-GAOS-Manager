@@ -223,8 +223,8 @@ class TestU4MissingSecretCausesExit:
             with patch("tools.pubsub.ensure_topic_exists"):
                 with patch("tools.memory.load_domain_memory", return_value={}):
                     with patch("tools.memory.query_episodic", return_value=[]):
-                        with patch("agents._write_heartbeat"):
-                            with patch("agents._log_cloud"):
+                        with patch("agents.steward.orchestrator._write_heartbeat"):
+                            with patch("agents.steward.orchestrator._log_cloud"):
                                 with pytest.raises(SystemExit) as exc_info:
                                     steward._boot(state)
         assert exc_info.value.code == 1
@@ -238,8 +238,8 @@ class TestU4MissingSecretCausesExit:
             with patch("tools.pubsub.ensure_topic_exists"):
                 with patch("tools.memory.load_domain_memory", return_value={}):
                     with patch("tools.memory.query_episodic", return_value=[]):
-                        with patch("agents._write_heartbeat"):
-                            with patch("agents._log_cloud"):
+                        with patch("agents.beacon.orchestrator._write_heartbeat"):
+                            with patch("agents.beacon.orchestrator._log_cloud"):
                                 with pytest.raises(SystemExit) as exc_info:
                                     beacon._boot(state)
         assert exc_info.value.code == 1
@@ -281,7 +281,7 @@ class TestU5UnknownProjectIdFails:
         fake_self = MagicMock()
         fake_self._graph = mock_graph
 
-        with patch("agents._log_cloud"):
+        with patch(f"{orchestrator_module.__name__}._log_cloud"):
             result = asyncio.run(agent_cls.run(fake_self, inp))
         return result
 
@@ -314,7 +314,7 @@ class TestU5UnknownProjectIdFails:
         fake_self = MagicMock()
         fake_self._graph = mock_graph
 
-        with patch("agents._log_cloud"):
+        with patch("agents.steward.orchestrator._log_cloud"):
             result = asyncio.run(steward_mod.StewardAgent.run(fake_self, inp))
 
         assert result.status == "failed"
@@ -585,6 +585,230 @@ class TestOllamaRouting:
         mock_ws.assert_not_called()
 
 
+# ── Gemini AI Studio client ────────────────────────────────────────────────
+
+
+class TestGeminiAIStudio:
+    """Verify _call_model_gemini uses AI Studio (api_key only), never Vertex AI."""
+
+    def _make_mock_response(self, text: str = "ok"):
+        mock_resp = MagicMock()
+        mock_resp.text = text
+        mock_resp.usage_metadata = MagicMock()
+        mock_resp.usage_metadata.total_token_count = 42
+        return mock_resp
+
+    def test_client_initialised_with_api_key_only(self):
+        """genai.Client must receive api_key= and nothing else — no vertexai flag."""
+        from agents import _call_model
+
+        with patch("google.genai.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.models.generate_content.return_value = self._make_mock_response()
+            mock_client_cls.return_value = mock_client
+            with patch("tools.secrets.get_secret", return_value="test-api-key"):
+                _call_model("prompt", model="gemini-2.5-flash")
+
+        mock_client_cls.assert_called_once_with(api_key="test-api-key")
+
+    def test_vertex_ai_flag_never_passed(self):
+        """vertexai=True must not appear anywhere in the Client constructor kwargs."""
+        from agents import _call_model
+
+        with patch("google.genai.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.models.generate_content.return_value = self._make_mock_response()
+            mock_client_cls.return_value = mock_client
+            with patch("tools.secrets.get_secret", return_value="test-api-key"):
+                _call_model("prompt", model="gemini-2.5-flash")
+
+        _, kwargs = mock_client_cls.call_args
+        assert "vertexai" not in kwargs, "vertexai flag must not be passed to genai.Client"
+        assert "project" not in kwargs, "project must not be passed to genai.Client"
+        assert "location" not in kwargs, "location must not be passed to genai.Client"
+
+    def test_cost_usd_is_always_zero(self):
+        """AI Studio free tier — cost_usd must be 0.0 regardless of token count."""
+        from agents import _call_model
+
+        with patch("google.genai.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.models.generate_content.return_value = self._make_mock_response()
+            mock_client_cls.return_value = mock_client
+            with patch("tools.secrets.get_secret", return_value="test-api-key"):
+                result = _call_model("prompt", model="gemini-2.5-flash")
+
+        assert result.cost_usd == 0.0
+
+    def test_tokens_used_is_tracked(self):
+        """tokens_used must reflect total_token_count from usage_metadata."""
+        from agents import _call_model
+
+        with patch("google.genai.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.models.generate_content.return_value = self._make_mock_response()
+            mock_client_cls.return_value = mock_client
+            with patch("tools.secrets.get_secret", return_value="test-api-key"):
+                result = _call_model("prompt", model="gemini-2.5-flash")
+
+        assert result.tokens_used == 42
+
+    def test_missing_api_key_raises_runtime_error(self):
+        """If GEMINI_API_KEY cannot be fetched, a RuntimeError must be raised immediately."""
+        from agents import _call_model
+
+        with patch("tools.secrets.get_secret", side_effect=Exception("secret not found")):
+            with pytest.raises(RuntimeError, match="GEMINI_API_KEY unavailable"):
+                _call_model("prompt", model="gemini-2.5-flash")
+
+    def test_resource_exhausted_429_logged_and_reraised(self):
+        """ResourceExhausted (free-tier 429) must be logged as WARNING then re-raised."""
+        from google.api_core.exceptions import ResourceExhausted
+        from agents import _call_model
+
+        with patch("google.genai.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.models.generate_content.side_effect = ResourceExhausted("quota exceeded")
+            mock_client_cls.return_value = mock_client
+            with patch("tools.secrets.get_secret", return_value="test-api-key"):
+                with patch("agents.logger") as mock_logger:
+                    with pytest.raises(ResourceExhausted):
+                        _call_model("prompt", model="gemini-2.5-flash")
+
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        assert "quota" in warning_msg.lower() or "429" in warning_msg
+
+
+# ── Ollama fallback counter ────────────────────────────────────────────────
+
+
+class TestOllamaFallbackCounter:
+    """Verify the fallback counter and warning log behave correctly on Ollama failure."""
+
+    def setup_method(self):
+        """Reset the module-level counter before each test."""
+        from agents import reset_ollama_fallback_count
+        reset_ollama_fallback_count()
+
+    def test_counter_increments_on_timeout(self):
+        """get_ollama_fallback_count() must increase by 1 on each TimeoutException."""
+        import httpx as _httpx
+        from agents import _call_model, get_ollama_fallback_count
+
+        mock_gemini_resp = MagicMock()
+        mock_gemini_resp.text = "gemini"
+        mock_gemini_resp.usage_metadata = None
+
+        with patch("httpx.post", side_effect=_httpx.TimeoutException("timed out")):
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                with patch("google.genai.Client") as mock_client_cls:
+                    mock_client = MagicMock()
+                    mock_client.models.generate_content.return_value = mock_gemini_resp
+                    mock_client_cls.return_value = mock_client
+                    _call_model("prompt", model="ollama/llama3.1")
+
+        assert get_ollama_fallback_count() == 1
+
+    def test_counter_increments_on_connect_error(self):
+        """ConnectError (Ollama not running) must also increment the counter."""
+        import httpx as _httpx
+        from agents import _call_model, get_ollama_fallback_count
+
+        mock_gemini_resp = MagicMock()
+        mock_gemini_resp.text = "gemini"
+        mock_gemini_resp.usage_metadata = None
+
+        with patch("httpx.post", side_effect=_httpx.ConnectError("refused")):
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                with patch("google.genai.Client") as mock_client_cls:
+                    mock_client = MagicMock()
+                    mock_client.models.generate_content.return_value = mock_gemini_resp
+                    mock_client_cls.return_value = mock_client
+                    _call_model("prompt", model="ollama/llama3.1")
+
+        assert get_ollama_fallback_count() == 1
+
+    def test_counter_accumulates_across_calls(self):
+        """Counter must add up across multiple fallback events."""
+        import httpx as _httpx
+        from agents import _call_model, get_ollama_fallback_count
+
+        mock_gemini_resp = MagicMock()
+        mock_gemini_resp.text = "gemini"
+        mock_gemini_resp.usage_metadata = None
+
+        for _ in range(3):
+            with patch("httpx.post", side_effect=_httpx.ConnectError("refused")):
+                with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                    with patch("google.genai.Client") as mock_client_cls:
+                        mock_client = MagicMock()
+                        mock_client.models.generate_content.return_value = mock_gemini_resp
+                        mock_client_cls.return_value = mock_client
+                        _call_model("prompt", model="ollama/llama3.1")
+
+        assert get_ollama_fallback_count() == 3
+
+    def test_reset_restores_counter_to_zero(self):
+        """reset_ollama_fallback_count() must set the counter back to zero."""
+        import httpx as _httpx
+        from agents import _call_model, get_ollama_fallback_count, reset_ollama_fallback_count
+
+        mock_gemini_resp = MagicMock()
+        mock_gemini_resp.text = "gemini"
+        mock_gemini_resp.usage_metadata = None
+
+        with patch("httpx.post", side_effect=_httpx.ConnectError("refused")):
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                with patch("google.genai.Client") as mock_client_cls:
+                    mock_client = MagicMock()
+                    mock_client.models.generate_content.return_value = mock_gemini_resp
+                    mock_client_cls.return_value = mock_client
+                    _call_model("prompt", model="ollama/llama3.1")
+
+        assert get_ollama_fallback_count() == 1
+        reset_ollama_fallback_count()
+        assert get_ollama_fallback_count() == 0
+
+    def test_successful_ollama_call_does_not_increment(self):
+        """A successful Ollama call must leave the counter unchanged."""
+        from agents import _call_model, get_ollama_fallback_count
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"response": "ok"}
+
+        with patch("httpx.post", return_value=mock_resp):
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                _call_model("prompt", model="ollama/llama3.1")
+
+        assert get_ollama_fallback_count() == 0
+
+    def test_warning_logged_on_fallback(self):
+        """A logger.warning must be emitted with exc type, host, and model on fallback."""
+        import httpx as _httpx
+        from agents import _call_model
+
+        mock_gemini_resp = MagicMock()
+        mock_gemini_resp.text = "gemini"
+        mock_gemini_resp.usage_metadata = None
+
+        with patch("httpx.post", side_effect=_httpx.ConnectError("refused")):
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                with patch("google.genai.Client") as mock_client_cls:
+                    mock_client = MagicMock()
+                    mock_client.models.generate_content.return_value = mock_gemini_resp
+                    mock_client_cls.return_value = mock_client
+                    with patch("agents.logger") as mock_logger:
+                        _call_model("prompt", model="ollama/llama3.1")
+
+        mock_logger.warning.assert_called_once()
+        warning_args = mock_logger.warning.call_args[0]
+        # The format string is the first arg; positional args follow
+        assert "ConnectError" in warning_args[1]  # exc type name
+        assert "llama3.1" in warning_args[3]       # ollama model name
+
+
 # ── Web search tool ────────────────────────────────────────────────────────
 
 
@@ -741,6 +965,7 @@ class TestArchiveJob:
             return numbered if tab == "Logs" else []
 
         with (
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
             patch("tools.google_sheets.get_all_records", return_value=[]),
             patch("tools.google_sheets.get_all_records_with_row_numbers", side_effect=_row_se),
             patch("tools.google_sheets.delete_rows") as mock_delete,
@@ -770,6 +995,7 @@ class TestArchiveJob:
         numbered = [(2, fresh_row)]
 
         with (
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
             patch("tools.google_sheets.get_all_records", return_value=[]),
             patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=numbered),
             patch("tools.google_sheets.delete_rows") as mock_delete,
@@ -790,6 +1016,7 @@ class TestArchiveJob:
         approval_numbered = [(2, aged_approval), (3, pending_approval)]
 
         with (
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
             patch("tools.google_sheets.get_all_records", return_value=[]),
             patch("tools.google_sheets.get_all_records_with_row_numbers", side_effect=[
                 [],                # Logs
@@ -824,6 +1051,7 @@ class TestArchiveJob:
         old_pending = {**self._make_aged_approval(200), "Status": "Pending"}
 
         with (
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
             patch("tools.google_sheets.get_all_records", return_value=[]),
             patch("tools.google_sheets.get_all_records_with_row_numbers", side_effect=[
                 [], [], [(2, old_pending)]
@@ -842,6 +1070,7 @@ class TestArchiveJob:
         from agents.nexus_prime.orchestrator import handle_archive
 
         with (
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
             patch("tools.google_sheets.get_all_records", return_value=[]),
             patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
             patch("tools.google_sheets.delete_rows"),
@@ -865,6 +1094,7 @@ class TestArchiveJob:
                       "level": "INFO", "message": "", "project_id": "test-project"}] * 26_000
 
         with (
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
             patch("tools.google_sheets.get_all_records", return_value=big_table),
             patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
             patch("tools.google_sheets.delete_rows"),
@@ -889,6 +1119,7 @@ class TestArchiveJob:
         numbered = [(2, aged_row)]
 
         with (
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
             patch("tools.google_sheets.get_all_records", return_value=[]),
             patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=numbered),
             patch("tools.google_sheets.delete_rows") as mock_delete,
@@ -966,7 +1197,401 @@ class TestArchiveJob:
 # ── TestCodeQuality ────────────────────────────────────────────────────────────
 
 
-class TestCodeQuality:
+# ── Nexus-Prime think node ─────────────────────────────────────────────────
+
+
+class TestNexusPrimeThinkNode:
+    """
+    Verify the Nexus-Prime think node behaviour (GAOS-Nexus-Prime-Spec.md §3.2).
+
+    Covers:
+      - Correct _next_node routing per message type
+      - Tactical mode forced on priority >= 4
+      - MonologueFrame stored with task_id and project_id
+      - BigQuery insert called with correct table and fields
+      - Context Trio passed as system_prompt with parse_json=True
+      - Graceful fallback when _call_model raises
+      - Graceful fallback when BigQuery insert raises
+      - _route_from_think() sub-router reads state correctly
+    """
+
+    def _make_state(self, message_type: Any, priority: int = 3) -> dict:
+        """Build a minimal NexusPrimeWorkingMemory-shaped dict for think()."""
+        from models import A2AMessage
+
+        msg = A2AMessage(
+            source_agent="beacon",
+            target_agent="nexus-prime",
+            project_id="proj-test",
+            task_id="task-abc",
+            message_type=message_type,
+            priority=priority,
+            payload={"description": "something failed"},
+        )
+        return {
+            "project_id": "proj-test",
+            "task_id": "task-abc",
+            "incoming_message": msg,
+            "cost_usd": 0.0,
+            "tokens_used": 0,
+            "_next_node": "record",
+            "monologue_frame": None,
+        }
+
+    def _mock_resp(self, response_mode: str = "Direct") -> MagicMock:
+        """Return a mock ModelResponse with clean parsed JSON data."""
+        resp = MagicMock()
+        resp.text = f'{{"response_mode": "{response_mode}"}}'
+        resp.data = {
+            "response_mode": response_mode,
+            "knowledge_gap_detected": response_mode == "Research",
+            "knowledge_gap_description": "Missing error history" if response_mode == "Research" else "",
+            "partial_result_available": False,
+            "reasoning_summary": "Test reasoning summary.",
+        }
+        resp.cost_usd = 0.0
+        resp.tokens_used = 100
+        return resp
+
+    @pytest.fixture(autouse=True)
+    def _patch_log_cloud(self):
+        with patch("agents.nexus_prime.orchestrator._log_cloud"):
+            yield
+
+    def test_escalation_routes_to_diagnose(self):
+        """ESCALATION message type → _next_node must be 'diagnose'."""
+        from agents.nexus_prime.orchestrator import think
+        from models import MessageType
+
+        state = self._make_state(MessageType.ESCALATION)
+        with patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()):
+            with patch("agents.nexus_prime.orchestrator._load_context_trio", return_value="trio"):
+                with patch("tools.bigquery.insert_row"):
+                    result = think(state)
+
+        assert result["_next_node"] == "diagnose"
+
+    def test_evolution_request_routes_to_diagnose(self):
+        """EVOLUTION_REQUEST message type → _next_node must be 'diagnose'."""
+        from agents.nexus_prime.orchestrator import think
+        from models import MessageType
+
+        state = self._make_state(MessageType.EVOLUTION_REQUEST)
+        with patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()):
+            with patch("agents.nexus_prime.orchestrator._load_context_trio", return_value="trio"):
+                with patch("tools.bigquery.insert_row"):
+                    result = think(state)
+
+        assert result["_next_node"] == "diagnose"
+
+    def test_knowledge_candidate_routes_to_knowledge_review(self):
+        """KNOWLEDGE_CANDIDATE → _next_node must be 'knowledge_review'."""
+        from agents.nexus_prime.orchestrator import think
+        from models import MessageType
+
+        state = self._make_state(MessageType.KNOWLEDGE_CANDIDATE)
+        with patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()):
+            with patch("agents.nexus_prime.orchestrator._load_context_trio", return_value="trio"):
+                with patch("tools.bigquery.insert_row"):
+                    result = think(state)
+
+        assert result["_next_node"] == "knowledge_review"
+
+    def test_tactical_mode_forced_on_priority_4(self):
+        """Priority >= 4 must set response_mode='Tactical' regardless of model output."""
+        from agents.nexus_prime.orchestrator import think
+        from models import MessageType
+
+        state = self._make_state(MessageType.ESCALATION, priority=4)
+        # Model returns "Direct"; Tactical override must win
+        with patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp("Direct")):
+            with patch("agents.nexus_prime.orchestrator._load_context_trio", return_value="trio"):
+                with patch("tools.bigquery.insert_row"):
+                    result = think(state)
+
+        assert result["monologue_frame"]["response_mode"] == "Tactical"
+
+    def test_tactical_mode_forced_on_priority_5(self):
+        """Priority 5 (critical) must also force Tactical mode."""
+        from agents.nexus_prime.orchestrator import think
+        from models import MessageType
+
+        state = self._make_state(MessageType.ESCALATION, priority=5)
+        with patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp("Direct")):
+            with patch("agents.nexus_prime.orchestrator._load_context_trio", return_value="trio"):
+                with patch("tools.bigquery.insert_row"):
+                    result = think(state)
+
+        assert result["monologue_frame"]["response_mode"] == "Tactical"
+
+    def test_research_mode_stored_from_model_output(self):
+        """When priority < 4, model-returned 'Research' mode is stored correctly."""
+        from agents.nexus_prime.orchestrator import think
+        from models import MessageType
+
+        state = self._make_state(MessageType.ESCALATION, priority=2)
+        with patch("agents.nexus_prime.orchestrator._call_model",
+                   return_value=self._mock_resp("Research")):
+            with patch("agents.nexus_prime.orchestrator._load_context_trio", return_value="trio"):
+                with patch("tools.bigquery.insert_row"):
+                    result = think(state)
+
+        frame = result["monologue_frame"]
+        assert frame["response_mode"] == "Research"
+        assert frame["knowledge_gap_detected"] is True
+        assert frame["task_id"] == "task-abc"
+        assert frame["project_id"] == "proj-test"
+
+    def test_bigquery_insert_called_with_correct_fields(self):
+        """insert_row must be called with task_id and project_id in the row dict."""
+        from agents.nexus_prime.orchestrator import think
+        from models import MessageType
+
+        state = self._make_state(MessageType.ESCALATION)
+        with patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()):
+            with patch("agents.nexus_prime.orchestrator._load_context_trio", return_value="trio"):
+                with patch("tools.bigquery.insert_row") as mock_bq:
+                    think(state)
+
+        mock_bq.assert_called_once()
+        table_ref, row, pid = mock_bq.call_args[0]
+        assert table_ref == "aos_logs.monologue_frames"
+        assert row["task_id"] == "task-abc"
+        assert row["project_id"] == "proj-test"
+        assert pid == "proj-test"
+
+    def test_context_trio_passed_as_system_prompt(self):
+        """_call_model must receive Context Trio as system_prompt with parse_json=True."""
+        from agents.nexus_prime.orchestrator import think
+        from models import MessageType
+
+        state = self._make_state(MessageType.ESCALATION)
+        with patch("agents.nexus_prime.orchestrator._call_model",
+                   return_value=self._mock_resp()) as mock_cm:
+            with patch("agents.nexus_prime.orchestrator._load_context_trio",
+                       return_value="CONTEXT_TRIO_CONTENT"):
+                with patch("tools.bigquery.insert_row"):
+                    think(state)
+
+        call_kwargs = mock_cm.call_args[1]
+        assert call_kwargs.get("system_prompt") == "CONTEXT_TRIO_CONTENT"
+        assert call_kwargs.get("parse_json") is True
+
+    def test_graceful_fallback_on_call_model_error(self):
+        """If _call_model raises, think must not crash and BQ must not be called."""
+        from agents.nexus_prime.orchestrator import think
+        from models import MessageType
+
+        state = self._make_state(MessageType.ESCALATION)
+        with patch("agents.nexus_prime.orchestrator._call_model",
+                   side_effect=RuntimeError("quota exceeded")):
+            with patch("agents.nexus_prime.orchestrator._load_context_trio", return_value="trio"):
+                with patch("tools.bigquery.insert_row") as mock_bq:
+                    result = think(state)
+
+        # Node returns state without crashing
+        assert result is not None
+        # _next_node was set to "diagnose" before the model call
+        assert result["_next_node"] == "diagnose"
+        # BQ was never reached
+        mock_bq.assert_not_called()
+
+    def test_bq_failure_does_not_crash_node(self):
+        """If BQ insert_row raises, the node still returns a valid state with monologue_frame."""
+        from agents.nexus_prime.orchestrator import think
+        from models import MessageType
+
+        state = self._make_state(MessageType.ESCALATION)
+        with patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()):
+            with patch("agents.nexus_prime.orchestrator._load_context_trio", return_value="trio"):
+                with patch("tools.bigquery.insert_row", side_effect=Exception("BQ unavailable")):
+                    result = think(state)
+
+        # monologue_frame was set before BQ attempt
+        assert result["monologue_frame"] is not None
+        assert result["monologue_frame"]["response_mode"] == "Direct"
+
+    def test_route_from_think_returns_stored_next_node(self):
+        """_route_from_think() must return whatever is in state['_next_node']."""
+        from agents.nexus_prime.orchestrator import _route_from_think
+
+        state = {"_next_node": "knowledge_review", "project_id": "proj", "task_id": "t1"}
+        assert _route_from_think(state) == "knowledge_review"
+
+    def test_route_from_think_defaults_to_record_when_absent(self):
+        """_route_from_think() must return 'record' if _next_node is missing from state."""
+        from agents.nexus_prime.orchestrator import _route_from_think
+
+        state = {"project_id": "proj", "task_id": "t1"}
+        assert _route_from_think(state) == "record"
+
+
+class TestMultimodalVisionPath:
+    """
+    M1  _call_model passes image_bytes through to _call_model_gemini.
+    M2  _call_model_gemini calls generate_content with a Part list when image_bytes provided.
+    M3  _call_model_gemini without image_bytes calls generate_content with a plain string.
+    M4  _call_model logs a warning and strips image_bytes for Ollama models.
+    M5  _call_model returns ModelResponse with text from multimodal response.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _settings(self, tmp_path):
+        import config
+        cfg = tmp_path / "settings.yaml"
+        cfg.write_text(
+            "gcp:\n  project_id: test-proj\n  region: us-central1\n"
+            "sheet:\n  workbook_id: spreadsheet-123\n"
+            "models:\n  FAST_MODEL: gemini-fast\n  DEEP_MODEL: gemini-deep\n"
+            "  LOCAL_MODEL: ollama/llama3\n  LOCAL_MODEL_FALLBACK: gemini-fast\n"
+            "  LOCAL_MODEL_TIMEOUT_SECONDS: 2\n"
+        )
+        config._reset_for_testing()
+        config.load_settings(cfg)
+        yield
+        config._reset_for_testing()
+
+    def _mock_genai(self, text: str = "Vision description"):
+        """Return a mock google.genai client whose generate_content returns *text*."""
+        mock_resp = MagicMock()
+        mock_resp.text = text
+        mock_resp.usage_metadata = MagicMock(total_token_count=42)
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_resp
+        return mock_client
+
+    # M1
+    def test_call_model_passes_image_bytes_to_gemini(self):
+        """image_bytes flows from _call_model() into _call_model_gemini()."""
+        from agents import _call_model
+
+        img = b"fake-jpeg-bytes"
+        mock_client = self._mock_genai("Blueprint description.")
+
+        with (
+            patch("tools.secrets.get_secret", return_value="fake-key"),
+            patch("google.genai.Client", return_value=mock_client),
+        ):
+            result = _call_model(
+                prompt="Describe this image.",
+                model="gemini-deep",
+                image_bytes=img,
+            )
+
+        assert mock_client.models.generate_content.called
+        call_kwargs = mock_client.models.generate_content.call_args
+        contents = call_kwargs[1].get("contents") or call_kwargs[0][1]
+        # Multimodal call produces a list, not a plain str
+        assert isinstance(contents, list), "Expected a list of Parts for multimodal call"
+        assert len(contents) == 2
+
+    # M2
+    def test_call_model_gemini_multimodal_uses_part_list(self):
+        """generate_content receives a 2-element Part list when image_bytes is provided."""
+        from agents import _call_model_gemini
+        from config import get_settings
+
+        img = b"raw-image"
+        mock_client = self._mock_genai()
+
+        with (
+            patch("tools.secrets.get_secret", return_value="api-key"),
+            patch("google.genai.Client", return_value=mock_client),
+        ):
+            result = _call_model_gemini(
+                prompt="desc",
+                model="gemini-deep",
+                system_prompt="",
+                parse_json=False,
+                settings=get_settings(),
+                image_bytes=img,
+            )
+
+        call_kwargs = mock_client.models.generate_content.call_args
+        contents = call_kwargs[1].get("contents") or call_kwargs[0][1]
+        assert isinstance(contents, list)
+        assert len(contents) == 2
+        assert result.text == "Vision description"
+        assert result.tokens_used == 42
+
+    # M3
+    def test_call_model_gemini_text_only_uses_plain_str(self):
+        """generate_content receives a plain string when image_bytes is None."""
+        from agents import _call_model_gemini
+        from config import get_settings
+
+        mock_client = self._mock_genai("Text response.")
+
+        with (
+            patch("tools.secrets.get_secret", return_value="api-key"),
+            patch("google.genai.Client", return_value=mock_client),
+        ):
+            result = _call_model_gemini(
+                prompt="hello",
+                model="gemini-fast",
+                system_prompt="",
+                parse_json=False,
+                settings=get_settings(),
+                image_bytes=None,
+            )
+
+        call_kwargs = mock_client.models.generate_content.call_args
+        contents = call_kwargs[1].get("contents") or call_kwargs[0][1]
+        assert isinstance(contents, str)
+        assert result.text == "Text response."
+
+    # M4
+    def test_call_model_warning_logged_for_ollama_with_image(self):
+        """Ollama model + image_bytes → warning logged, image stripped, call proceeds."""
+        import logging
+        from agents import _call_model
+
+        img = b"photo"
+
+        with (
+            patch("httpx.post") as mock_post,
+            patch("tools.secrets.get_secret", return_value="http://localhost:11434"),
+        ):
+            mock_resp = MagicMock()
+            mock_resp.raise_for_status.return_value = None
+            mock_resp.json.return_value = {"response": "ok"}
+            mock_post.return_value = mock_resp
+
+            with patch("agents.logger") as mock_log:
+                result = _call_model(
+                    prompt="describe",
+                    model="ollama/llama3",
+                    image_bytes=img,
+                )
+
+        mock_log.warning.assert_called_once()
+        warning_msg = mock_log.warning.call_args[0][0]
+        assert "multimodal" in warning_msg.lower() or "image" in warning_msg.lower()
+
+    # M5
+    def test_call_model_multimodal_returns_model_response(self):
+        """End-to-end: _call_model with image_bytes returns a valid ModelResponse."""
+        from agents import _call_model
+        from agents import ModelResponse
+
+        mock_client = self._mock_genai("A detailed vision description of the workflow.")
+
+        with (
+            patch("tools.secrets.get_secret", return_value="api-key"),
+            patch("google.genai.Client", return_value=mock_client),
+        ):
+            result = _call_model(
+                prompt="Describe this image.",
+                model="gemini-deep",
+                image_bytes=b"jpeg-data",
+            )
+
+        assert isinstance(result, ModelResponse)
+        assert "vision description" in result.text.lower()
+        assert result.tokens_used == 42
+
+
+
     """
     Static analysis gates for Rules 16, 18, and 19.
 

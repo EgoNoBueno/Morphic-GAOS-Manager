@@ -167,28 +167,38 @@ def send_approval_card(
     priority: int,
     cost_usd: float,
     doc_url: str = "",
+    reasoning_summary: str = "",
 ) -> dict:
     """
     Post an Approve / Reject card to the owner's Chat space for the Approval Gate.
 
-    The card contains:
-    - A header with proposal_id + priority badge.
-    - A section with issue summary and proposed action.
-    - Optional "View Blueprint" button if doc_url is provided.
-    - Approve and Reject action buttons.
+    The card uses a Dual-Mode layout across up to three sections:
+
+    **Section 1 — Context:** Agent ID, priority badge, estimated cost, and the
+    issue summary.  Gives the approver immediate situational awareness.
+
+    **Section 2 — Strategic Reasoning (conditional):** Rendered only when
+    ``reasoning_summary`` is non-empty.  Displays the Strategic Architect's
+    pre-task ``monologue_frame`` reasoning so the approver understands *why*
+    the agent chose this response mode before seeing the technical proposal.
+
+    **Section 3 — Decision:** The proposed action and Approve / Reject buttons.
+    An optional "View Blueprint" button is added when ``doc_url`` is provided.
 
     Button clicks are delivered as interactive callbacks to ``POST /chat``
     with ``action.actionMethodName`` set to ``"approve"`` or ``"reject"``.
 
     Args:
-        space_name:      Chat space resource name (e.g. ``spaces/XXXXXXX``).
-        proposal_id:     The ApprovalProposal row ID (stored in col A of Agent_Approvals).
-        agent_id:        The requesting agent (e.g. ``"beacon"``).
-        issue_summary:   Plain-English description of what needs approval (≤ 280 chars).
-        proposed_action: What the agent proposes to do if approved (≤ 280 chars).
-        priority:        Proposal priority (1–5).
-        cost_usd:        Estimated cost if approved (0.0 if none).
-        doc_url:         Optional URL to the Blueprint Google Doc for full context.
+        space_name:        Chat space resource name (e.g. ``spaces/XXXXXXX``).
+        proposal_id:       The ApprovalProposal row ID (stored in col A of Agent_Approvals).
+        agent_id:          The requesting agent (e.g. ``"beacon"``).
+        issue_summary:     Plain-English description of what needs approval (≤ 280 chars).
+        proposed_action:   What the agent proposes to do if approved (≤ 280 chars).
+        priority:          Proposal priority (1–5).
+        cost_usd:          Estimated cost if approved (0.0 if none).
+        doc_url:           Optional URL to the Blueprint Google Doc for full context.
+        reasoning_summary: Optional Strategic Architect reasoning from the think node's
+                           ``monologue_frame``.  Shown as Section 2 when non-empty.
 
     Returns:
         The Chat API Message resource dict.
@@ -202,17 +212,38 @@ def send_approval_card(
     if not proposal_id:
         raise ChatConfigError("proposal_id must not be empty.")
 
-    priority_label = {1: "P1 Low", 2: "P2 Info", 3: "P3 Alert", 4: "P4 Approval", 5: "P5 Critical"}.get(
-        priority, f"P{priority}"
-    )
+    priority_label = {
+        1: "P1 Low", 2: "P2 Info", 3: "P3 Alert", 4: "P4 Approval", 5: "P5 Critical"
+    }.get(priority, f"P{priority}")
     cost_text = f"${cost_usd:.4f}" if cost_usd > 0 else "No cost"
 
-    widgets: list[dict] = [
-        {"textParagraph": {"text": f"<b>Agent:</b> {agent_id}  |  <b>Priority:</b> {priority_label}  |  <b>Est. cost:</b> {cost_text}"}},
-        {"textParagraph": {"text": f"<b>Issue:</b> {issue_summary}"}},
-        {"textParagraph": {"text": f"<b>Proposed action:</b> {proposed_action}"}},
-    ]
+    # ── Section 1: Identity + Context ────────────────────────────────────────
+    section_context: dict = {
+        "widgets": [
+            {
+                "textParagraph": {
+                    "text": (
+                        f"<b>🤖 Agent:</b> {agent_id}  |  "
+                        f"<b>Priority:</b> {priority_label}  |  "
+                        f"<b>Est. cost:</b> {cost_text}"
+                    )
+                }
+            },
+            {"textParagraph": {"text": f"<b>Issue:</b> {issue_summary}"}},
+        ]
+    }
+    sections: list[dict] = [section_context]
 
+    # ── Section 2: Strategic Architect Reasoning (conditional) ───────────────
+    if reasoning_summary:
+        sections.append({
+            "header": "🧠 Strategic Architect Reasoning",
+            "widgets": [
+                {"textParagraph": {"text": reasoning_summary}},
+            ],
+        })
+
+    # ── Section 3: Proposed Action + Decision Buttons ────────────────────────
     buttons: list[dict] = []
     if doc_url:
         buttons.append(
@@ -241,7 +272,14 @@ def send_approval_card(
             },
         },
     ]
-    widgets.append({"buttonList": {"buttons": buttons}})
+    section_action: dict = {
+        "header": "⚡ Decision Required",
+        "widgets": [
+            {"textParagraph": {"text": f"<b>Proposed action:</b> {proposed_action}"}},
+            {"buttonList": {"buttons": buttons}},
+        ],
+    }
+    sections.append(section_action)
 
     card: dict = {
         "cardId": f"approval-{proposal_id}",
@@ -249,7 +287,7 @@ def send_approval_card(
             "title": "🤖 Morphic Agent — Approval Required",
             "subtitle": f"Proposal {proposal_id}",
         },
-        "sections": [{"widgets": widgets}],
+        "sections": sections,
     }
 
     return send_card(space_name, card)
@@ -402,6 +440,20 @@ def parse_chat_event(body: dict) -> dict:
                 if key:
                     parameters[key] = value
 
+        # Extract image/file attachments (MESSAGE events only)
+        attachments: list[dict] = []
+        for att in message.get("attachment", []):
+            att_ref: dict = att.get("attachmentDataRef", {})
+            download_uri: str = att_ref.get("downloadUri", "")
+            resource_name: str = att_ref.get("resourceName", "")
+            if download_uri or resource_name:
+                attachments.append({
+                    "content_type": att.get("contentType", "application/octet-stream"),
+                    "content_name": att.get("contentName", ""),
+                    "resource_name": att.get("name", resource_name),
+                    "download_uri": download_uri,
+                })
+
         return {
             "event_type": event_type,
             "space_name": space_name,
@@ -410,6 +462,7 @@ def parse_chat_event(body: dict) -> dict:
             "action_name": action_name,
             "parameters": parameters,
             "message_name": message_name,
+            "attachments": attachments,
         }
     except ChatEventParseError:
         raise

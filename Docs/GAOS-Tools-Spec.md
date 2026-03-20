@@ -728,14 +728,15 @@ def _call_model(
 
 | `model` value | Route | Notes |
 |---------------|-------|-------|
-| starts with `ollama/` | `_call_model_ollama()` → local Ollama server | Falls back to `LOCAL_MODEL_FALLBACK` on timeout or connection error |
-| any other string | `_call_model_gemini()` → `google.genai` | Falls back to ADC / Vertex AI if `GEMINI_API_KEY` is unavailable |
+| starts with `ollama/` | `_call_model_ollama()` → local Ollama server | Emits `logger.warning` + increments fallback counter on timeout or connection error; caller receives the fallback Gemini response transparently |
+| any other string | `_call_model_gemini()` → `google.genai` (AI Studio) | Raises `RuntimeError` immediately if `GEMINI_API_KEY` is unavailable; catches `ResourceExhausted` (429) with a `WARNING` log then re-raises |
 
 ### Ollama Call Details
 
 - **Host:** fetched from Secret Manager as `OLLAMA_HOST` at call-time; defaults to `http://localhost:11434` if the secret fetch fails (intentional local-dev fallback)
-- **Timeout:** `LOCAL_MODEL_TIMEOUT_SECONDS` from `settings.yaml` (default: 2 seconds)
-- **Fallback:** on `httpx.TimeoutException` or `httpx.ConnectError`, automatically retries via `_call_model_gemini()` with the `LOCAL_MODEL_FALLBACK` alias — the caller never sees the error
+- **Timeout:** `LOCAL_MODEL_TIMEOUT_SECONDS` from `settings.yaml` (default: 30 seconds)
+- **Fallback:** on `httpx.TimeoutException`, `httpx.ConnectError`, or `httpx.HTTPStatusError`, the function emits a `logger.warning` (including exception type, host URL, model name, fallback model, and cumulative session fallback count) then transparently retries via `_call_model_gemini()` with the `LOCAL_MODEL_FALLBACK` alias — the caller receives a valid `ModelResponse`
+- **Fallback telemetry:** a module-level thread-safe counter tracks all Ollama-to-Gemini fallbacks in the current process lifetime. Use `get_ollama_fallback_count()` to read it and `reset_ollama_fallback_count()` to clear it
 - **Streaming:** always disabled (`stream=False`) — agents process complete responses, not token streams
 
 ### `web_access` Parameter
@@ -753,8 +754,8 @@ When `web_access=True` and the model is an `ollama/` alias, `_call_model` prepen
 @dataclass
 class ModelResponse:
     text: str           # raw response text
-    cost_usd: float     # estimated cost (0.0 for Ollama; token-based estimate for Gemini)
-    tokens_used: int    # total tokens (0 for Ollama)
+    cost_usd: float     # always 0.0 — both Ollama (free local) and Gemini (AI Studio free tier) carry no per-call charge
+    tokens_used: int    # total tokens from usage_metadata (0 for Ollama); tracked for usage monitoring
     data: dict          # parsed JSON if parse_json=True, else {}
 ```
 
@@ -778,6 +779,23 @@ def validate_code_safety(code: str) -> dict[str, Any]:
 ```
 
 Failure is a hard stop — code is not submitted, not retried. See `AI-Autocoding-Rules.md §4` for the full gate contract.
+
+### Ollama Fallback Telemetry
+
+Two module-level functions expose the session-scoped Ollama-to-Gemini fallback counter:
+
+```python
+def get_ollama_fallback_count() -> int:
+    """
+    Return the number of times the system has fallen back from Ollama to Gemini
+    in the current process lifetime. Thread-safe.
+    """
+
+def reset_ollama_fallback_count() -> None:
+    """Reset the fallback counter to zero. Useful in tests and observability loops."""
+```
+
+The counter accumulates across all agents in the same process. It is not persisted across restarts — for cross-restart tracking, read the counter in the observability loop and write it to the Logs tab before resetting.
 
 ### Utility Helpers
 

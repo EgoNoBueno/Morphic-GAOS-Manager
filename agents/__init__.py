@@ -17,12 +17,38 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import logging
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# ── Ollama fallback telemetry ────────────────────────────────────────────────
+
+_ollama_fallback_lock = threading.Lock()
+_ollama_fallback_count: int = 0
+
+
+def get_ollama_fallback_count() -> int:
+    """Return the number of times the system has fallen back from Ollama to Gemini.
+
+    Thread-safe. Resets to zero only when reset_ollama_fallback_count() is called.
+    """
+    with _ollama_fallback_lock:
+        return _ollama_fallback_count
+
+
+def reset_ollama_fallback_count() -> None:
+    """Reset the Ollama-to-Gemini fallback counter to zero."""
+    global _ollama_fallback_count
+    with _ollama_fallback_lock:
+        _ollama_fallback_count = 0
+
 
 # ── Timestamp helpers ─────────────────────────────────────────────────────────
 
@@ -60,6 +86,7 @@ def _call_model(
     system_prompt: str = "",
     parse_json: bool = False,
     web_access: bool = False,
+    image_bytes: bytes | None = None,
 ) -> ModelResponse:
     """
     Routes to Ollama (local) or google.genai depending on the model alias.
@@ -68,10 +95,14 @@ def _call_model(
       - Optionally prepends web search results when web_access=True
       - POSTs to OLLAMA_HOST/api/generate with LOCAL_MODEL_TIMEOUT_SECONDS timeout
       - On timeout or connection error, falls back to LOCAL_MODEL_FALLBACK via Gemini
+      - image_bytes are not supported for Ollama; a warning is logged and bytes ignored.
 
     If model is a Gemini alias:
       - Calls google.genai with the GEMINI_API_KEY secret
-      - Falls back to ADC / Vertex AI if the secret is unavailable
+      - When image_bytes is provided, sends a multimodal request (image + text).
+        Use DEEP_MODEL for multimodal calls — Pro models have higher vision accuracy.
+        Multimodal calls consume significantly more tokens; budget monitoring is
+        the caller's responsibility.
 
     Args:
         prompt:        User-turn content.
@@ -80,6 +111,8 @@ def _call_model(
         parse_json:    If True, attempt to extract and parse JSON from response.
         web_access:    If True and model is an Ollama alias, prepend DuckDuckGo search
                        results for the prompt before sending to the local model.
+        image_bytes:   Optional raw image bytes for multimodal Gemini calls.
+                       Ignored (with a warning) when the model is an Ollama alias.
 
     Returns:
         ModelResponse with text, rough cost_usd, and parsed data dict.
@@ -94,9 +127,15 @@ def _call_model(
             prompt = f"Web search results for context:\n{snippets}\n\n---\n\n{prompt}"
 
     if model.startswith("ollama/"):
+        if image_bytes is not None:
+            logger.warning(
+                "image_bytes provided for Ollama model '%s' — multimodal is not supported "
+                "for local models. The image will be ignored.",
+                model,
+            )
         return _call_model_ollama(prompt, model, system_prompt, parse_json, settings)
 
-    return _call_model_gemini(prompt, model, system_prompt, parse_json, settings)
+    return _call_model_gemini(prompt, model, system_prompt, parse_json, settings, image_bytes)
 
 
 def _call_model_ollama(
@@ -144,8 +183,19 @@ def _call_model_ollama(
         return ModelResponse(text=text, cost_usd=0.0, tokens_used=0, data=parsed)
 
     except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as exc:
-        # Ollama unreachable or too slow — fall back to Gemini
-        _fallback_reason = type(exc).__name__
+        global _ollama_fallback_count
+        with _ollama_fallback_lock:
+            _ollama_fallback_count += 1
+            current_count = _ollama_fallback_count
+        logger.warning(
+            "Ollama unreachable (%s) at %s for model '%s' — falling back to %s. "
+            "Total fallback count this session: %d.",
+            type(exc).__name__,
+            host,
+            ollama_model,
+            fallback_model,
+            current_count,
+        )
         return _call_model_gemini(prompt, fallback_model, system_prompt, parse_json, settings)
 
 
@@ -155,29 +205,79 @@ def _call_model_gemini(
     system_prompt: str,
     parse_json: bool,
     settings: Any,
+    image_bytes: bytes | None = None,
 ) -> ModelResponse:
-    """Calls google.genai. Falls back to ADC/Vertex AI if API key is unavailable."""
+    """Calls google.genai via the Google AI Studio free tier API key.
+
+    The client is initialised exclusively with the GEMINI_API_KEY secret — no
+    Vertex AI / Discovery Engine endpoint is involved, keeping all traffic inside
+    the AI Studio free tier quota.  If the secret is unavailable the call fails
+    fast with a RuntimeError rather than silently re-routing to Vertex AI.
+
+    When image_bytes is provided the request is sent as a multimodal
+    (vision + text) call.  DEEP_MODEL is recommended for image inputs — Pro
+    models have higher accuracy on visual content.  Multimodal calls consume
+    significantly more tokens than text-only calls; the caller is responsible
+    for budget monitoring and logging.
+
+    Args:
+        prompt:        User-turn content (may include prepended web context).
+        model:         Resolved model alias string (e.g. "gemini-2.5-flash").
+        system_prompt: Optional system instruction prefix.
+        parse_json:    If True, attempt to extract and parse JSON from response.
+        settings:      Loaded Settings object from config.get_settings().
+        image_bytes:   Optional raw image bytes (JPEG/PNG). When present the
+                       request is sent as a multimodal image+text payload.
+
+    Returns:
+        ModelResponse with text, cost_usd=0.0 (AI Studio free tier), and
+        tokens_used for usage monitoring.
+
+    Raises:
+        RuntimeError: If GEMINI_API_KEY cannot be retrieved from Secret Manager.
+        google.api_core.exceptions.ResourceExhausted: Re-raised after logging when
+            the AI Studio free quota (429) is hit.
+    """
     import google.genai as genai
+    from google.genai import types as genai_types
+    from google.api_core import exceptions as gapi_exc
+
+    from tools.secrets import get_secret
 
     try:
-        from tools.secrets import get_secret
         api_key = get_secret("GEMINI_API_KEY", settings.GCP_PROJECT_ID)
-        client = genai.Client(api_key=api_key)
-    except Exception:
-        client = genai.Client(
-            vertexai=True,
-            project=settings.GCP_PROJECT_ID,
-            location=settings.memory_bank.region,
-        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"GEMINI_API_KEY unavailable — cannot call Gemini. "
+            f"Ensure the secret exists in project '{settings.GCP_PROJECT_ID}'. "
+            f"Original error: {exc}"
+        ) from exc
 
+    client = genai.Client(api_key=api_key)
     full_prompt = f"System: {system_prompt}\n\n{prompt}" if system_prompt else prompt
 
-    response = client.models.generate_content(model=model, contents=full_prompt)
+    try:
+        if image_bytes is not None:
+            contents = [
+                genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                genai_types.Part.from_text(text=full_prompt),
+            ]
+            response = client.models.generate_content(model=model, contents=contents)
+        else:
+            response = client.models.generate_content(model=model, contents=full_prompt)
+    except gapi_exc.ResourceExhausted as exc:
+        logger.warning(
+            "Gemini AI Studio free-tier quota exhausted (429) for model '%s'. "
+            "Request cannot be completed until the quota resets. Error: %s",
+            model,
+            exc,
+        )
+        raise
+
     text = response.text or ""
 
     usage = getattr(response, "usage_metadata", None)
     tokens_used = int(getattr(usage, "total_token_count", 0) or 0)
-    cost_usd = tokens_used * 1e-6  # conservative placeholder
 
     parsed: dict = {}
     if parse_json and text:
@@ -188,7 +288,7 @@ def _call_model_gemini(
         except (json.JSONDecodeError, ValueError):
             parsed = {}
 
-    return ModelResponse(text=text, cost_usd=cost_usd, tokens_used=tokens_used, data=parsed)
+    return ModelResponse(text=text, cost_usd=0.0, tokens_used=tokens_used, data=parsed)
 
 
 # ── Code safety gate ──────────────────────────────────────────────────────────

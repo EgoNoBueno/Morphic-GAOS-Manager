@@ -24,6 +24,7 @@ from agents import (
     ModelResponse,
     _call_model,
     _elapsed_seconds,
+    _load_context_trio,
     _load_identity_file,
     _log_cloud,
     _run_evolution_loop,
@@ -32,7 +33,7 @@ from agents import (
     validate_code_safety,
     _write_heartbeat,
 )
-from models import A2AMessage, AgentWorkingMemory, ApprovalProposal, MessageType
+from models import A2AMessage, AgentWorkingMemory, ApprovalProposal, MessageType, MonologueFrame
 
 # ── Nexus-Prime working memory ────────────────────────────────────────────────
 
@@ -66,6 +67,10 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
     # Vision workflow (Phase 2.5 Step 5)
     active_blueprints: dict           # maps blueprint_id → doc_id
     blueprint_constraints: list[dict] # active constraint stack per blueprint
+
+    # Strategic Architect — think node
+    _next_node: str                   # Set by think(); routes to diagnose or knowledge_review
+    monologue_frame: Optional[dict]   # Last MonologueFrame dict; used by tests for assertion
 
 
 # ── Constraint compaction threshold ──────────────────────────────────────────
@@ -132,6 +137,44 @@ def _compute_priority(state: NexusPrimeWorkingMemory) -> int:
     if msg is None:
         return 3
     return getattr(msg, "priority", 3)
+
+
+def _build_think_prompt(
+    state: NexusPrimeWorkingMemory,
+    msg: Optional[A2AMessage],
+    priority: int,
+) -> str:
+    """Build the pre-response reasoning prompt for the think node."""
+    msg_type = msg.message_type.value if msg else "NONE"
+    source = msg.source_agent if msg else "unknown"
+    payload_summary = str(msg.payload or {})[:300] if msg else ""
+    return (
+        f"You are Nexus-Prime, the AOS Tier 1 root agent. A new message has arrived.\n\n"
+        f"Message type:      {msg_type}\n"
+        f"Source agent:      {source}\n"
+        f"Priority:          {priority}/5\n"
+        f"Payload (trimmed): {payload_summary}\n\n"
+        f"Before responding, reason through the following and return ONLY valid JSON:\n"
+        f"  1. Is there a knowledge gap that prevents you from acting confidently?\n"
+        f"     If so, what specifically is missing?\n"
+        f"  2. Is a partial result available despite the gap?\n"
+        f"  3. Which response mode applies?\n"
+        f"     - 'Direct'   — all context available; execute immediately\n"
+        f"     - 'Reframe'  — a faster/better alternative exists; surface it first\n"
+        f"     - 'Research' — knowledge gap detected; provide best partial result and "
+        f"state the condition needed for the full result\n"
+        f"     - 'Tactical' — priority >= 4 or time-critical; lead with the most critical action\n"
+        f"  4. Summarize your reasoning in one sentence.\n\n"
+        f"Return JSON with exactly these keys: knowledge_gap_detected (bool), "
+        f"knowledge_gap_description (str), partial_result_available (bool), "
+        f"response_mode (str — one of Direct/Reframe/Research/Tactical), "
+        f"reasoning_summary (str)"
+    )
+
+
+def _route_from_think(state: NexusPrimeWorkingMemory) -> str:
+    """Sub-router after think — returns the value stored by think() in _next_node."""
+    return state.get("_next_node", "record")  # type: ignore[typeddict-item]
 
 
 def _log_hard_stop(state: NexusPrimeWorkingMemory, reason: str) -> None:
@@ -232,6 +275,105 @@ def _trigger_sync_to_vertex(row: dict, state: NexusPrimeWorkingMemory) -> None:
 # ── Graph node functions ───────────────────────────────────────────────────────
 
 
+def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    """
+    Mandatory pre-response reasoning node (Nexus-Prime only, Tier 1).
+
+    Runs between ``route`` and every output-producing node (diagnose,
+    knowledge_review). Uses FAST_MODEL with the Context Trio as system
+    prompt to determine the Strategic Architect response_mode, detect
+    knowledge gaps, and log a MonologueFrame to BigQuery before the
+    downstream node executes.
+
+    Tactical mode trigger: incoming message priority >= 4.
+
+    Spec: GAOS-Nexus-Prime-Spec.md §3.2 — think node
+    """
+    from config import get_settings
+    from tools.bigquery import insert_row
+
+    settings = get_settings()
+    msg = state.get("incoming_message")
+    project_id = state["project_id"]
+    task_id = state.get("task_id", "")
+
+    # Map message type → downstream node (mirrors route logic for think-gated paths)
+    msg_type = msg.message_type if msg else None
+    if msg_type in (MessageType.ESCALATION, MessageType.EVOLUTION_REQUEST):
+        next_node = "diagnose"
+    elif msg_type == MessageType.KNOWLEDGE_CANDIDATE:
+        next_node = "knowledge_review"
+    else:
+        next_node = "record"
+    state["_next_node"] = next_node  # type: ignore[typeddict-item]
+
+    priority = _compute_priority(state)
+    context_trio = _load_context_trio()
+    prompt = _build_think_prompt(state, msg, priority)
+
+    try:
+        resp = _call_model(
+            prompt,
+            model=settings.models.FAST_MODEL,
+            system_prompt=context_trio,
+            parse_json=True,
+        )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime", project_id, "task", task_id,
+            f"think: _call_model failed — {exc}", "WARNING",
+        )
+        return state
+
+    state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+    state["tokens_used"] = state.get("tokens_used", 0) + resp.tokens_used
+
+    data = resp.data or {}
+
+    # Tactical override — priority >= 4 is always time-critical
+    if priority >= 4:
+        data["response_mode"] = "Tactical"
+
+    # Validate and normalise response_mode
+    _VALID_MODES = {"Research", "Direct", "Reframe", "Tactical"}
+    if data.get("response_mode") not in _VALID_MODES:
+        data["response_mode"] = "Research" if data.get("knowledge_gap_detected") else "Direct"
+
+    try:
+        frame = MonologueFrame(
+            task_id=task_id,
+            project_id=project_id,
+            knowledge_gap_detected=bool(data.get("knowledge_gap_detected", False)),
+            knowledge_gap_description=str(data.get("knowledge_gap_description", "")),
+            partial_result_available=bool(data.get("partial_result_available", False)),
+            response_mode=data["response_mode"],
+            reasoning_summary=str(data.get("reasoning_summary", resp.text[:500])),
+            timestamp=utcnow_iso(),
+        )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime", project_id, "task", task_id,
+            f"think: MonologueFrame validation failed — {exc}", "WARNING",
+        )
+        return state
+
+    state["monologue_frame"] = frame.model_dump()  # type: ignore[typeddict-item]
+
+    try:
+        insert_row("aos_logs.monologue_frames", frame.model_dump(), project_id)
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime", project_id, "task", task_id,
+            f"think: BQ insert failed — {exc}", "WARNING",
+        )
+
+    _log_cloud(
+        "nexus-prime", project_id, "task", task_id,
+        f"think: mode={frame.response_mode} gap={frame.knowledge_gap_detected} next={next_node}",
+    )
+    return state
+
+
 def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     """
     Runs once at service startup. Initialises subscriptions, loads parked
@@ -324,10 +466,10 @@ def route(state: NexusPrimeWorkingMemory) -> str:
     routing_table = {
         MessageType.STATUS_UPDATE:       "record",
         MessageType.TASK_COMPLETE:       "record",
-        MessageType.ESCALATION:          "diagnose",
-        MessageType.EVOLUTION_REQUEST:   "diagnose",
+        MessageType.ESCALATION:          "think",           # think → diagnose
+        MessageType.EVOLUTION_REQUEST:   "think",           # think → diagnose
         MessageType.APPROVAL_RESULT:     "_route_approval",
-        MessageType.KNOWLEDGE_CANDIDATE: "knowledge_review",
+        MessageType.KNOWLEDGE_CANDIDATE: "think",           # think → knowledge_review
         MessageType.BROADCAST:           "conflict_resolve",
         MessageType.NEW_PROJECT:         "init_project",
         MessageType.VISION_SUBMITTED:    "vision_blueprint",
@@ -458,6 +600,34 @@ def propose_gate(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         state["parked_proposals"].append(proposal_id)
         state["candidate_sha256"] = sha256
         post_to_webhook(row, state["project_id"])
+
+        # Notify owner via Google Chat card with strategic reasoning
+        from config import get_settings
+        from tools.google_chat import send_approval_card
+        settings = get_settings()
+        owner_space: str = getattr(settings.chat, "owner_space", "") or ""
+        if owner_space:
+            monologue: dict = state.get("monologue_frame") or {}  # type: ignore[assignment]
+            try:
+                send_approval_card(
+                    space_name=owner_space,
+                    proposal_id=proposal_id,
+                    agent_id=agent_id_str,
+                    issue_summary=payload.get("issue", payload.get("description", ""))[:280],
+                    proposed_action=(
+                        f"Code evolution proposed by {agent_id_str}. "
+                        "Review the Blueprint Doc for full context."
+                    )[:280],
+                    priority=state.get("priority", 4),  # type: ignore[arg-type]
+                    cost_usd=state.get("cost_usd", 0.0),  # type: ignore[arg-type]
+                    reasoning_summary=monologue.get("reasoning_summary", ""),
+                )
+            except Exception as card_exc:
+                _log_cloud(
+                    "nexus-prime", state["project_id"], "task",
+                    state.get("task_id", ""),
+                    f"propose_gate: Chat card failed (non-fatal): {card_exc}", "WARNING"
+                )
     except Exception as exc:
         _log_cloud(
             "nexus-prime", state["project_id"], "task",
@@ -1216,6 +1386,21 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     state["tokens_used"] = state.get("tokens_used", 0) + resp.tokens_used
     blueprint_content = resp.text.strip()
 
+    # Append image-source note when the vision was extracted from a photo
+    if payload.get("vision_source") == "image":
+        image_ts = payload.get("image_submitted_at", utcnow_iso())
+        blueprint_content += (
+            f"\n\n---\n"
+            f"_Generated from image submission on {image_ts} "
+            f"(multimodal vision extraction — {settings.models.DEEP_MODEL})_"
+        )
+        _log_cloud(
+            "nexus-prime", project_id, "task", task_id,
+            f"PRIORITY-2-COST-MONITOR vision_blueprint image_source tokens={resp.tokens_used} "
+            f"submitted_by={submitted_by}",
+            "INFO",
+        )
+
     # ── 2. Create the Google Doc ──────────────────────────────────────────────
     doc_title = f"Blueprint — {vision_text[:60]}"
     blueprint_id = task_id  # use task_id as stable blueprint identifier
@@ -1691,6 +1876,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_node("boot",              boot)
     graph.add_node("monitor",           monitor)
     graph.add_node("route",             route)
+    graph.add_node("think",             think)
     graph.add_node("diagnose",          diagnose)
     graph.add_node("propose_gate",      propose_gate)
     graph.add_node("knowledge_review",  knowledge_review)
@@ -1712,6 +1898,7 @@ def build_nexus_prime_graph() -> Any:
         "route",
         route,
         {
+            "think":                 "think",
             "diagnose":              "diagnose",
             "knowledge_review":      "knowledge_review",
             "init_project":          "init_project",
@@ -1722,6 +1909,17 @@ def build_nexus_prime_graph() -> Any:
             "vision_blueprint":      "vision_blueprint",
             "iterate_plan":          "iterate_plan",
             "handle_skill_request":  "handle_skill_request",
+        },
+    )
+
+    # think routes to diagnose or knowledge_review based on message type
+    graph.add_conditional_edges(
+        "think",
+        _route_from_think,
+        {
+            "diagnose":        "diagnose",
+            "knowledge_review": "knowledge_review",
+            "record":          "record",
         },
     )
 
@@ -1815,6 +2013,8 @@ if _HAS_ADK:
                 "_started_at": time.time(),
                 "active_blueprints": {},
                 "blueprint_constraints": [],
+                "_next_node": "record",
+                "monologue_frame": None,
             }
 
             try:

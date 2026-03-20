@@ -187,10 +187,10 @@ def route(state: NexusPrimeWorkingMemory) -> str:
     routing_table = {
         MessageType.STATUS_UPDATE:       "record",           # Log and store; no action
         MessageType.TASK_COMPLETE:       "record",           # Log and store; no action
-        MessageType.ESCALATION:          "diagnose",         # Tier 2 needs help
-        MessageType.EVOLUTION_REQUEST:   "diagnose",         # Code evolution cycle requested
+        MessageType.ESCALATION:          "think",            # think → diagnose
+        MessageType.EVOLUTION_REQUEST:   "think",            # think → diagnose
         MessageType.APPROVAL_RESULT:     "_route_approval",  # Human responded to a proposal
-        MessageType.KNOWLEDGE_CANDIDATE: "knowledge_review", # New observation to evaluate
+        MessageType.KNOWLEDGE_CANDIDATE: "think",            # think → knowledge_review
         MessageType.BROADCAST:           "conflict_resolve", # Cross-domain state conflict
         MessageType.NEW_PROJECT:         "init_project",     # Project Registry change detected
         MessageType.VISION_SUBMITTED:    "vision_blueprint", # Owner vision → Blueprint Doc
@@ -209,6 +209,97 @@ def _route_approval(state: NexusPrimeWorkingMemory) -> str:
         return "record"   # Log rejection; no further action
     return "park_or_broadcast"
 ```
+
+#### `think`
+
+**Nexus-Prime only (Tier 1).** Mandatory pre-response reasoning node that runs after `route` and before every output-producing node (`diagnose`, `knowledge_review`). Uses `FAST_MODEL` with the Context Trio as the system prompt.
+
+**Tactical mode trigger:** `incoming_message.priority >= 4`. This overrides any model-selected mode.
+
+**Wiring:** `route` returns `"think"` for `ESCALATION`, `EVOLUTION_REQUEST`, and `KNOWLEDGE_CANDIDATE`. `think` stores `state["_next_node"]` and a `_route_from_think()` sub-router reads it via `add_conditional_edges`.
+
+```python
+def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    from config import get_settings
+    from tools.bigquery import insert_row
+
+    settings = get_settings()
+    msg = state.get("incoming_message")
+    project_id = state["project_id"]
+    task_id = state.get("task_id", "")
+
+    # Map message type → downstream node
+    msg_type = msg.message_type if msg else None
+    if msg_type in (MessageType.ESCALATION, MessageType.EVOLUTION_REQUEST):
+        next_node = "diagnose"
+    elif msg_type == MessageType.KNOWLEDGE_CANDIDATE:
+        next_node = "knowledge_review"
+    else:
+        next_node = "record"
+    state["_next_node"] = next_node
+
+    priority = _compute_priority(state)
+    context_trio = _load_context_trio()
+    prompt = _build_think_prompt(state, msg, priority)
+
+    try:
+        resp = _call_model(
+            prompt,
+            model=settings.models.FAST_MODEL,
+            system_prompt=context_trio,
+            parse_json=True,
+        )
+    except Exception as exc:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"think: _call_model failed — {exc}", "WARNING")
+        return state   # Fallback: skip MonologueFrame, don't block pipeline
+
+    data = resp.data or {}
+
+    # Tactical override — priority >= 4 is always time-critical
+    if priority >= 4:
+        data["response_mode"] = "Tactical"
+
+    # Validate response_mode
+    _VALID_MODES = {"Research", "Direct", "Reframe", "Tactical"}
+    if data.get("response_mode") not in _VALID_MODES:
+        data["response_mode"] = "Research" if data.get("knowledge_gap_detected") else "Direct"
+
+    frame = MonologueFrame(
+        task_id=task_id,
+        project_id=project_id,
+        knowledge_gap_detected=bool(data.get("knowledge_gap_detected", False)),
+        knowledge_gap_description=str(data.get("knowledge_gap_description", "")),
+        partial_result_available=bool(data.get("partial_result_available", False)),
+        response_mode=data["response_mode"],
+        reasoning_summary=str(data.get("reasoning_summary", resp.text[:500])),
+        timestamp=utcnow_iso(),
+    )
+    state["monologue_frame"] = frame.model_dump()
+
+    try:
+        insert_row("aos_logs.monologue_frames", frame.model_dump(), project_id)
+    except Exception as exc:
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"think: BQ insert failed — {exc}", "WARNING")
+
+    return state
+```
+
+**MonologueFrame schema** (see `models/__init__.py`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `task_id` | `str` | Links to the active task |
+| `project_id` | `str` | Active project namespace |
+| `knowledge_gap_detected` | `bool` | True if the model lacks context to act confidently |
+| `knowledge_gap_description` | `str` | What specifically is missing |
+| `partial_result_available` | `bool` | True if a partial answer can still be returned |
+| `response_mode` | `Literal["Direct", "Reframe", "Research", "Tactical"]` | Strategic Architect mode |
+| `reasoning_summary` | `str` | One-sentence rationale |
+| `timestamp` | `str` | ISO 8601 from `utcnow_iso()` |
+
+> ⚠️ **Warning — think node is Tier 1 only:** Do not add a `think` node to Tier 2 orchestrators. Their output patterns are audited periodically by Nexus-Prime's Weekly Review Loop instead.
 
 #### `diagnose`
 

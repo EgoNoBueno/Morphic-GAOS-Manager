@@ -93,6 +93,14 @@ def _get_agent() -> Any:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+# Google Chat signs push requests with this service account.
+_CHAT_ISSUER: str = "chat@system.gserviceaccount.com"
+_CHAT_CERTS_URL: str = (
+    "https://www.googleapis.com/service_accounts/v1/jwk/"
+    "chat@system.gserviceaccount.com"
+)
+
+
 def _verify_pubsub_audience(request: Request) -> None:
     """
     Defense-in-depth: confirm the Authorization header is present and
@@ -102,6 +110,102 @@ def _verify_pubsub_audience(request: Request) -> None:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
+
+
+def _verify_chat_jwt(request: Request) -> None:
+    """
+    Verify the Google-signed JWT that Google Chat attaches to every push request.
+
+    Google Chat signs requests using the ``chat@system.gserviceaccount.com``
+    service account.  We verify the token against that SA's public keys and
+    confirm the audience matches the Cloud Run service URL so that only
+    Google-originated Chat events can trigger state changes.
+
+    When ``CLOUD_RUN_URL`` is not set (e.g. local dev / CI), the cryptographic
+    check is skipped with a warning logged.  Cloud Run's
+    ``--no-allow-unauthenticated`` ingress still enforces authentication at
+    the network layer.
+    """
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Authorization header.")
+
+    service_url = os.environ.get("CLOUD_RUN_URL", "").rstrip("/")
+    if not service_url:
+        log.warning(
+            "CLOUD_RUN_URL env var is not set — skipping Chat JWT audience verification. "
+            "Set CLOUD_RUN_URL to the Cloud Run service URL in production."
+        )
+        return
+
+    token = auth[len("Bearer "):].strip()
+    try:
+        from google.oauth2 import id_token as google_id_token
+        from google.auth.transport import requests as google_auth_requests
+
+        id_info = google_id_token.verify_token(
+            token,
+            google_auth_requests.Request(),
+            audience=service_url,
+            certs_url=_CHAT_CERTS_URL,
+        )
+        if id_info.get("iss") != _CHAT_ISSUER:
+            raise ValueError(f"Unexpected JWT issuer: {id_info.get('iss')!r}")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=401,
+            detail=f"Chat JWT verification failed: {exc}",
+        ) from exc
+
+
+def _download_chat_attachment(download_uri: str) -> bytes:
+    """
+    Download a Google Chat attachment byte payload using service account credentials.
+
+    Uses the same service account key that drives the Chat API client, falling
+    back to Application Default Credentials when the key file is unavailable.
+
+    Args:
+        download_uri: The ``attachmentDataRef.downloadUri`` from the Chat event.
+
+    Returns:
+        Raw file bytes.
+
+    Raises:
+        RuntimeError: If the download fails (network error, 4xx/5xx).
+    """
+    import httpx
+    from config import get_settings
+
+    settings = get_settings()
+    key_path: str = getattr(settings.chat, "service_account_key", "") or ""
+
+    try:
+        if key_path and os.path.exists(key_path):
+            from google.oauth2 import service_account
+            from google.auth.transport.requests import Request as GoogleRequest
+
+            creds = service_account.Credentials.from_service_account_file(
+                key_path,
+                scopes=["https://www.googleapis.com/auth/chat.bot"],
+            )
+            creds.refresh(GoogleRequest())
+        else:
+            import google.auth
+            from google.auth.transport.requests import Request as GoogleRequest
+
+            creds, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/chat.bot"]
+            )
+            creds.refresh(GoogleRequest())
+
+        headers = {"Authorization": f"Bearer {creds.token}"}
+        with httpx.Client(timeout=30) as client:
+            resp = client.get(download_uri, headers=headers)
+            resp.raise_for_status()
+            return resp.content
+    except Exception as exc:
+        raise RuntimeError(f"Failed to download Chat attachment: {exc}") from exc
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -334,25 +438,27 @@ async def chat(request: Request) -> JSONResponse:
     - The owner taps a card button (``type: CARD_CLICKED``).
 
     Event routing:
-    - ``MESSAGE``      → wraps text as ``CHAT_MESSAGE`` and routes to Nexus-Prime
-                          via the agent's ``run()`` graph, which formulates a reply
-                          and calls ``send_message()`` back to the Chat space.
+    - ``MESSAGE`` with no attachments → wraps text as ``CHAT_MESSAGE`` and routes
+      to Nexus-Prime via the agent's ``run()`` graph.
+    - ``MESSAGE`` with image attachment → downloads attachment bytes, runs a
+      Gemini multimodal vision extraction (DEEP_MODEL), and routes the resulting
+      text as ``VISION_SUBMITTED`` so the Blueprint Factory generates a doc.
     - ``CARD_CLICKED`` with ``action_name`` ``"approve"`` or ``"reject"``
-                       → wraps as ``APPROVAL_RESULT`` and routes to Nexus-Prime.
+      → wraps as ``APPROVAL_RESULT`` and routes to Nexus-Prime.
     - ``CARD_CLICKED`` with ``action_name`` ``"skill_approve"`` or ``"skill_reject"``
-                       → wraps as ``SKILL_REQUEST`` (resolved) and routes to Nexus-Prime.
+      → wraps as ``SKILL_REQUEST`` (resolved) and routes to Nexus-Prime.
     - All other event types respond 200 immediately (no-op ACK).
 
-    Security: This endpoint requires an Authorization: Bearer token, matching
-    all other POST endpoints. The Chat push URL must be registered in the
-    Google Chat API console with OIDC authentication targeting the nexus-prime
-    service account.
+    Security: This endpoint verifies the Google-signed JWT in the Authorization
+    header using ``google.oauth2.id_token.verify_token()`` with the Chat service
+    account as issuer and the Cloud Run service URL as audience.  Set the
+    ``CLOUD_RUN_URL`` environment variable to enable audience validation.
 
     Nexus-Prime only — other agents return 404.
 
     Spec: GAOS-Manager-Spec.md §2.5 (Phase 2.5 Step 1)
     """
-    _verify_pubsub_audience(request)
+    _verify_chat_jwt(request)
 
     if _AGENT_NAME != "nexus-prime":
         raise HTTPException(
@@ -403,13 +509,89 @@ async def chat(request: Request) -> JSONResponse:
             "space_name": event["space_name"],
         }
     elif event_type == "MESSAGE":
-        msg_type = MessageType.CHAT_MESSAGE
-        payload = {
-            "text": event["text"],
-            "sender_email": event["sender_email"],
-            "space_name": event["space_name"],
-            "message_name": event["message_name"],
-        }
+        attachments = event.get("attachments", [])
+        image_att = next(
+            (a for a in attachments if a.get("content_type", "").startswith("image/")),
+            None,
+        )
+        if image_att:
+            # ── Multimodal vision path ─────────────────────────────────────────
+            # Download image bytes, run Gemini DEEP_MODEL vision extraction,
+            # then dispatch VISION_SUBMITTED so blueprint_factory generates a doc.
+            # Restricted to DEEP_MODEL — multimodal accuracy requires Pro.
+            # Budget impact: PRIORITY-2-COST-MONITOR tag in log for tracking.
+            from agents import _call_model
+            from config import get_settings
+            import datetime
+
+            settings = get_settings()
+            download_uri = image_att.get("download_uri", "")
+            submitted_at = datetime.datetime.utcnow().isoformat()
+
+            try:
+                img_bytes = _download_chat_attachment(download_uri)
+            except Exception as exc:
+                log.error("Vision image download failed: %s", exc)
+                from tools.google_chat import send_message
+                try:
+                    send_message(
+                        event["space_name"],
+                        "\U0001f4f8 I received your image but couldn't download it. "
+                        "Please try again or describe your vision in text.",
+                    )
+                except Exception:
+                    pass
+                return JSONResponse(content={"status": "ok"})
+
+            vision_extract_prompt = (
+                "Describe the project vision, business process, or workflow shown in this "
+                "image in exhaustive detail so that a Blueprint Document can be generated "
+                "from your description alone. Include every element, label, arrow, and "
+                "annotation visible. Output plain text only."
+            )
+            try:
+                vision_resp = _call_model(
+                    prompt=vision_extract_prompt,
+                    model=settings.models.DEEP_MODEL,
+                    image_bytes=img_bytes,
+                )
+                vision_text = vision_resp.text.strip()
+                log.info(
+                    "PRIORITY-2-COST-MONITOR vision_extract tokens=%d model=%s "
+                    "submitted_by=%s",
+                    vision_resp.tokens_used,
+                    settings.models.DEEP_MODEL,
+                    event["sender_email"],
+                )
+            except Exception as exc:
+                log.error("Vision extraction model call failed: %s", exc)
+                from tools.google_chat import send_message
+                try:
+                    send_message(
+                        event["space_name"],
+                        "\U0001f4f8 I couldn't process your image right now. "
+                        "Please describe your vision in text and I'll generate the Blueprint.",
+                    )
+                except Exception:
+                    pass
+                return JSONResponse(content={"status": "ok"})
+
+            msg_type = MessageType.VISION_SUBMITTED
+            payload = {
+                "vision_text": vision_text,
+                "submitted_by": event["sender_email"],
+                "space_name": event["space_name"],
+                "vision_source": "image",
+                "image_submitted_at": submitted_at,
+            }
+        else:
+            msg_type = MessageType.CHAT_MESSAGE
+            payload = {
+                "text": event["text"],
+                "sender_email": event["sender_email"],
+                "space_name": event["space_name"],
+                "message_name": event["message_name"],
+            }
     else:
         # Unknown CARD_CLICKED action or unsupported event — ACK silently
         return JSONResponse(content={"status": "ok"})
