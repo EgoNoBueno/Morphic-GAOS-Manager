@@ -3,6 +3,64 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-03-20T15:00-03:00 — IaC hardening: TF outputs + CLOUD_RUN_URL auto-wiring + WIF secret
+
+**What was done:** Closed three gaps in the IaC pipeline before the Phase 4 bootstrap can be executed.
+
+### Files changed
+
+- **`.github/workflows/deploy.yml`** — Three fixes:
+  1. All 3 `google-github-actions/auth` steps now use `service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}` instead of the hardcoded `deployer-sa@morphic-gaos-prod.iam.gserviceaccount.com`. The `WIF_SERVICE_ACCOUNT` secret is set by the bootstrap runbook (§20 Step 5) — this makes the workflow portable to any project ID without code changes.
+  2. Added a `Wire CLOUD_RUN_URL on nexus-prime` step at the end of the apply job: reads the `nexus_prime_url` output from `tofu output -raw` and calls `gcloud run services update nexus-prime --update-env-vars CLOUD_RUN_URL=...` immediately after apply completes. No manual post-deploy action needed for Chat JWT audience verification.
+  3. No other changes — plan/apply artifact flow and concurrency groups unchanged.
+- **`infra/main.tf`** — Added two `output` blocks: `service_urls` (map of all 7 agent names → URIs) and `nexus_prime_url` (raw nexus-prime URI). These let the apply job and local operators read deploy results without going to the GCP console.
+- **`Docs/GAOS-Deploy-Spec.md`** — §19 4c checklist: marked `CLOUD_RUN_URL` as auto-wired (checked) and added note. §20 post-apply steps: updated step 4 to state CLOUD_RUN_URL is handled automatically; step 1 now says to read from `service_urls` TF output.
+
+**What was learned:** Cloud Run v2 TF resource doesn't support self-referential URLs during creation — the URL is only known after the first revision deploys. Reading via `tofu output -raw nexus_prime_url` and issuing a `gcloud run services update` immediately after apply is the correct pattern. No new revision is created by `--update-env-vars`, just an in-place metadata update.
+
+**What's next:** All code-side work is done. Phase 4 is pure GCP bootstrap (§20 runbook) + live E2E validation.
+
+---
+
+## 2026-03-20T14:30-03:00 — Phase 4 prep: ruff clean + Phase 4 Bootstrap Spec
+
+**What was done:** Fixed the only remaining ruff lint warnings; wrote Phase 4 exit criteria and bootstrap runbook.
+
+### Files changed
+
+- **`models/__init__.py`** — Migrated `MessageType(str, Enum)` and `ApprovalStatus(str, Enum)` to `StrEnum` (ruff UP042). Removed `Enum` import, added `StrEnum`. Behavior identical — no `auto()` used; all member values are explicit strings. Tests: 408/408 still passing; `ruff check` now reports `All checks passed!`
+- **`Docs/GAOS-Deploy-Spec.md`** — Added §19 "Phase 4 Exit Criteria Checklist" (6 subsections: 4a Infrastructure Bootstrap, 4b CI/CD Validation, 4c Production Wiring, 4d Live E2E Validation, 4e Cost + Security, 4f GAOS-Doctor Runbook); added §20 "Phase 4 Bootstrap Runbook" (copy-paste PowerShell sequence for the 8-step GCP bootstrap from a clean state). Updated §16 Reference Index with pointers to §19–20.
+
+**What was learned:** Nothing non-obvious — the StrEnum migration is a clean mechanical fix. `StrEnum` is identical to `(str, Enum)` when all values are explicit string literals (no `auto()`).
+
+**What's next (Phase 4, all human/GCP actions):**
+1. Run §20 bootstrap runbook (Steps 1–7) — creates TF state bucket, AR repo, deployer-sa, WIF pool, sets GitHub Secrets.
+2. Create `production` GitHub Environment with required reviewer (GitHub UI only).
+3. Push to `master` → CI/CD pipeline runs → all 7 Cloud Run services deploy.
+4. Complete §19 post-deploy wiring (update Pub/Sub endpoints, `VERTEX_AGENT_ENDPOINT`, `CLOUD_RUN_URL`).
+5. Run §19 4d–4f live E2E + GAOS-Doctor validation.
+
+---
+
+## 2026-03-20T14:00-03:00 — Phase 3 formally closed + README accuracy pass
+
+**What was done:** Reviewed the full project from Phase 0 to present. 408 tests passing, 0 warnings. All Phase 3 code verified implemented — no gaps. Formalized Phase 3 completion with a new exit criteria checklist and updated the README roadmap to match reality.
+
+### Files changed
+
+- **`Docs/GAOS-Deploy-Spec.md`** — Added new §18 "Phase 3 Exit Criteria Checklist": 13 items (11 checked ✅, 2 pending Cloud Run/GCP bootstrap). Covers: `think` node + MonologueFrame, Tactical mode, `vision_blueprint`, `handle_skill_request`, `iterate_plan` + `_run_compaction`, `handle_poll_comments`, Memory Mirror (`sync_to_atlas`), Chat Interactive Hub (JWT + approval cards + CARD_CLICKED routing), multimodal `_call_model`, OpenTofu IaC pipeline, WIF auth, 408-test green suite. Two unchecked items require GCP infrastructure (OpenTofu bootstrap + Chat-path E2E live validation).
+- **`README.md`** — Phase table updated: Phase 1 test count 320→408; Phase 2 status "Spec complete"→"Complete"; Phase 2.5 "Deployed"→"Complete"; Phase 3 "Spec complete"→"Code-complete — Cloud Run bootstrap + Chat-path E2E validation pending"; Phase 4 "Spec complete"→"Up next"; Phase 3 focus updated to reflect actual scope. Footer badge updated: "396 tests green"→"408 tests green", "Phase 1 and Phase 2.5 deployed"→"Phases 1–3 code-complete."
+
+**What was learned:** No new gaps. The project is in good shape — everything described in the Phase 3 spec is implemented and tested. The only remaining blockers for Phase 3 "done" status are infrastructure steps (OpenTofu bootstrap, WIF GitHub Secrets, first Cloud Run deploy).
+
+**What's next (Phase 4):**
+1. One-time GCP bootstrap for OpenTofu (§9.3): create `morphic-gaos-tfstate` bucket + `cloud-run-source-deploy` AR repo + `deployer-sa` + WIF pool + OIDC provider; add `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` to GitHub Secrets.
+2. Push to `master` to trigger the first WIF-based CI/CD pipeline run → all 7 Cloud Run services deploy.
+3. Validate Approval Gate Chat-path E2E live: Chat card Approve tap → `APPROVAL_RESULT` → Nexus-Prime resumes parked task → Sheet audit row written.
+4. Run through GAOS-Doctor checklist post-deploy.
+
+---
+
 ## 2026-03-20T10:00-03:00 — Layer 4 Memory Mirror + doc audit
 
 **What was done:** Implemented the Memory Mirror feature (Layer 4 Knowledge Atlas) and updated all affected specifications.

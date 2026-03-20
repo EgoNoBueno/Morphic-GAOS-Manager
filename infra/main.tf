@@ -96,3 +96,15 @@ resource "google_cloud_run_v2_service" "agent" {
     timeout                          = "60s"
   }
 }
+
+# Service URLs — used post-apply to update Pub/Sub subscriptions and Chat JWT wiring.
+# The CI/CD apply job reads nexus_prime_url to wire CLOUD_RUN_URL automatically.
+output "service_urls" {
+  description = "Cloud Run service URLs, keyed by agent name."
+  value       = { for k, v in google_cloud_run_v2_service.agent : k => v.uri }
+}
+
+output "nexus_prime_url" {
+  description = "Nexus-Prime Cloud Run service URL. Used to wire CLOUD_RUN_URL env var post-apply."
+  value       = google_cloud_run_v2_service.agent["nexus-prime"].uri
+}

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, Field
@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 # ── Message type registry ──────────────────────────────────────────────────
 
 
-class MessageType(str, Enum):
+class MessageType(StrEnum):
     STATUS_UPDATE = "STATUS_UPDATE"  # Routine heartbeat / objective update
     TASK_HANDOFF = "TASK_HANDOFF"  # Pass work to another orchestrator
     TASK_COMPLETE = "TASK_COMPLETE"  # Task finished; no further action needed
@@ -76,7 +76,7 @@ class A2AMessage(BaseModel):
 # ── ApprovalProposal ───────────────────────────────────────────────────────
 
 
-class ApprovalStatus(str, Enum):
+class ApprovalStatus(StrEnum):
     PENDING = "Pending"
     APPROVED = "Approved"
     REJECTED = "Rejected"

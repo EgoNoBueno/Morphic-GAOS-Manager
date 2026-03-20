@@ -1185,6 +1185,159 @@ gcloud iam service-accounts add-iam-policy-binding \
 
 # Store the provider resource name as GitHub Secret WIF_PROVIDER:
 echo "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-actions/providers/github-oidc"
+
+---
+
+## 19. Phase 4 Exit Criteria Checklist
+
+Phase 4 is complete — and the system is **production-ready** — when **every item** below is checked:
+
+### 4a — Infrastructure Bootstrap
+
+- [ ] GCS state bucket created: `gsutil mb -p $PROJECT -l us-central1 gs://morphic-gaos-tfstate/`
+- [ ] Artifact Registry repo created: `gcloud artifacts repositories create cloud-run-source-deploy --repository-format=docker --location=us-central1 --project=$PROJECT`
+- [ ] `deployer-sa` service account created and all IAM bindings applied (see §9.3 step 2)
+- [ ] Workload Identity Federation pool + OIDC provider created; `attribute.repository` condition verified to only allow `EgoNoBueno/Morphic-GAOS-Manager`
+- [ ] `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` GitHub Secrets set in repository settings
+- [ ] `production` GitHub Environment created with at least one required reviewer
+
+### 4b — CI/CD Pipeline Validation
+
+- [ ] First push to `master` triggers the `build` job successfully (Docker image pushed to AR)
+- [ ] `plan` job runs `tofu plan -out=tfplan` with zero errors; artifact uploaded
+- [ ] `apply` job gated behind `production` environment approval; after approval, all 7 Cloud Run services deploy at the correct revision
+- [ ] `gcloud run services list --region=us-central1 --project=$PROJECT` shows all 7 services with state `ACTIVE`
+- [ ] `GET /health` returns HTTP 200 for all 7 services
+
+### 4c — Production Wiring
+
+- [ ] All Pub/Sub push subscriptions updated to point at the new Cloud Run URLs (§5.2 + §9.2)
+- [ ] `VERTEX_AGENT_ENDPOINT` Script Property in Apps Script updated via Apps Script editor → Project Settings → Script Properties
+- [x] `CLOUD_RUN_URL` environment variable on `nexus-prime` — **set automatically by CI/CD pipeline** (`Wire CLOUD_RUN_URL on nexus-prime` step in apply job reads TF output `nexus_prime_url` and updates the service in-place)
+- [ ] `settings.yaml` `chat.owner_space` set to the owner's DM space resource name (e.g. `spaces/AAAAXXXXXXX`) — find it in the Google Chat API console or any inbound `/chat` event payload
+
+### 4d — Live End-to-End Validation
+
+- [ ] **Approval Gate Chat-path E2E:** Submit a test approval proposal via the `/sync` endpoint → a Chat card appears in the owner's DM space → tap **Approve** → confirm `APPROVAL_RESULT` published to Pub/Sub → Nexus-Prime resumes the parked task → `Agent_Approvals` row updated to `Approved` + audit row in Logs tab
+- [ ] **Vision path E2E:** Send an image directly to the Nexus-Prime Chat bot → confirm DEEP_MODEL vision extraction runs → Blueprint Doc created in Drive → doc link posted as Chat reply
+- [ ] **Nightly archive job:** Force-run the `nightly-archive` Cloud Scheduler job → `POST /archive` returns HTTP 200 → aged rows moved from Sheet Logs to BigQuery `aos_logs.log_archive`
+- [ ] **TTL sweep job:** Force-run `ttl-sweep` → `POST /ttl-sweep` returns HTTP 200 → any stale proposals beyond auto-reject deadline are updated in Sheet
+- [ ] **Daily kickoff job:** Force-run `daily-kickoff` → morning briefing Chat card appears in owner's DM space within 15 seconds
+- [ ] **Doc comment poll:** Add a resolved comment to any Blueprint Doc → `POST /poll-comments` returns HTTP 200 → a `KNOWLEDGE_CANDIDATE` message dispatched → Nexus-Prime routes through `knowledge_review` node
+
+### 4e — Cost + Security Verification
+
+- [ ] Cloud Billing dashboard shows actual usage ≤ $5/month after first 7-day period at normal load
+- [ ] Budget alert configured at $10/month threshold in GCP Billing console
+- [ ] Cloud Logging retention set to 7 days for `projects/morphic-gaos-prod/logs/` (see §11)
+- [ ] All 7 Cloud Run services confirm `--no-allow-unauthenticated` — unauthenticated `GET /health` returns 403 (only authenticated callers bypass this; Pub/Sub uses OIDC tokens)
+
+> ⚠️ **Note:** `GET /health` is intended for Cloud Run's internal liveness probe (authenticated via the SA identity), not for unauthenticated external pinging. If you need to test health locally, add an OIDC token: `curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" <SERVICE_URL>/health`
+
+### 4f — GAOS-Doctor Runbook
+
+- [ ] Run the full GAOS-Doctor checklist (`Docs/GAOS-Doctor.md`) and confirm all health checks pass: Sheet connectivity, Pub/Sub topics exist + subscriptions active, Secret Manager access for all secrets, Cloud Run `/health` endpoints reachable, Vertex AI corpora indexed
+
+---
+
+## 20. Phase 4 Bootstrap Runbook
+
+One-time commands to go from a Phase 3 code-complete state to a fully deployed Phase 4 production system. Run in order. All commands are PowerShell-compatible.
+
+```powershell
+# ── Setup variables ──────────────────────────────────────────────────────
+$PROJECT = "morphic-gaos-prod"
+$REGION  = "us-central1"
+$REPO    = "cloud-run-source-deploy"
+$SA      = "deployer-sa"
+
+# ── Step 1: GCS Terraform state bucket ──────────────────────────────────
+gsutil mb -p $PROJECT -l $REGION gs://morphic-gaos-tfstate/
+gsutil versioning set on gs://morphic-gaos-tfstate/
+
+# ── Step 2: Artifact Registry repo ──────────────────────────────────────
+gcloud artifacts repositories create $REPO `
+  --repository-format=docker --location=$REGION --project=$PROJECT
+
+# ── Step 3: Deployer service account + IAM ───────────────────────────────
+gcloud iam service-accounts create $SA `
+  --display-name="GAOS CI/CD Deployer" --project=$PROJECT
+
+# Cloud Run admin (deploy all services)
+gcloud projects add-iam-policy-binding $PROJECT `
+  --member="serviceAccount:${SA}@${PROJECT}.iam.gserviceaccount.com" `
+  --role="roles/run.admin"
+
+# AR writer (push images) — scoped to the repo resource, not the project
+gcloud artifacts repositories add-iam-policy-binding $REPO `
+  --location=$REGION --project=$PROJECT `
+  --member="serviceAccount:${SA}@${PROJECT}.iam.gserviceaccount.com" `
+  --role="roles/artifactregistry.writer"
+
+# GCS state bucket admin (tofu state read/write)
+gsutil iam ch "serviceAccount:${SA}@${PROJECT}.iam.gserviceaccount.com:roles/storage.objectAdmin" `
+  gs://morphic-gaos-tfstate/
+
+# actAs each per-agent SA (required to set SA identity on Cloud Run deploys)
+foreach ($agent in @("nexus-prime","ledger","beacon","pursuit","foreman","steward","scout")) {
+  gcloud iam service-accounts add-iam-policy-binding `
+    "${agent}-sa@${PROJECT}.iam.gserviceaccount.com" `
+    --role="roles/iam.serviceAccountUser" `
+    --member="serviceAccount:${SA}@${PROJECT}.iam.gserviceaccount.com" `
+    --project=$PROJECT
+}
+
+# ── Step 4: Workload Identity Federation ────────────────────────────────
+$PROJECT_NUMBER = (gcloud projects describe $PROJECT --format="value(projectNumber)")
+
+gcloud iam workload-identity-pools create github-actions `
+  --location=global --display-name="GitHub Actions" --project=$PROJECT
+
+gcloud iam workload-identity-pools providers create-oidc github-oidc `
+  --location=global `
+  --workload-identity-pool=github-actions `
+  --display-name="GitHub OIDC" `
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" `
+  --attribute-condition="attribute.repository=='EgoNoBueno/Morphic-GAOS-Manager'" `
+  --issuer-uri="https://token.actions.githubusercontent.com" `
+  --project=$PROJECT
+
+gcloud iam service-accounts add-iam-policy-binding `
+  "${SA}@${PROJECT}.iam.gserviceaccount.com" `
+  --role="roles/iam.workloadIdentityUser" `
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-actions/attribute.repository/EgoNoBueno/Morphic-GAOS-Manager" `
+  --project=$PROJECT
+
+# Print the two values to paste as GitHub Secrets
+Write-Host "WIF_PROVIDER = projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-actions/providers/github-oidc"
+Write-Host "WIF_SERVICE_ACCOUNT = ${SA}@${PROJECT}.iam.gserviceaccount.com"
+
+# ── Step 5: GitHub Secrets (via gh CLI) ─────────────────────────────────
+# Replace <WIF_PROVIDER_VALUE> with the output from Step 4
+gh secret set WIF_PROVIDER --body "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-actions/providers/github-oidc" --repo EgoNoBueno/Morphic-GAOS-Manager
+gh secret set WIF_SERVICE_ACCOUNT --body "${SA}@${PROJECT}.iam.gserviceaccount.com" --repo EgoNoBueno/Morphic-GAOS-Manager
+
+# ── Step 6: GitHub Environment ──────────────────────────────────────────
+# Manual — GitHub UI only:
+# Settings → Environments → New environment → name: "production"
+# Add yourself as a required reviewer → Save protection rules
+
+# ── Step 7: Trigger the pipeline ────────────────────────────────────────
+git push origin master   # triggers build → plan → (manual gate) → apply
+
+# ── Step 8: Verify all 7 services deployed ──────────────────────────────
+gcloud run services list --region=$REGION --project=$PROJECT
+```
+
+**After the apply job succeeds:**
+
+1. Read the 7 Cloud Run service URLs from the `service_urls` output printed by `tofu apply`, or run: `gcloud run services list --region=us-central1 --project=$PROJECT`
+2. Update Pub/Sub push subscription endpoints (§5.2) to the new URLs.
+3. Set `VERTEX_AGENT_ENDPOINT` in Apps Script Script Properties.
+4. `CLOUD_RUN_URL` on nexus-prime is **wired automatically** by the `Wire CLOUD_RUN_URL on nexus-prime` step at the end of the apply job — no manual action required.
+5. Run the Phase 4 exit criteria checklist (§19).
+
+> ⚠️ **Warning — `tofu init` required before first `tofu plan`:** The CI/CD pipeline runs `tofu init` automatically in the `plan` job. If you want to run Terraform locally before pushing, run `tofu init -backend-config="bucket=morphic-gaos-tfstate"` from the `infra/` directory first. The `-backend-config` is not hardcoded in `main.tf` so it can be overridden for different environments.
 # (repo → Settings → Secrets and variables → Actions → New repository secret → WIF_PROVIDER)
 ```
 
@@ -1424,6 +1577,8 @@ Phase 2 is complete — and Phase 3 (multi-agent orchestration) may begin — wh
 | Memory Bank corpus usage | `GAOS-Memory-Spec.md` §6 |
 | Knowledge Atlas (Memory Mirror) | `GAOS-Tools-Spec.md` §18 · §17 (this doc) |
 | Nexus-Prime construction requirements | `GAOS-Nexus-Prime-Spec.md` |
+| Phase 3 exit criteria | §18 (this doc) |
+| Phase 4 exit criteria + bootstrap runbook | §19–20 (this doc) |
 
 ---
 
@@ -1494,3 +1649,29 @@ print('Atlas doc ID:', s.docs.knowledge_atlas_doc_id or '[NOT SET]')
 ```
 
 Expected: prints the document ID string (not `[NOT SET]`).
+
+---
+
+## 18. Phase 3 Exit Criteria Checklist
+
+Phase 3 is complete — and Phase 4 (production validation) may begin — when **every item** below is checked:
+
+- [x] `think` node implemented in Nexus-Prime LangGraph: `ESCALATION`, `EVOLUTION_REQUEST`, and `KNOWLEDGE_CANDIDATE` message types all route through `think` before proceeding to `diagnose` or `knowledge_review` ✅ (2026-03-19)
+- [x] `MonologueFrame` Pydantic model defined in `models/__init__.py`; `think` node writes a structured frame to the `aos_logs.monologue_frames` BigQuery table on every invocation ✅ (2026-03-19)
+- [x] Tactical mode override implemented in `think`: when `priority >= 4`, `response_mode` is forced to `"Tactical"` and the fact propagated into all subsequent node prompts ✅ (2026-03-19)
+- [x] `vision_blueprint` node implemented: owner submits an image via `/chat` → DEEP_MODEL Gemini multimodal extracts vision text → blueprint Google Doc generated and link posted in the Chat thread ✅ (2026-03-20)
+- [x] `handle_skill_request` node implemented: inbound path sends `send_skill_import_card()` + writes `Agent_Approvals` row + parks `proposal_id`; resolution path routes `Approved` → `SKILL_REQUEST` back to requesting agent, `Rejected` → `ALERT` ✅ (2026-03-18)
+- [x] `iterate_plan` + `_run_compaction` implemented: constraint list auto-compacted via `DEEP_MODEL` when estimate exceeds 70 % of context window; compacted result replaces constraints in working memory ✅ (2026-03-18)
+- [x] `handle_poll_comments` implemented: polls Google Docs for resolved comments authored by the owner; for each qualifying comment dispatches `KNOWLEDGE_CANDIDATE` to Nexus-Prime ✅ (2026-03-20)
+- [x] `tools/memory_mirror.py` implemented: `sync_to_atlas()` appends each approved `MemoryEntry` to the Knowledge Atlas Google Doc; `⛔ SUPERSEDED` audit marker appended when `entry.supersedes` is set ✅ (2026-03-20)
+- [x] Google Chat Interactive Hub complete:
+  - `send_approval_card()` sends 3-section card (Context + optional Reasoning + Decision buttons) ✅
+  - `_verify_chat_jwt()` verifies Google-signed JWT (`chat@system.gserviceaccount.com`) on every `/chat` request ✅
+  - `/chat` `CARD_CLICKED` handler routes `"approve"/"reject"` → `APPROVAL_RESULT` and `"skill_approve"/"skill_reject"` → `SKILL_REQUEST` (resolved) to Nexus-Prime ✅
+  - (2026-03-20)
+- [x] `_call_model()` extended with `image_bytes: bytes | None = None`; multimodal content sent as `[Part.from_bytes(...), Part.from_text(...)]` for Gemini; Ollama + `image_bytes` logs `WARNING` and strips bytes ✅ (2026-03-20)
+- [x] OpenTofu IaC blueprint (`infra/main.tf`) and push-to-deploy CI/CD pipeline (`.github/workflows/deploy.yml`) committed to repo ✅ (2026-03-20)
+- [x] WIF (Workload Identity Federation) replaces long-lived `GCP_SA_KEY` in CI/CD; `id-token: write` permission set; `attribute.repository` condition scopes access to this repo only ✅ (2026-03-20)
+- [x] All 408 unit tests passing — zero regressions from all Phase 3 additions ✅ (2026-03-20)
+- [ ] **[Requires GCP]** One-time OpenTofu bootstrap: `morphic-gaos-tfstate` GCS bucket created, `cloud-run-source-deploy` Artifact Registry repo created, `deployer-sa` created with required IAM bindings, WIF pool + OIDC provider created, `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` GitHub Secrets set → first `tofu plan` + `tofu apply` deploys all 7 Cloud Run services (see §9.3)
+- [ ] **[Requires Cloud Run]** Approval Gate Chat-path validated end-to-end: Chat card button tap → `APPROVAL_RESULT` published to Pub/Sub → Nexus-Prime resumes the parked task → `Agent_Approvals` row updated + audit row written to Logs tab (see §14 unchecked item)

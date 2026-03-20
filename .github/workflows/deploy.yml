@@ -50,7 +50,7 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-          service_account: deployer-sa@morphic-gaos-prod.iam.gserviceaccount.com
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
       # Required step: gcloud auth configure-docker makes docker aware of the
       # *.pkg.dev credential helper. Without this, docker push returns 403
@@ -81,7 +81,7 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-          service_account: deployer-sa@morphic-gaos-prod.iam.gserviceaccount.com
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
       - name: Set up OpenTofu
         uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f  # v1.0.8
@@ -124,7 +124,7 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
-          service_account: deployer-sa@morphic-gaos-prod.iam.gserviceaccount.com
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
       - name: Set up OpenTofu
         uses: opentofu/setup-opentofu@9d84900f3238fab8cd84ce47d658d25dd008be2f  # v1.0.8
@@ -144,3 +144,17 @@ jobs:
       - name: OpenTofu Apply
         working-directory: infra
         run: tofu apply tfplan
+
+      # Wire CLOUD_RUN_URL on nexus-prime so Chat JWT audience verification works.
+      # The URL is only known after Apply, so this post-apply step reads it from
+      # TF outputs and updates the Cloud Run service in-place — no revision is
+      # promoted, only the env var is updated, so it takes effect immediately.
+      - name: Wire CLOUD_RUN_URL on nexus-prime
+        working-directory: infra
+        run: |
+          NEXUS_URL=$(tofu output -raw nexus_prime_url)
+          gcloud run services update nexus-prime \
+            --update-env-vars "CLOUD_RUN_URL=${NEXUS_URL}" \
+            --region=${{ env.REGION }} \
+            --project=${{ env.PROJECT_ID }} \
+            --quiet

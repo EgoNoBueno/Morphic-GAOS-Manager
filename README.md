@@ -354,11 +354,11 @@ At the start of every work session, agents read all three files as standing orde
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| **Phase 1** | All 7 orchestrators, `main.py` Cloud Run entry point, full tool layer, 320-test suite, all smoke tests passing | **Complete** |
-| **Phase 2** | Ollama observability, weekly summarization job | Spec complete |
-| **Phase 2.5** | Google Chat integration, Vertex AI Search, Google Custom Search, Cloud Scheduler daily-kickoff and poll-comments jobs, Apps Script webhook + approval gate deployed | **Deployed** |
-| **Phase 3** | Gemini integration, full approval loop end-to-end | Spec complete |
-| **Phase 4** | Full validation, exit criteria, cost verification | Spec complete |
+| **Phase 1** | All 7 orchestrators, `main.py` Cloud Run entry point, full tool layer, 408-test suite, all smoke tests passing | **Complete** |
+| **Phase 2** | Ollama observability loop, Knowledge Atlas (Memory Mirror) | **Complete** |
+| **Phase 2.5** | Google Chat integration, Vertex AI Search, Google Custom Search, Cloud Scheduler daily-kickoff and poll-comments jobs, Apps Script webhook + approval gate, skill-request flow | **Complete** |
+| **Phase 3** | `think` node (Strategic Architect), multimodal vision, `iterate_plan`, memory mirror, Chat Interactive Hub (JWT + approval cards + CARD_CLICKED routing), OpenTofu IaC + WIF CI/CD | **Code-complete** — Cloud Run bootstrap + Chat-path E2E validation pending |
+| **Phase 4** | Production bootstrap (OpenTofu deploy), Approval Gate Chat-path E2E live validation, exit criteria, cost verification | **Up next** |
 | **Phase 5** | CEO dashboard (Grafana + Cloud Run), optional Vertex Agent Engine | Future |
 
 <div align="center">
@@ -415,6 +415,6 @@ Infrastructure as Code powered by [OpenTofu](https://opentofu.org) — an open-s
 <div align="center">
 
 *Built entirely on Google's cloud ecosystem.*
-*Phase 1 and Phase 2.5 deployed. 396 tests green. Running in production.*
+*Phases 1–3 code-complete. 408 tests green. Phase 4: production bootstrap in progress.*
 
 </div>
