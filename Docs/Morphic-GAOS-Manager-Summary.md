@@ -28,7 +28,7 @@ The system is designed to run for roughly **$2.50 per month** in cloud costs by 
 
 6. **Layered Memory** — Scratchpad → BigQuery (episodic) → Sheets staging buffer → Vertex AI Memory Bank (long-term). Agents propose learnings; Nexus-Prime promotes them to permanent memory only after owner approval.
 
-**Current State (Phase 2.5 Steps 1–6 complete):** All 7 orchestrators, the full tool layer (14 modules including `google_chat.py`, `vertex_search.py`, `google_docs.py`, and `google_search.py`), and a **320-test suite** are built and passing. Phase 2.5 Steps 1–6 are complete: `POST /chat` (Chat tools), `POST /daily-sync` (morning briefing), Vertex Search + `write_playbook` node, Google Docs + Blueprint Factory, AppSheet Vision Hub + `VISION_SUBMITTED` handler, and Scout `_discover` recursive node + `tools/google_search.py` + `KNOWLEDGE_INJECTION`. Step 7 (`ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow) remains.
+**Current State (Phase 2.5 Steps 1–6 complete):** All 7 orchestrators, the full tool layer (14 modules including `google_chat.py`, `vertex_search.py`, `google_docs.py`, and `google_search.py`), and a **396-test suite** are built and passing. Phase 2.5 Steps 1–6 are complete: `POST /chat` (Chat tools), `POST /daily-sync` (morning briefing), Vertex Search + `write_playbook` node, Google Docs + Blueprint Factory, AppSheet Vision Hub + `VISION_SUBMITTED` handler, and Scout `_discover` recursive node + `tools/google_search.py` + `KNOWLEDGE_INJECTION`. Step 7 (`ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow) remains.
 
 ---
 
@@ -122,7 +122,7 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 
 #### Development Roadmap (5 Phases)
 **What it is:** A phased build plan. **Phase 1 is complete** — all 7 orchestrators, the `main.py` Cloud Run entry point, the core tool layer (`bigquery`, `webhook_sender`, `memory`, `project_registry`, `google_sheets`, `pubsub`, `secrets`), and a baseline test suite covering U1–U5 unit specs and S1–S4 static analysis gate.
-**Phase 2.5 Steps 1–6 are complete (320 tests passing):**
+**Phase 2.5 Steps 1–6 are complete (396 tests passing):**
 - Step 1: `tools/google_chat.py` + `POST /chat` (25 tests; commit `551f0ca`)
 - Step 2: `handle_daily_sync()` + `POST /daily-sync` + `ChatConfig` (13 tests; commit `ed6140b`)
 - Step 3: `tools/vertex_search.py` + Playbook schema + `write_playbook` node (22 tests; commit `d0f05b1`)
@@ -436,7 +436,7 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 
 | File | Purpose | Length |
 |------|---------|--------|
-| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,400 lines |
+| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,800 lines |
 | `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~902 lines |
 | `Docs/GAOS-Nexus-Prime-Spec.md` | Engineering construction requirements for the Tier 1 root orchestrator | ~834 lines |
 | `Docs/GAOS-Onboarding-Spec.md` | Deployer first-run guide + end-user onboarding via Steward | ~638 lines |
@@ -460,7 +460,7 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 | `Docs/agents/steward.md` | Identity file — Steward (Admin & HR Agent) | — |
 | `Docs/agents/scout.md` | Identity file — Scout (Research Agent) | — |
 | `main.py` | Cloud Run HTTP entry point — all 7 agents, selected by `AGENT_NAME` env var | — |
-| `tests/` | 320-test suite — U1–U5 unit specs + S1–S4 static analysis + tool modules + Phase 2.5 | — |
+| `tests/` | 396-test suite — U1–U5 unit specs + S1–S4 static analysis + tool modules + Phase 2.5 | — |
 
 ---
 
