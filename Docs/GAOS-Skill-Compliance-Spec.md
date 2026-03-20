@@ -291,9 +291,14 @@ python -m ruff format --check <skill_file_or_directory>
 # Step 3 — Mypy type check
 python -m mypy <skill_file_or_directory> --ignore-missing-imports
 
-# Step 4 — Verify no import is in the blocklist (GAOS-Manager-Spec.md §15.4)
-# Check for: os.system, subprocess, socket, requests, pickle, marshal,
-#            exec, eval, compile, __import__, importlib.import_module (on external strings)
+# Step 4 — Verify no call or pattern is in the blocklist (GAOS-Manager-Spec.md §15.4)
+# Blocked builtins (caught by AST call detection in validate_code_safety()):
+#   exec, eval, compile, __import__, breakpoint
+# Blocked string patterns (substring match across the full code string):
+#   os.system, os.popen, subprocess.call, subprocess.run, subprocess.Popen,
+#   __builtins__, ctypes., socket.connect, pickle.loads, pickle.load
+# Requests and other non-allowlisted imports are caught by Gate 2 (import allowlist),
+# not by the pattern gate — they will fail the allowlist check, not this step.
 python -m ruff check --select S <skill_file_or_directory>   # bandit-equivalent security rules
 
 # Step 5 — Verify imports are sorted (ruff I001)
@@ -391,9 +396,9 @@ Once all required gates are cleared, submit the integration as a **Priority-3 pr
 
 After the proposal is approved and the skill is merged, the following must be completed before the skill is considered fully integrated:
 
-1. **Update `GAOS-Agent-Spec.md §7`** — add the new agent's completion checklist entry to the Implementation Checklist in `GAOS-Manager-Spec.md §17` with status `In Progress`.
-2. **Write unit tests** — satisfy `GAOS-Agent-Spec.md §8.1` (U1–U5) for all agent skills; `GAOS-Agent-Spec.md §8.3` if the skill is code-producing.
-3. **Add integration tests** — for Tier 2 orchestrators, satisfy `GAOS-Agent-Spec.md §8.2` (I1–I6).
+1. **Update `GAOS-Agent-Spec.md §8`** — add the new agent's completion checklist entry to the Implementation Checklist in `GAOS-Manager-Spec.md §17` with status `In Progress`.
+2. **Write unit tests** — satisfy `GAOS-Agent-Spec.md §9.1` (U1–U5) for all agent skills; `GAOS-Agent-Spec.md §9.3` if the skill is code-producing.
+3. **Add integration tests** — for Tier 2 orchestrators, satisfy `GAOS-Agent-Spec.md §9.2` (I1–I6).
 4. **Update `GAOS-Deploy-Spec.md`** — add any new secrets, Pub/Sub topics, or Sheet tabs that must be provisioned.
 5. **Add identity file** — if not already present, create `Docs/agents/<name>.md` per `GAOS-Manager-Spec.md §18.2`. The Context Trio (`about-me.md`, `brand-voice.md`, `working-preferences.md`) is appended automatically by `_load_identity_file()` — no additional wiring is required in the identity file or the orchestrator.
 
@@ -408,8 +413,8 @@ After the proposal is approved and the skill is merged, the following must be co
 | Universal agent requirements | `GAOS-Agent-Spec.md §2` |
 | Tier 2 orchestrator requirements | `GAOS-Agent-Spec.md §3` |
 | Tier 3 sub-agent requirements | `GAOS-Agent-Spec.md §4` |
-| Agent completion checklists | `GAOS-Agent-Spec.md §7` |
-| Testing requirements | `GAOS-Agent-Spec.md §8` |
+| Agent completion checklists | `GAOS-Agent-Spec.md §8` |
+| Testing requirements | `GAOS-Agent-Spec.md §9` |
 | Static analysis gate / import blocklist | `GAOS-Manager-Spec.md §15.4` |
 | Approval Gate architecture | `GAOS-Manager-Spec.md §14` |
 | Agent identity file template | `GAOS-Manager-Spec.md §18.2` |
