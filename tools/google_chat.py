@@ -18,6 +18,7 @@ Spec: GAOS-Manager-Spec.md §2.5 (Phase 2.5 — Conversation Layer)
 """
 from __future__ import annotations
 
+import html
 import json
 import logging
 from typing import Any
@@ -219,18 +220,19 @@ def send_approval_card(
     cost_text = f"${cost_usd:.4f}" if cost_usd > 0 else "No cost"
 
     # ── Section 1: Identity + Context ────────────────────────────────────────
+    _issue = html.escape(issue_summary)
     section_context: dict = {
         "widgets": [
             {
                 "textParagraph": {
                     "text": (
-                        f"<b>🤖 Agent:</b> {agent_id}  |  "
+                        f"<b>🤖 Agent:</b> {html.escape(agent_id)}  |  "
                         f"<b>Priority:</b> {priority_label}  |  "
                         f"<b>Est. cost:</b> {cost_text}"
                     )
                 }
             },
-            {"textParagraph": {"text": f"<b>Issue:</b> {issue_summary}"}},
+            {"textParagraph": {"text": f"<b>Issue:</b> {_issue}"}},
         ]
     }
     sections: list[dict] = [section_context]
@@ -240,7 +242,7 @@ def send_approval_card(
         sections.append({
             "header": "🧠 Strategic Architect Reasoning",
             "widgets": [
-                {"textParagraph": {"text": reasoning_summary}},
+                {"textParagraph": {"text": html.escape(reasoning_summary)}},
             ],
         })
 
@@ -276,7 +278,7 @@ def send_approval_card(
     section_action: dict = {
         "header": "⚡ Decision Required",
         "widgets": [
-            {"textParagraph": {"text": f"<b>Proposed action:</b> {proposed_action}"}},
+            {"textParagraph": {"text": f"<b>Proposed action:</b> {html.escape(proposed_action)}"}},  
             {"buttonList": {"buttons": buttons}},
         ],
     }
@@ -331,9 +333,9 @@ def send_skill_import_card(
         raise ChatConfigError("package_name must not be empty.")
 
     widgets: list[dict] = [
-        {"textParagraph": {"text": f"<b>Agent:</b> {agent_id}"}},
-        {"textParagraph": {"text": f"<b>Package:</b> <code>{package_name}</code>"}},
-        {"textParagraph": {"text": f"<b>Reason:</b> {reason}"}},
+        {"textParagraph": {"text": f"<b>Agent:</b> {html.escape(agent_id)}"}},
+        {"textParagraph": {"text": f"<b>Package:</b> <code>{html.escape(package_name)}</code>"}},
+        {"textParagraph": {"text": f"<b>Reason:</b> {html.escape(reason)}"}},
     ]
 
     buttons: list[dict] = []
