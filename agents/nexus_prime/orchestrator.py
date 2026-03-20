@@ -627,7 +627,7 @@ def propose_gate(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                         f"Code evolution proposed by {agent_id_str}. "
                         "Review the Blueprint Doc for full context."
                     )[:280],
-                    priority=state.get("priority", 4),  # type: ignore[arg-type]
+                    priority=getattr(msg, "priority", 3) if msg else 3,  # type: ignore[arg-type]
                     cost_usd=state.get("cost_usd", 0.0),  # type: ignore[arg-type]
                     reasoning_summary=monologue.get("reasoning_summary", ""),
                 )
