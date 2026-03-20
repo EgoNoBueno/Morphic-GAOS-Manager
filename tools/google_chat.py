@@ -212,6 +212,7 @@ def send_approval_card(
     if not proposal_id:
         raise ChatConfigError("proposal_id must not be empty.")
 
+    # System convention: 1 = lowest severity, 5 = highest (opposite of ITIL P1-critical).
     priority_label = {
         1: "P1 Low", 2: "P2 Info", 3: "P3 Alert", 4: "P4 Approval", 5: "P5 Critical"
     }.get(priority, f"P{priority}")
