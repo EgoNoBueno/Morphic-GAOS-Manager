@@ -311,6 +311,115 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
 > ⚠️ **Warning — think node is Tier 1 only:** Do not add a `think` node to Tier 2 orchestrators. Their output patterns are audited periodically by Nexus-Prime's Weekly Review Loop instead. *(Weekly Review Loop specification to be added in a future phase.)*
 
+##### Think node helpers
+
+Three private helpers are called from `think()`. All three are defined in `agents/nexus_prime/orchestrator.py` except `_load_context_trio`, which is defined in `agents/__init__.py` and imported.
+
+---
+
+**`_compute_priority`**
+
+```python
+def _compute_priority(state: NexusPrimeWorkingMemory) -> int:
+```
+
+| | |
+|---|---|
+| **Input** | `state: NexusPrimeWorkingMemory` — the active working memory TypedDict |
+| **Returns** | `int` in range `1`–`5` matching the `A2AMessage.priority` field constraint |
+| **Default** | `3` ("P3 Alert") when `incoming_message` is `None` or the `priority` attribute is absent |
+
+**Algorithm:**
+1. Read `state.get("incoming_message")`.
+2. If `None`, return `3`.
+3. Return `getattr(msg, "priority", 3)` — the `priority` field on `A2AMessage` is validated `ge=1, le=5` at construction time, so the fallback only fires for malformed/partial messages outside the normal path.
+
+**Edge cases:**
+
+| Condition | Behaviour |
+|--|--|
+| No active message (TTL sweep, heartbeat) | Returns `3` |
+| Message constructed without `priority` (test stubs, partial payloads) | Returns `3` via `getattr` fallback |
+| `priority >= 4` | `think()` skips the LLM call and sets `response_mode = "Tactical"` |
+
+**Side effects:** None — pure attribute read.
+
+---
+
+**`_load_context_trio`**
+
+```python
+def _load_context_trio() -> str:
+```
+
+Defined in `agents/__init__.py`. Reads the three Context Trio files from `Docs/` and returns them as a single concatenated string used as the `system_prompt` argument to `_call_model()` inside `think()`.
+
+| | |
+|---|---|
+| **Inputs** | None |
+| **Returns** | `str` — Markdown sections joined by `"\n\n---\n\n"`; empty string `""` if all files are missing |
+
+**Files loaded (in order):**
+
+| File | Role |
+|--|--|
+| `Docs/about-me.md` | The Compass — owner business context |
+| `Docs/brand-voice.md` | The Persona — communication tone and standards |
+| `Docs/working-preferences.md` | The Constitution — operational rules and preferences |
+
+**Failure behaviour:** Each file is read independently. A missing file is silently skipped — no exception is raised. If all three are absent (e.g., unit tests running without a full repo mount), the function returns `""`, which `_call_model()` receives as an empty system prompt. The `think()` node continues normally.
+
+**Side effects:** None — pure file reads; no writes, no caching, no GCP calls.
+
+---
+
+**`_build_think_prompt`**
+
+```python
+def _build_think_prompt(
+    state: NexusPrimeWorkingMemory,
+    msg: A2AMessage | None,
+    priority: int,
+) -> str:
+```
+
+| | |
+|---|---|
+| **Inputs** | `state` — active working memory (reserved for future use; no fields read currently); `msg` — the `A2AMessage` being processed, or `None`; `priority` — integer from `_compute_priority()` |
+| **Returns** | `str` — a complete prompt string ready to pass as the first positional argument to `_call_model()` |
+
+**Extraction rules:**
+
+| Field | Source | Fallback when `msg` is `None` |
+|--|--|--|
+| Message type | `msg.message_type.value` (e.g., `"ESCALATION"`) | `"NONE"` |
+| Source agent | `msg.source_agent` | `"unknown"` |
+| Payload | `str(msg.payload or {})[:300]` — trimmed to 300 chars | `""` |
+
+**Prompt structure:** The prompt instructs `FAST_MODEL` to answer four questions in a single JSON response:
+1. Is there a knowledge gap preventing confident action? If so, what specifically is missing?
+2. Is a partial result available despite the gap?
+3. Which response mode applies (`"Direct"`, `"Reframe"`, `"Research"`, or `"Tactical"`)?
+4. One-sentence reasoning summary.
+
+**Expected JSON response schema:**
+
+| Key | Type | Constraint |
+|--|--|--|
+| `knowledge_gap_detected` | `bool` | Required |
+| `knowledge_gap_description` | `str` | Empty string if no gap |
+| `partial_result_available` | `bool` | Required |
+| `response_mode` | `str` | One of `"Direct"`, `"Reframe"`, `"Research"`, `"Tactical"` |
+| `reasoning_summary` | `str` | One sentence |
+
+`think()` validates `response_mode` against `_VALID_MODES` after the model call and falls back to `"Research"` (gap detected) or `"Direct"` (no gap) if the model returns an unrecognised value.
+
+**Side effects:** None — pure string construction with no I/O.
+
+**Edge case:** When `msg` is `None`, all extracted fields default to safe string literals and the prompt remains syntactically valid. `think()` will still set `_next_node = "record"` in this path (no active message → no ESCALATION/KNOWLEDGE_CANDIDATE routing).
+
+---
+
 #### `diagnose`
 
 Runs when an orchestrator has escalated or requested evolution. Uses `DEEP_MODEL` to analyze the error fingerprint, search Memory Bank for similar past failures, and determine if self-repair is possible or if a human approval proposal is needed.
