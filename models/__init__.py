@@ -270,7 +270,9 @@ class MonologueFrame(BaseModel):
     partial_result_available: bool
     response_mode: Literal["Research", "Direct", "Reframe", "Tactical"]
     reasoning_summary: str
-    timestamp: str  # ISO 8601
+    timestamp: str = Field(  # ISO 8601
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
 
 # ── PlaybookDoc ───────────────────────────────────────────────────────────────────
