@@ -33,7 +33,11 @@ SEED_FILES = [
         "communications_policy.md",
         "# Communications Policy\n\nPlaceholder — to be completed.\n",
     ),
-    ("policies", "research_policy.md", "# Research Policy\n\nPlaceholder — to be completed.\n"),
+    (
+        "policies",
+        "research_policy.md",
+        "# Research Policy\n\nPlaceholder — to be completed.\n",
+    ),
     (
         "procedures",
         "invoice_matching.md",

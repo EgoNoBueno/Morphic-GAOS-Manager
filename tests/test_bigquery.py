@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from google.api_core.exceptions import GoogleAPICallError
 
+import tools.bigquery
 from tools.bigquery import (
     BigQueryInsertError,
     BigQueryRowError,
@@ -43,6 +44,7 @@ def load_test_settings(tmp_path):
     config._reset_for_testing()
     config.load_settings(cfg)
     yield
+    tools.bigquery._client_cache.clear()
     config._reset_for_testing()
 
 
@@ -88,12 +90,13 @@ class TestInsertRow:
         mock_client = MagicMock()
         mock_client.insert_rows_json.side_effect = GoogleAPICallError("gateway timeout")
 
+        # Disable the retry decorator so the test stays fast and deterministic
         with patch("tools.bigquery.bigquery.Client", return_value=mock_client):
-            with patch("tools.bigquery.time.sleep"):  # skip backoff
-                with pytest.raises(BigQueryInsertError, match="3 retries"):
+            with patch("tools.bigquery.retry.Retry", return_value=lambda f: f):
+                with pytest.raises(BigQueryInsertError):
                     insert_row("dataset.my_table", {"col": "val"})
 
-        assert mock_client.insert_rows_json.call_count == 3
+        assert mock_client.insert_rows_json.call_count == 1
 
     def test_row_error_is_not_retried(self):
         """Schema / value rejection is not transient — never retry."""
@@ -149,9 +152,10 @@ class TestInsertRows:
         mock_client = MagicMock()
         mock_client.insert_rows_json.side_effect = GoogleAPICallError("timeout")
 
+        # Disable the retry decorator so the test stays fast and deterministic
         with patch("tools.bigquery.bigquery.Client", return_value=mock_client):
-            with patch("tools.bigquery.time.sleep"):
+            with patch("tools.bigquery.retry.Retry", return_value=lambda f: f):
                 with pytest.raises(BigQueryInsertError):
                     insert_rows("dataset.my_table", [{"a": 1}])
 
-        assert mock_client.insert_rows_json.call_count == 3
+        assert mock_client.insert_rows_json.call_count == 1

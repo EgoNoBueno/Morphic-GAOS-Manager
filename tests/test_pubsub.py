@@ -92,7 +92,7 @@ class TestPublish:
         mock_future.result.return_value = "msg-id-123"
         mock_client.publish.return_value = mock_future
 
-        result = publish("agent/beacon/events", sample_message, "default")
+        result = publish("agent/beacon/events", sample_message)
         assert result == "msg-id-123"
 
     @patch("tools.pubsub.pubsub_v1.PublisherClient")
@@ -103,7 +103,7 @@ class TestPublish:
         mock_future.result.return_value = "msg-id"
         mock_client.publish.return_value = mock_future
 
-        publish("agent/beacon/events", sample_message, "default")
+        publish("agent/beacon/events", sample_message)
         call_args = mock_client.publish.call_args
         assert call_args[0][0] == "projects/test-project/topics/agent.beacon.events"
 
@@ -116,7 +116,7 @@ class TestPublish:
         mock_client.publish.side_effect = NotFound("topic not found")
 
         with pytest.raises(TopicNotFoundError, match="agent.beacon.events"):
-            publish("agent/beacon/events", sample_message, "default")
+            publish("agent/beacon/events", sample_message)
 
     @patch("tools.pubsub.pubsub_v1.PublisherClient")
     def test_raises_publish_error_on_unexpected(self, mock_cls, sample_message):
@@ -125,7 +125,7 @@ class TestPublish:
         mock_client.publish.side_effect = RuntimeError("network down")
 
         with pytest.raises(PubSubPublishError, match="network down"):
-            publish("agent/beacon/events", sample_message, "default")
+            publish("agent/beacon/events", sample_message)
 
     @patch("tools.pubsub.pubsub_v1.PublisherClient")
     def test_payload_is_valid_json(self, mock_cls, sample_message):
@@ -135,7 +135,7 @@ class TestPublish:
         mock_future.result.return_value = "id"
         mock_client.publish.return_value = mock_future
 
-        publish("agent/beacon/events", sample_message, "default")
+        publish("agent/beacon/events", sample_message)
         data = mock_client.publish.call_args[1]["data"]
         parsed = json.loads(data.decode("utf-8"))
         assert parsed["source_agent"] == "beacon"
@@ -150,7 +150,7 @@ class TestEnsureTopicExists:
     def test_creates_topic_if_absent(self, mock_cls):
         mock_client = MagicMock()
         mock_cls.return_value = mock_client
-        ensure_topic_exists("agent/beacon/events", "default")
+        ensure_topic_exists("agent/beacon/events")
         mock_client.create_topic.assert_called_once_with(
             request={"name": "projects/test-project/topics/agent.beacon.events"}
         )
@@ -162,7 +162,7 @@ class TestEnsureTopicExists:
         mock_client = MagicMock()
         mock_cls.return_value = mock_client
         mock_client.create_topic.side_effect = AlreadyExists("exists")
-        ensure_topic_exists("agent/beacon/events", "default")  # must not raise
+        ensure_topic_exists("agent/beacon/events")  # must not raise
 
     @patch("tools.pubsub.pubsub_v1.PublisherClient")
     def test_raises_admin_error_on_permission_failure(self, mock_cls):
@@ -172,7 +172,7 @@ class TestEnsureTopicExists:
         mock_cls.return_value = mock_client
         mock_client.create_topic.side_effect = PermissionDenied("denied")
         with pytest.raises(PubSubAdminError, match="agent.beacon.events"):
-            ensure_topic_exists("agent/beacon/events", "default")
+            ensure_topic_exists("agent/beacon/events")
 
 
 # ── decode_push_message ────────────────────────────────────────────────────

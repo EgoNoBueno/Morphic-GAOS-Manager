@@ -53,8 +53,10 @@ def _extract_result(result: Any) -> dict[str, Any]:
             from google.protobuf.json_format import MessageToDict  # deferred
 
             data = MessageToDict(doc.derived_struct_data)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.exception(
+                "Failed to deserialize derived_struct_data for doc '%s': %s", doc.id, exc
+            )
     snippets = data.get("snippets", [])
     snippet_text = snippets[0].get("snippet", "") if snippets else ""
     return {

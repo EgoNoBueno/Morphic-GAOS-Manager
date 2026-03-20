@@ -36,14 +36,14 @@ import sys
 import webbrowser
 from pathlib import Path
 
+import google.auth
+import yaml
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
 # On Windows, gcloud is gcloud.cmd — use shell=True so the OS resolves it.
 _SHELL = platform.system() == "Windows"
-
-import google.auth  # noqa: E402
-import yaml  # noqa: E402
-from google.auth.transport.requests import Request  # noqa: E402
-from googleapiclient.discovery import build  # noqa: E402
-from googleapiclient.errors import HttpError  # noqa: E402
 
 # ── Config ────────────────────────────────────────────────────────────────────
 

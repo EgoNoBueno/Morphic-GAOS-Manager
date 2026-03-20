@@ -55,3 +55,22 @@ class TestGetSecret:
             call_args.kwargs["request"]["name"]
             == "projects/my-project-123/secrets/MY_SECRET/versions/latest"
         )
+
+    def test_returns_empty_string_for_empty_secret(self, mock_sm_client):
+        mock_sm_client.access_secret_version.return_value.payload.data = b""
+        result = get_secret("EMPTY_SECRET", "morphic-gaos-prod")
+        assert result == ""
+
+    def test_special_characters_in_secret_name_passed_verbatim(self, mock_sm_client):
+        mock_sm_client.access_secret_version.return_value.payload.data = b"value"
+        get_secret("MY-SECRET_!@#", "morphic-gaos-prod")
+        call_args = mock_sm_client.access_secret_version.call_args
+        assert (
+            call_args.kwargs["request"]["name"]
+            == "projects/morphic-gaos-prod/secrets/MY-SECRET_!@#/versions/latest"
+        )
+
+    def test_invalid_project_id_raises_secret_manager_error(self, mock_sm_client):
+        mock_sm_client.access_secret_version.side_effect = ValueError("invalid project ID")
+        with pytest.raises(SecretManagerError, match="invalid project ID"):
+            get_secret("SOME_SECRET", "!!!invalid!!!")

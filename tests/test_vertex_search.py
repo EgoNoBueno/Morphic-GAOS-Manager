@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import config
 from tools.vertex_search import (
     DatastoreNotConfiguredError,
     VertexSearchError,
@@ -50,8 +51,6 @@ vertex_search:
 def settings_with_vs(tmp_path):
     cfg = tmp_path / "settings.yaml"
     cfg.write_text(_YAML_WITH_VS)
-    import config
-
     config._reset_for_testing()
     config.load_settings(cfg)
     yield
@@ -62,8 +61,6 @@ def settings_with_vs(tmp_path):
 def settings_no_vs(tmp_path):
     cfg = tmp_path / "settings.yaml"
     cfg.write_text(_BASE_YAML)
-    import config
-
     config._reset_for_testing()
     config.load_settings(cfg)
     yield

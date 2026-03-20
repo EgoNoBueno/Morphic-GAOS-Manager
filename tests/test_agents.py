@@ -19,7 +19,7 @@ import ast
 import asyncio
 import hashlib
 import re
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -945,8 +945,6 @@ class TestArchiveJob:
     # ── helpers ────────────────────────────────────────────────────────────────
 
     def _make_aged_log(self, days_old: int = 60) -> dict:
-        from datetime import datetime, timedelta
-
         ts = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
         return {
             "timestamp": ts,
@@ -957,8 +955,6 @@ class TestArchiveJob:
         }
 
     def _make_fresh_log(self) -> dict:
-        from datetime import datetime
-
         return {
             "timestamp": datetime.now(UTC).isoformat(),
             "agent_id": "beacon",
@@ -968,8 +964,6 @@ class TestArchiveJob:
         }
 
     def _make_aged_approval(self, days_old: int = 100) -> dict:
-        from datetime import datetime, timedelta
-
         ts = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
         return {
             "ID": "proposal-001",
@@ -1374,8 +1368,7 @@ class TestNexusPrimeThinkNode:
                 with patch("tools.bigquery.insert_row"):
                     result = think(state)
 
-        mf = result.get("monologue_frame")
-        assert mf is not None
+        mf = result["monologue_frame"]
         assert mf["response_mode"] == "Tactical"
 
     def test_tactical_mode_forced_on_priority_5(self):
@@ -1391,8 +1384,7 @@ class TestNexusPrimeThinkNode:
                 with patch("tools.bigquery.insert_row"):
                     result = think(state)
 
-        mf = result.get("monologue_frame")
-        assert mf is not None
+        mf = result["monologue_frame"]
         assert mf["response_mode"] == "Tactical"
 
     def test_research_mode_stored_from_model_output(self):

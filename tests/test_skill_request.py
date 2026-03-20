@@ -318,7 +318,7 @@ class TestHandleSkillRequestResolution:
 
         # SKILL_REQUEST published back to requesting agent
         mock_publish.assert_called_once()
-        topic, msg_obj, proj = mock_publish.call_args.args
+        topic, msg_obj = mock_publish.call_args.args
         assert "scout" in topic
         assert msg_obj.message_type.value == "SKILL_REQUEST"
         assert msg_obj.payload["status"] == "Approved"
@@ -335,7 +335,7 @@ class TestHandleSkillRequestResolution:
 
         # ALERT published to requesting agent
         mock_publish.assert_called_once()
-        topic, msg_obj, proj = mock_publish.call_args.args
+        topic, msg_obj = mock_publish.call_args.args
         assert "scout" in topic
         assert msg_obj.message_type.value == "ALERT"
         assert msg_obj.payload["reason"] == "skill_request_rejected"

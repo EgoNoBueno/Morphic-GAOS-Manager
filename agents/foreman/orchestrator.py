@@ -86,7 +86,7 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
         sys.exit(1)
 
     try:
-        ensure_topic_exists(_OUTBOUND_TOPIC, pid)
+        ensure_topic_exists(_OUTBOUND_TOPIC)
     except Exception:
         pass
     try:
@@ -119,7 +119,7 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
             r
             for r in rows
             if r.get("status") in ("Exception", "Below Threshold", "Pending Reorder")
-            or int(r.get("qty_on_hand") or 1) <= int(r.get("reorder_threshold") or 0)
+            or int(r.get("qty_on_hand") or 0) <= int(r.get("reorder_threshold") or 0)
         ][:10]
     except Exception:
         pass
@@ -199,7 +199,6 @@ def _dispatch(state: AgentWorkingMemory) -> AgentWorkingMemory:
                             "sku": r.get("output", {}).get("sku", ""),
                         },
                     ),
-                    state["project_id"],
                 )
             except Exception:
                 pass
@@ -257,7 +256,6 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 priority=1,
                 payload={"status": "WORKING", "cost_usd": state.get("cost_usd", 0.0)},
             ),
-            pid,
         )
     except Exception:
         pass
@@ -291,7 +289,6 @@ def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 priority=3,
                 payload={"proposal_id": proposal_id},
             ),
-            pid,
         )
     except Exception:
         pass
@@ -332,7 +329,6 @@ def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 priority=3,
                 payload={"description": last_error, "error_fingerprint": last_error[:64]},
             ),
-            pid,
         )
     except Exception:
         pass

@@ -63,15 +63,17 @@ def _topic_path(topic_name: str, project_id: str) -> str:
 # ── Public API ─────────────────────────────────────────────────────────────
 
 
-def publish(topic_name: str, message: A2AMessage, project_id: str) -> str:
+def publish(topic_name: str, message: A2AMessage) -> str:
     """
     Serialize and publish one A2AMessage to the named topic.
+
+    The GCP project is taken from settings.GCP_PROJECT_ID — it is fixed
+    infrastructure and does not vary per GAOS project_id.
 
     Args:
         topic_name: Short name without the full resource path
                     (e.g. "agent/beacon/events").
         message:    A validated A2AMessage instance.
-        project_id: GCP project that owns the topic.
 
     Returns:
         message_id: The Pub/Sub-assigned message ID (string).
@@ -81,10 +83,7 @@ def publish(topic_name: str, message: A2AMessage, project_id: str) -> str:
         PubSubPublishError:  Unrecoverable publish error.
     """
     settings = get_settings()
-    # Always use centralised GCP project from settings (project_id param
-    # is the AOS namespace, not the GCP project).
-    gcp_project = settings.GCP_PROJECT_ID
-    topic = _topic_path(topic_name, gcp_project)
+    topic = _topic_path(topic_name, settings.GCP_PROJECT_ID)
 
     publisher = pubsub_v1.PublisherClient()
     payload = message.model_dump_json().encode("utf-8")
@@ -101,22 +100,21 @@ def publish(topic_name: str, message: A2AMessage, project_id: str) -> str:
         raise PubSubPublishError(f"Failed to publish message to '{topic}': {exc}") from exc
 
 
-def ensure_topic_exists(topic_name: str, project_id: str) -> None:
+def ensure_topic_exists(topic_name: str) -> None:
     """
     Idempotent topic creation. Creates the topic if it does not exist.
     Safe to call on every boot — used in the agent boot sequence (step 5).
 
+    The GCP project is taken from settings.GCP_PROJECT_ID.
+
     Args:
         topic_name: Short name (e.g. "agent/beacon/events").
-        project_id: GCP project that should own the topic.
 
     Raises:
         PubSubAdminError: Cannot create topic (permissions or quota error).
     """
     settings = get_settings()
-    # Always use centralised GCP project from settings.
-    gcp_project = settings.GCP_PROJECT_ID
-    topic = _topic_path(topic_name, gcp_project)
+    topic = _topic_path(topic_name, settings.GCP_PROJECT_ID)
 
     publisher = pubsub_v1.PublisherClient()
     try:

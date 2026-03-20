@@ -450,7 +450,7 @@ def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     # Ensure all Pub/Sub topics exist (idempotent)
     for topic in settings.pubsub.all_topics:
         try:
-            ensure_topic_exists(topic, pid)
+            ensure_topic_exists(topic)
         except Exception:
             pass  # Non-fatal; topic may already exist in a different project
 
@@ -894,7 +894,7 @@ def notify_agents(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
     for agent in ("ledger", "beacon", "pursuit", "foreman", "steward", "scout"):
         try:
-            publish(f"agent.{agent}.events", broadcast, state["project_id"])
+            publish(f"agent.{agent}.events", broadcast)
         except Exception:
             pass
 
@@ -928,7 +928,7 @@ def conflict_resolve(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
         for agent in ("ledger", "beacon", "pursuit", "foreman", "steward", "scout"):
             try:
-                publish(f"agent.{agent}.events", broadcast, state["project_id"])
+                publish(f"agent.{agent}.events", broadcast)
             except Exception:
                 pass
 
@@ -998,7 +998,7 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     )
 
     try:
-        publish("agent.nexus-prime.events", heartbeat, state["project_id"])
+        publish("agent.nexus-prime.events", heartbeat)
     except Exception:
         pass
 
@@ -1075,9 +1075,7 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
             week_cutoff = now - timedelta(days=7)
             recent_logs = [r for r in logs_week if _parse_ts(r.get("timestamp", "")) >= week_cutoff]
             recent_errs = [r for r in err_week if _parse_ts(r.get("timestamp", "")) >= week_cutoff]
-            top_agents = list(
-                {r.get("agent_id", "?") for r in recent_logs[:50] if r.get("agent_id")}
-            )
+            top_agents = list({r["agent_id"] for r in recent_logs[:50] if r.get("agent_id")})
             summary_prompt = (
                 f"Summarize in one sentence: week ending {now.strftime('%Y-W%U')}, "
                 f"{len(recent_logs)} log entries, {len(recent_errs)} error entries. "
@@ -1295,7 +1293,7 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
                         "reason": f"Tab '{tab}' has {count} rows (threshold: {_ALERT_THRESHOLD})",
                     },
                 )
-                publish("agent.nexus-prime.events", alert, project_id)
+                publish("agent.nexus-prime.events", alert)
         except Exception:
             pass
 
@@ -1412,7 +1410,7 @@ async def handle_daily_sync(project_id: str) -> dict[str, Any]:
                     "text": (
                         f"{'⚠️' if overnight_errors else '✅'} "
                         f"<b>{len(overnight_errors)}</b> "
-                        f"error{'s' if overnight_errors != 1 else ''} logged overnight"
+                        f"error{'s' if len(overnight_errors) != 1 else ''} logged overnight"
                     ),
                 }
             },
@@ -1913,7 +1911,6 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
                 publish(
                     "agent.nexus-prime.events",
                     msg,
-                    project_id,
                 )
                 published += 1
             except Exception as exc:
@@ -2036,7 +2033,7 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
                 },
             )
             try:
-                publish(topic, reply, project_id)
+                publish(topic, reply)
             except Exception as exc:
                 _log_cloud(
                     "nexus-prime",
@@ -2062,7 +2059,7 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
                 },
             )
             try:
-                publish(topic, alert, project_id)
+                publish(topic, alert)
             except Exception as exc:
                 _log_cloud(
                     "nexus-prime",

@@ -13,7 +13,7 @@ repos:
   # ── Secret detection ────────────────────────────────────────────────────────
   # Scans for known key patterns: Google API keys (AIza…), private key headers
   # (-----BEGIN …), and other high-confidence credential signatures.
-  # Prevents accidental secret commits without requiring a secrets baseline file.
+  # Uses .secrets.baseline as a required baseline file to suppress known findings.
   - repo: https://github.com/Yelp/detect-secrets
     rev: v1.5.0
     hooks:
@@ -29,7 +29,7 @@ repos:
 
   # ── Ruff lint + format ───────────────────────────────────────────────────────
   # Uses the existing [tool.ruff] config in pyproject.toml (line-length=100,
-  # target-version=py311, select=E,F,I,UP,B,SIM, ignore=E501).
+  # target-version=py311, select=E,F,I,UP,B,SIM, ignore=E501,SIM105).
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.2
     hooks:

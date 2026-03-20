@@ -473,7 +473,8 @@ If an abstraction already exists, it **must** be used — not re-implemented inl
 **Scope:**
 - Run after every file edit, not just at end-of-session.
 - If multiple files were edited in one turn, check all of them.
-- Errors introduced by a previous session (pre-existing before this turn) should be flagged to the user but do not block the current task from being marked complete.
+- If fixing an error in an edited file introduces new errors in other files, those new errors must also be resolved before marking the task complete.
+- Errors that existed before this turn (from previous sessions) should be flagged to the user but do not block the current task from being marked complete.
 
 **Trigger phrase:** Say *"check the Problems tab"* or *"check for errors"* to invoke this check manually at any point in a session.
 

@@ -344,12 +344,12 @@ def _collect_files(service: Any, folder_id: str, prefix: str, out: list[str]) ->
     query = f"'{folder_id}' in parents and trashed = false"
     page_token: str | None = None
     while True:
-        resp = (
-            service.files()
+        resp = _retry_drive(
+            lambda pt=page_token: service.files()
             .list(
                 q=query,
                 fields="nextPageToken, files(id, name, mimeType)",
-                pageToken=page_token,
+                pageToken=pt,
             )
             .execute()
         )

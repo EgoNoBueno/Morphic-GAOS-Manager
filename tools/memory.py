@@ -186,7 +186,10 @@ def write_approved_memory(entry: MemoryEntry, project_id: str) -> str:
     try:
         from vertexai.preview.memory import MemoryBankClient  # type: ignore[import-not-found]
     except ImportError as exc:
-        raise MemoryBankError("vertexai.preview.memory is not available.") from exc
+        raise MemoryBankError(
+            "vertexai.preview.memory is not available. "
+            "Install google-cloud-aiplatform with the preview extras."
+        ) from exc
 
     try:
         client = MemoryBankClient(project=project_id)
@@ -229,7 +232,10 @@ def query_memory_bank(
     try:
         from vertexai.preview.memory import MemoryBankClient  # type: ignore[import-not-found]
     except ImportError as exc:
-        raise MemoryBankError("vertexai.preview.memory is not available.") from exc
+        raise MemoryBankError(
+            "vertexai.preview.memory is not available. "
+            "Install google-cloud-aiplatform with the preview extras."
+        ) from exc
 
     try:
         client = MemoryBankClient(project=project_id)

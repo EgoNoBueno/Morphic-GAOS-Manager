@@ -132,7 +132,8 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
                 )
                 if resp.status_code < 500:
                     raise last_exc
-                time.sleep(2**attempt)
+                if attempt < _MAX_RETRIES - 1:
+                    time.sleep(2**attempt)
                 continue
             # Apps Script always returns HTTP 200 — check the body statusCode too
             try:
@@ -144,7 +145,8 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
                     )
                     if status_code < 500:
                         raise last_exc
-                    time.sleep(2**attempt)
+                    if attempt < _MAX_RETRIES - 1:
+                        time.sleep(2**attempt)
                     continue
             except Exception:
                 pass  # non-JSON body — treat HTTP 200 as success
@@ -152,7 +154,8 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
         except httpx.TimeoutException as exc:
             last_exc = WebhookTimeoutError(f"Webhook request timed out after {_TIMEOUT_SECONDS}s.")
             last_exc.__cause__ = exc
-            time.sleep(2**attempt)
+            if attempt < _MAX_RETRIES - 1:
+                time.sleep(2**attempt)
         except (WebhookDeliveryError, WebhookTimeoutError):
             raise
 

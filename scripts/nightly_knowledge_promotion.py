@@ -293,7 +293,7 @@ def run_promotion_sweep(
             knowledge_type=str(row.get("knowledge_type", "fact")),
             domain=str(row.get("domain", "global")),
             content=str(row.get("content", "")),
-            evidence=[t.strip() for t in str(row.get("evidence", "")).split(",") if t.strip()],
+            evidence=[s for t in str(row.get("evidence", "")).split(",") if (s := t.strip())],
             confidence=confidence,
             approved_by=str(row.get("approved_by", "")),
             approved_at=approved_at,
