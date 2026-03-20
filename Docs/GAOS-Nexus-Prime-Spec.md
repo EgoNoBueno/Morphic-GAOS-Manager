@@ -529,7 +529,7 @@ def propose_gate(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
 Evaluates a `KNOWLEDGE_CANDIDATE` message from a domain orchestrator. Uses `DEEP_MODEL` to check confidence, freshness, and uniqueness against the Memory Bank. On successful auto-promotion, mirrors the entry to the Knowledge Atlas Google Doc via `tools.memory_mirror.sync_to_atlas()`.
 
-The LLM prompt (`_build_knowledge_review_prompt`) now explicitly asks whether the candidate **supersedes** an existing memory entry, returning a `supersedes_memory_id` field in addition to `confidence` and `is_duplicate`. The `MemoryEntry` constructor sets `approved_at=datetime.now(UTC)` and `supersedes` from that field so both are always populated on auto-promoted entries.
+The LLM prompt (`_build_knowledge_review_prompt`) now explicitly asks whether the candidate **supersedes** an existing memory entry, returning a `supersedes_memory_id` field and a `supersession_reason` field in addition to `confidence` and `is_duplicate`. The `MemoryEntry` constructor sets `approved_at=datetime.now(UTC)` and `supersedes` from that field so both are always populated on auto-promoted entries. When `supersedes` is set, a structured `SUPERSESSION_AUDIT` log is written at `INFO` level before the Atlas mirror call, recording which `memory_id` was retired and the reason returned by the model.
 
 ```python
 def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
@@ -576,6 +576,15 @@ def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                 tags=candidate.get("tags", []),
             )
             write_approved_memory(entry=entry, project_id=state["project_id"])
+            if entry.supersedes:
+                supersession_reason = resp.data.get("supersession_reason") or "(no reason provided)"
+                _log_cloud(
+                    "nexus-prime", state["project_id"], "task",
+                    state.get("task_id", ""),
+                    f"SUPERSESSION_AUDIT: memory_id={entry.supersedes} retired by "
+                    f"new entry (domain={entry.domain}). Reason: {supersession_reason}",
+                    "INFO",
+                )
             # Mirror to Knowledge Atlas — non-blocking; WARNING logged on failure
             try:
                 from tools.memory_mirror import MemoryMirrorError, sync_to_atlas
@@ -603,11 +612,12 @@ def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
   "confidence": 0.92,
   "is_duplicate": false,
   "rationale": "New observation with no contradicting Memory Bank entry.",
-  "supersedes_memory_id": null
+  "supersedes_memory_id": null,
+  "supersession_reason": null
 }
 ```
 
-`supersedes_memory_id` is the `memory_id` of an existing entry that this candidate refines or replaces (`null` if the candidate is purely additive). When set, `write_approved_memory` marks the old entry `active=False` in Vertex AI and `sync_to_atlas` appends a `⛔ SUPERSEDED` audit line to the Knowledge Atlas.
+`supersedes_memory_id` is the `memory_id` of an existing entry that this candidate refines or replaces (`null` if the candidate is purely additive). `supersession_reason` is a one-sentence explanation of why the old entry is being retired (e.g. `"Updated vendor terms override the 2024 policy"`). When `supersedes_memory_id` is set, `write_approved_memory` marks the old entry `active=False` and a `SUPERSESSION_AUDIT` event is logged at `INFO` before the Atlas mirror call. `sync_to_atlas` then appends a `⛔ SUPERSEDED` audit line to the Knowledge Atlas.
 
 #### `promote`
 

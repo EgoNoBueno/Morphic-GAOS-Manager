@@ -130,11 +130,13 @@ def _build_knowledge_review_prompt(candidate: dict, duplicates: list) -> str:
         + dup_block
         + "\n\nAssess the candidate's confidence and uniqueness.\n"
         "If the candidate REFINES or REPLACES one of the existing entries (same concept, "
-        "updated or corrected information), set supersedes_memory_id to that entry's memory_id. "
-        "If it is purely new information with no existing entry to retire, set "
-        "supersedes_memory_id to null.\n\n"
+        "updated or corrected information), set supersedes_memory_id to that entry's memory_id "
+        "and set supersession_reason to a one-sentence explanation of why the old entry is being "
+        "retired (e.g. 'Updated vendor terms override the 2024 policy'). "
+        "If it is purely new information with no existing entry to retire, set both "
+        "supersedes_memory_id and supersession_reason to null.\n\n"
         'Return JSON: {"confidence": float, "is_duplicate": bool, "rationale": str, '
-        '"supersedes_memory_id": str | null}'
+        '"supersedes_memory_id": str | null, "supersession_reason": str | null}'
     )
 
 
@@ -742,6 +744,17 @@ def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                 tags=candidate.get("tags", []),
             )
             write_approved_memory(entry=entry, project_id=state["project_id"])
+            if entry.supersedes:
+                supersession_reason = resp.data.get("supersession_reason") or "(no reason provided)"
+                _log_cloud(
+                    "nexus-prime",
+                    state["project_id"],
+                    "task",
+                    state.get("task_id", ""),
+                    f"SUPERSESSION_AUDIT: memory_id={entry.supersedes} retired by "
+                    f"new entry (domain={entry.domain}). Reason: {supersession_reason}",
+                    "INFO",
+                )
             try:
                 from tools.memory_mirror import MemoryMirrorError, sync_to_atlas
 

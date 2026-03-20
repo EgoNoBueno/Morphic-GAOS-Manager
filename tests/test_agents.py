@@ -1499,8 +1499,112 @@ class TestNexusPrimeThinkNode:
         state = cast("NexusPrimeWorkingMemory", {"project_id": "proj", "task_id": "t1"})
         assert _route_from_think(state) == "record"
 
+    def test_knowledge_review_logs_supersession_audit_when_supersedes_set(self):
+        """When LLM returns a supersedes_memory_id, SUPERSESSION_AUDIT must be logged at INFO."""
+        from agents.nexus_prime.orchestrator import knowledge_review
+        from models import A2AMessage, MessageType
 
-class TestMultimodalVisionPath:
+        old_id = "mem-old-123"
+        msg = A2AMessage(
+            source_agent="beacon",
+            target_agent="nexus-prime",
+            project_id="proj-test",
+            task_id="task-sup",
+            message_type=MessageType.KNOWLEDGE_CANDIDATE,
+            priority=3,
+            payload={
+                "content": "Vendor X now charges $50/unit",
+                "domain": "global",
+                "knowledge_type": "fact",
+                "tags": [],
+            },
+        )
+        state = cast(
+            "NexusPrimeWorkingMemory",
+            {
+                "project_id": "proj-test",
+                "task_id": "task-sup",
+                "incoming_message": msg,
+                "cost_usd": 0.0,
+            },
+        )
+        mock_resp = MagicMock()
+        mock_resp.cost_usd = 0.0
+        mock_resp.data = {
+            "confidence": 0.92,
+            "is_duplicate": False,
+            "rationale": "Updated pricing",
+            "supersedes_memory_id": old_id,
+            "supersession_reason": "Updated vendor terms override the 2024 policy",
+        }
+
+        with patch("agents.nexus_prime.orchestrator._call_model", return_value=mock_resp):
+            with patch("tools.memory.query_memory_bank", return_value=[]):
+                with patch("tools.memory.write_approved_memory"):
+                    with patch("agents.nexus_prime.orchestrator._log_cloud") as mock_log:
+                        with patch("tools.memory_mirror.sync_to_atlas"):
+                            knowledge_review(state)
+
+        audit_calls = [
+            call for call in mock_log.call_args_list if "SUPERSESSION_AUDIT" in str(call)
+        ]
+        assert audit_calls, "SUPERSESSION_AUDIT log must be emitted when supersedes is set"
+        log_msg = str(audit_calls[0])
+        assert old_id in log_msg
+        assert "Updated vendor terms override the 2024 policy" in log_msg
+
+    def test_knowledge_review_no_supersession_audit_when_supersedes_absent(self):
+        """When supersedes_memory_id is null, no SUPERSESSION_AUDIT log must be emitted."""
+        from agents.nexus_prime.orchestrator import knowledge_review
+        from models import A2AMessage, MessageType
+
+        msg = A2AMessage(
+            source_agent="beacon",
+            target_agent="nexus-prime",
+            project_id="proj-test",
+            task_id="task-new",
+            message_type=MessageType.KNOWLEDGE_CANDIDATE,
+            priority=3,
+            payload={
+                "content": "Brand new fact with no conflict",
+                "domain": "global",
+                "knowledge_type": "fact",
+                "tags": [],
+            },
+        )
+        state = cast(
+            "NexusPrimeWorkingMemory",
+            {
+                "project_id": "proj-test",
+                "task_id": "task-new",
+                "incoming_message": msg,
+                "cost_usd": 0.0,
+            },
+        )
+        mock_resp = MagicMock()
+        mock_resp.cost_usd = 0.0
+        mock_resp.data = {
+            "confidence": 0.90,
+            "is_duplicate": False,
+            "rationale": "Completely new information",
+            "supersedes_memory_id": None,
+            "supersession_reason": None,
+        }
+
+        with patch("agents.nexus_prime.orchestrator._call_model", return_value=mock_resp):
+            with patch("tools.memory.query_memory_bank", return_value=[]):
+                with patch("tools.memory.write_approved_memory"):
+                    with patch("agents.nexus_prime.orchestrator._log_cloud") as mock_log:
+                        with patch("tools.memory_mirror.sync_to_atlas"):
+                            knowledge_review(state)
+
+        audit_calls = [
+            call for call in mock_log.call_args_list if "SUPERSESSION_AUDIT" in str(call)
+        ]
+        assert not audit_calls, (
+            "No SUPERSESSION_AUDIT log should be emitted when supersedes is None"
+        )
+
     """
     M1  _call_model passes image_bytes through to _call_model_gemini.
     M2  _call_model_gemini calls generate_content with a Part list when image_bytes provided.
