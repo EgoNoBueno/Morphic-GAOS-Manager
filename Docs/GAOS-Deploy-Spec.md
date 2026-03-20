@@ -1390,6 +1390,43 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 
 ---
 
+## 15. Phase 2 Exit Criteria Checklist
+
+Phase 2 is complete — and Phase 3 (multi-agent orchestration) may begin — when **every item** below is checked:
+
+- [x] Ollama installed locally (`ollama list` shows at least one model) ✅ (`llama3:latest`, `qwen2.5-coder:7b` — confirmed 2026-03-18)
+- [x] `LOCAL_MODEL` alias in `settings.yaml` resolves to an installed Ollama model (`ollama/llama3`) ✅ (2026-03-18)
+- [x] `LOCAL_MODEL_TIMEOUT_SECONDS` set high enough to avoid false Gemini fallback (`30`) ✅ (2026-03-18)
+- [x] `_call_model()` routes to Ollama when `web_access=False` and model is `LOCAL_MODEL` ✅ (confirmed via direct API call, HTTP 200)
+- [x] `scripts/observability_loop.py --once` completes with no errors and appends a `SYSTEM_THOUGHTS` row to the Logs tab ✅ (2026-03-18 — 49 rows sampled, `ollama/llama3`)
+- [x] All 332 unit tests still passing after Ollama integration ✅ (2026-03-18)
+- [x] Knowledge Atlas Google Doc created in Drive and `docs.knowledge_atlas_doc_id` set in `settings.yaml` ✅ (see §17)
+
+> ⚠️ **Warning — OLLAMA_HOST secret has trailing `\r\n`:** `get_secret('OLLAMA_HOST', ...)` returns `'http://localhost:11434\r\n'`. Fixed in `agents/__init__.py` with `.strip().rstrip("/")` on the host value. If symptoms reappear (httpx raises `Invalid non-printable ASCII character in URL, '\r'`), verify the fix is in place or update the secret via `echo -n 'http://localhost:11434' | gcloud secrets versions add OLLAMA_HOST --data-file=- --project=...`.
+
+> ⚠️ **Warning — Windows charmap blocks Unicode in model responses:** On Windows, `sys.stdout` defaults to cp1252. If a model response contains non-ASCII characters (e.g. `→`, `—`), any `print()` of that text raises `UnicodeEncodeError`. Fix: add `sys.stdout.reconfigure(encoding='utf-8')` at script startup (after the `sys` import). All scripts that print model output must include this.
+
+---
+
+## 16. Reference Index
+
+| Topic | Location |
+|-------|----------|
+| Secret inventory (full list) | `GAOS-Manager-Spec.md` §15.1 |
+| Webhook HMAC threat model and test matrix | `GAOS-Manager-Spec.md` §15.2 |
+| Approval RBAC and `onChange` handler code | `GAOS-Manager-Spec.md` §15.3 |
+| Code injection prevention + `syncSkillsToVertex` code | `GAOS-Manager-Spec.md` §15.4 |
+| Pub/Sub topic topology | `GAOS-Manager-Spec.md` §10.1 |
+| Cost estimates and free tier limits | `GAOS-Manager-Spec.md` §9.4 |
+| Data retention schedule | `GAOS-Manager-Spec.md` §9.5 |
+| Agent boot sequence | `GAOS-Agent-Spec.md` §6 |
+| Tool module API reference | `GAOS-Tools-Spec.md` |
+| Memory Bank corpus usage | `GAOS-Memory-Spec.md` §6 |
+| Knowledge Atlas (Memory Mirror) | `GAOS-Tools-Spec.md` §18 · §17 (this doc) |
+| Nexus-Prime construction requirements | `GAOS-Nexus-Prime-Spec.md` |
+
+---
+
 ## 17. Knowledge Atlas Google Doc (Memory Mirror)
 
 The **Knowledge Atlas** is the human-readable glass-box view of every approved `MemoryEntry` in Vertex AI Memory Bank. Each time Nexus-Prime auto-promotes a knowledge candidate, `tools.memory_mirror.sync_to_atlas()` appends a structured text block to this doc. When an entry supersedes an earlier one, a `⛔ SUPERSEDED` audit marker is appended so the full retirement history is visible.
@@ -1457,40 +1494,3 @@ print('Atlas doc ID:', s.docs.knowledge_atlas_doc_id or '[NOT SET]')
 ```
 
 Expected: prints the document ID string (not `[NOT SET]`).
-
----
-
-## 15. Phase 2 Exit Criteria Checklist
-
-Phase 2 is complete — and Phase 3 (multi-agent orchestration) may begin — when **every item** below is checked:
-
-- [x] Ollama installed locally (`ollama list` shows at least one model) ✅ (`llama3:latest`, `qwen2.5-coder:7b` — confirmed 2026-03-18)
-- [x] `LOCAL_MODEL` alias in `settings.yaml` resolves to an installed Ollama model (`ollama/llama3`) ✅ (2026-03-18)
-- [x] `LOCAL_MODEL_TIMEOUT_SECONDS` set high enough to avoid false Gemini fallback (`30`) ✅ (2026-03-18)
-- [x] `_call_model()` routes to Ollama when `web_access=False` and model is `LOCAL_MODEL` ✅ (confirmed via direct API call, HTTP 200)
-- [x] `scripts/observability_loop.py --once` completes with no errors and appends a `SYSTEM_THOUGHTS` row to the Logs tab ✅ (2026-03-18 — 49 rows sampled, `ollama/llama3`)
-- [x] All 332 unit tests still passing after Ollama integration ✅ (2026-03-18)
-- [x] Knowledge Atlas Google Doc created in Drive and `docs.knowledge_atlas_doc_id` set in `settings.yaml` ✅ (see §17)
-
-> ⚠️ **Warning — OLLAMA_HOST secret has trailing `\r\n`:** `get_secret('OLLAMA_HOST', ...)` returns `'http://localhost:11434\r\n'`. Fixed in `agents/__init__.py` with `.strip().rstrip("/")` on the host value. If symptoms reappear (httpx raises `Invalid non-printable ASCII character in URL, '\r'`), verify the fix is in place or update the secret via `echo -n 'http://localhost:11434' | gcloud secrets versions add OLLAMA_HOST --data-file=- --project=...`.
-
-> ⚠️ **Warning — Windows charmap blocks Unicode in model responses:** On Windows, `sys.stdout` defaults to cp1252. If a model response contains non-ASCII characters (e.g. `→`, `—`), any `print()` of that text raises `UnicodeEncodeError`. Fix: add `sys.stdout.reconfigure(encoding='utf-8')` at script startup (after the `sys` import). All scripts that print model output must include this.
-
----
-
-## 16. Reference Index
-
-| Topic | Location |
-|-------|----------|
-| Secret inventory (full list) | `GAOS-Manager-Spec.md` §15.1 |
-| Webhook HMAC threat model and test matrix | `GAOS-Manager-Spec.md` §15.2 |
-| Approval RBAC and `onChange` handler code | `GAOS-Manager-Spec.md` §15.3 |
-| Code injection prevention + `syncSkillsToVertex` code | `GAOS-Manager-Spec.md` §15.4 |
-| Pub/Sub topic topology | `GAOS-Manager-Spec.md` §10.1 |
-| Cost estimates and free tier limits | `GAOS-Manager-Spec.md` §9.4 |
-| Data retention schedule | `GAOS-Manager-Spec.md` §9.5 |
-| Agent boot sequence | `GAOS-Agent-Spec.md` §6 |
-| Tool module API reference | `GAOS-Tools-Spec.md` |
-| Memory Bank corpus usage | `GAOS-Memory-Spec.md` §6 |
-| Knowledge Atlas (Memory Mirror) | `GAOS-Tools-Spec.md` §18 · §17 (this doc) |
-| Nexus-Prime construction requirements | `GAOS-Nexus-Prime-Spec.md` |
