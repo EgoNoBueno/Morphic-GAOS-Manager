@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agents import validate_code_safety
-from models import AgentInput, AgentOutput
+from models import AgentInput, AgentOutput, MessageType
 
 
 # ── Settings fixture ───────────────────────────────────────────────────────
@@ -1215,7 +1215,7 @@ class TestNexusPrimeThinkNode:
       - _route_from_think() sub-router reads state correctly
     """
 
-    def _make_state(self, message_type: Any, priority: int = 3) -> dict:
+    def _make_state(self, message_type: MessageType, priority: int = 3) -> dict:
         """Build a minimal NexusPrimeWorkingMemory-shaped dict for think()."""
         from models import A2AMessage
 
