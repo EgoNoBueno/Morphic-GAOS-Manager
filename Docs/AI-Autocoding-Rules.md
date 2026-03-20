@@ -285,7 +285,11 @@ def archive_rows(tab: str, rows: list[dict], project_id: str) -> int:
     msg = f"Archived {len(rows)} rows from {tab}"
 ```
 
-> **Tooling note:** `pyproject.toml` already configures `[tool.ruff]` with `line-length = 100` and `target-version = "py311"`. `.vscode/settings.json` is checked in with Format on Save enabled. A `.pre-commit-config.yaml` running `ruff check --fix` and `ruff format` is not yet present — this is a tracked Phase 4 task. Until it exists, run `ruff check --fix . && ruff format .` manually before committing.
+> **Tooling note:** `pyproject.toml` already configures `[tool.ruff]` with `line-length = 100` and `target-version = "py311"`. `.vscode/settings.json` is checked in with Format on Save enabled. `.pre-commit-config.yaml` runs `ruff check --fix` and `ruff format` automatically on every commit. Per Rule 22 (PowerShell-native commands), the `&&` chaining operator requires **PowerShell 7+**; use the following PS 5.1-compatible sequence to run manually when needed:
+>
+> ```powershell
+> ruff check --fix .; if ($LASTEXITCODE -eq 0) { ruff format . }
+> ```
 
 ---
 
