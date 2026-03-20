@@ -540,7 +540,7 @@ async def chat(request: Request) -> JSONResponse:
 
             settings = get_settings()
             download_uri = image_att.get("download_uri", "")
-            submitted_at = datetime.datetime.utcnow().isoformat()
+            submitted_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
             try:
                 img_bytes = _download_chat_attachment(download_uri)
