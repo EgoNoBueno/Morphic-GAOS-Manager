@@ -803,10 +803,19 @@ FROM `morphic-gaos-prod.aos_logs.monologue_frames`;
 SELECT COUNT(*) FROM `morphic-gaos-prod.aos_logs.monologue_frames`;
 SELECT COUNT(*) FROM `morphic-gaos-prod.aos_logs.monologue_frames_new`;
 
--- Step 4: Drop the old table and rename the new one.
-DROP TABLE `morphic-gaos-prod.aos_logs.monologue_frames`;
-ALTER TABLE `morphic-gaos-prod.aos_logs.monologue_frames_new`
-  RENAME TO `monologue_frames`;
+-- Step 4: BigQuery does not support ALTER TABLE ... RENAME TO.
+--         Use the bq CLI to copy the new table over the old name, then remove the temp table.
+--         Run these two commands in a terminal (not in the BigQuery console SQL editor):
+```
+
+```bash
+# Copy monologue_frames_new → monologue_frames (overwrites the destination).
+bq cp --force \
+  morphic-gaos-prod:aos_logs.monologue_frames_new \
+  morphic-gaos-prod:aos_logs.monologue_frames
+
+# Remove the temporary table now that the copy is complete.
+bq rm --force morphic-gaos-prod:aos_logs.monologue_frames_new
 ```
 
 > **Note:** Steps 2–4 require `roles/bigquery.dataEditor` on the dataset and `roles/bigquery.dataViewer` on the source table. No IAM changes to existing service accounts are required for the migration itself.
