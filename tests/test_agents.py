@@ -1599,7 +1599,7 @@ class TestMultimodalVisionPath:
         assert result.tokens_used == 42
 
 
-
+class TestCodeQuality:
     """
     Static analysis gates for Rules 16, 18, and 19.
 
