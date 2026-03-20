@@ -258,8 +258,17 @@ def _call_model_gemini(
 
     try:
         if image_bytes is not None:
+            # Detect format from magic bytes (imghdr is deprecated in 3.11+)
+            if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+                detected_mime = "image/png"
+            elif image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+                detected_mime = "image/webp"
+            elif image_bytes[:6] in (b"GIF87a", b"GIF89a"):
+                detected_mime = "image/gif"
+            else:
+                detected_mime = "image/jpeg"  # JPEG or unknown — default
             contents = [
-                genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                genai_types.Part.from_bytes(data=image_bytes, mime_type=detected_mime),
                 genai_types.Part.from_text(text=full_prompt),
             ]
             response = client.models.generate_content(model=model, contents=contents)
