@@ -414,6 +414,6 @@ Infrastructure as Code powered by [OpenTofu](https://opentofu.org) — an open-s
 <div align="center">
 
 *Built entirely on Google's cloud ecosystem.*
-*Phase 1 and Phase 2.5 deployed. 320 tests green. Running in production.*
+*Phase 1 and Phase 2.5 deployed. 396 tests green. Running in production.*
 
 </div>

@@ -1018,7 +1018,7 @@ function logSecurityEvent_(type, detail) {
 
 ```python
 # tools/webhook_sender.py
-import hmac, hashlib, base64, requests
+import hmac, hashlib, base64, json, requests
 from tools.secrets import get_secret
 
 def post_to_webhook(payload: dict, webhook_url: str, project_id: str):
@@ -1683,7 +1683,7 @@ Phase 4 is complete when **all** of the following are true:
 
 | Component | Google Service | Status |
 |-----------|---------------|--------|
-| Logic/Reasoning | Gemini 2 + Google ADK | [x] |
+| Logic/Reasoning | Gemini 2.5 + Google ADK | [x] |
 | Code Execution | Vertex AI Sandbox | [ ] |
 | Messaging | Cloud Pub/Sub | [x] |
 | Proactive Trigger | Cloud Scheduler | [x] |
