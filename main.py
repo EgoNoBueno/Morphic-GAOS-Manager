@@ -172,7 +172,7 @@ def _verify_chat_jwt(request: Request) -> None:
         ) from exc
 
 
-def _download_chat_attachment(download_uri: str) -> bytes:
+async def _download_chat_attachment(download_uri: str) -> bytes:
     """
     Download a Google Chat attachment byte payload using service account credentials.
 
@@ -214,8 +214,8 @@ def _download_chat_attachment(download_uri: str) -> bytes:
             creds.refresh(GoogleRequest())
 
         headers = {"Authorization": f"Bearer {creds.token}"}
-        with httpx.Client(timeout=30) as client:
-            resp = client.get(download_uri, headers=headers)
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(download_uri, headers=headers)
             resp.raise_for_status()
             return resp.content
     except Exception as exc:
@@ -543,7 +543,7 @@ async def chat(request: Request) -> JSONResponse:
             submitted_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
             try:
-                img_bytes = _download_chat_attachment(download_uri)
+                img_bytes = await _download_chat_attachment(download_uri)
             except Exception as exc:
                 log.error("Vision image download failed: %s", exc)
                 from tools.google_chat import send_message
