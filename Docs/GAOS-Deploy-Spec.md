@@ -782,11 +782,32 @@ print('monologue_frames: created')
 
 **Migration path for existing deployments:**
 
-```sql
--- Step 1: Create the replacement table with the correct schema (run the script above with a temp name).
---         Replace 'monologue_frames_new' in the script, then run it.
+> ⚠️ **Suspend writes before Steps 2–4.** Any rows inserted into `monologue_frames` while the migration is in progress will be lost — they land in the old table, which is replaced in Step 4. Before proceeding past Step 1, scale Nexus-Prime to zero:
+> ```bash
+> gcloud run services update gaos-agent --region us-central1 --min-instances 0 --max-instances 0
+> ```
+> Restore after Step 4 completes:
+> ```bash
+> gcloud run services update gaos-agent --region us-central1 --min-instances 1 --max-instances 3
+> ```
 
--- Step 2: Copy existing data, casting the STRING timestamp to TIMESTAMP.
+> ⚠️ **90-day partition TTL on `monologue_frames_new`.** `bq cp` in Step 4 preserves table metadata including the partition expiration. Any rows whose `CAST(timestamp AS TIMESTAMP)` falls outside the 90-day retention window will be silently dropped by BigQuery on the next partition sweep. Two options:
+> - **Filter the INSERT (recommended for large tables):** restrict Step 2 to recent data only — rows older than 90 days have already expired and do not need migration:
+>   ```sql
+>   WHERE CAST(timestamp AS TIMESTAMP) >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY)
+>   ```
+> - **Temporarily remove the TTL:** omit `expiration_ms` when creating `monologue_frames_new` in Step 1, run Steps 2–4, then reapply the TTL after the migration:
+>   ```bash
+>   bq update --time_partitioning_expiration 7776000 morphic-gaos-prod:aos_logs.monologue_frames
+>   ```
+>   (`7776000` seconds = 90 days)
+
+**Pre-flight: validate CAST and partition assignment with a sample row**
+
+Run this before the full INSERT to confirm that `CAST(timestamp AS TIMESTAMP)` produces valid values and that BigQuery routes them to the expected partitions:
+
+```sql
+-- Insert 5 sample rows and verify partition assignment.
 INSERT INTO `morphic-gaos-prod.aos_logs.monologue_frames_new`
 SELECT
   task_id,
@@ -797,9 +818,42 @@ SELECT
   response_mode,
   reasoning_summary,
   CAST(timestamp AS TIMESTAMP) AS timestamp
-FROM `morphic-gaos-prod.aos_logs.monologue_frames`;
+FROM `morphic-gaos-prod.aos_logs.monologue_frames`
+LIMIT 5;
 
--- Step 3: Verify row counts match.
+-- Verify the 5 rows landed in the correct partition (date should match the source timestamp).
+SELECT timestamp, DATE(timestamp) AS partition_date
+FROM `morphic-gaos-prod.aos_logs.monologue_frames_new`
+ORDER BY timestamp DESC
+LIMIT 5;
+```
+
+If any `partition_date` is `NULL` or unexpected, abort: the source `timestamp` strings are not ISO 8601 UTC and need remediation before the full copy. Truncate `monologue_frames_new` and fix the source data:
+
+```sql
+TRUNCATE TABLE `morphic-gaos-prod.aos_logs.monologue_frames_new`;
+```
+
+```sql
+-- Step 1: Create the replacement table with the correct schema (run the script above with a temp name).
+--         Replace 'monologue_frames_new' in the script, then run it.
+
+-- Step 2: Copy existing data, casting the STRING timestamp to TIMESTAMP.
+--         To skip rows older than 90 days (already expired under the new TTL), add the WHERE clause below.
+INSERT INTO `morphic-gaos-prod.aos_logs.monologue_frames_new`
+SELECT
+  task_id,
+  project_id,
+  knowledge_gap_detected,
+  knowledge_gap_description,
+  partial_result_available,
+  response_mode,
+  reasoning_summary,
+  CAST(timestamp AS TIMESTAMP) AS timestamp
+FROM `morphic-gaos-prod.aos_logs.monologue_frames`
+WHERE CAST(timestamp AS TIMESTAMP) >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY);
+
+-- Step 3: Verify row counts match (counts may differ if the 90-day filter was applied).
 SELECT COUNT(*) FROM `morphic-gaos-prod.aos_logs.monologue_frames`;
 SELECT COUNT(*) FROM `morphic-gaos-prod.aos_logs.monologue_frames_new`;
 
@@ -817,6 +871,15 @@ bq cp --force \
 # Remove the temporary table now that the copy is complete.
 bq rm --force morphic-gaos-prod:aos_logs.monologue_frames_new
 ```
+
+**Rollback path:**
+
+| Failure point | Recovery action |
+|---|---|
+| Step 2 INSERT fails mid-run | `monologue_frames` is untouched. Truncate `monologue_frames_new`, diagnose the CAST failure, then restart from Step 2. |
+| Step 4 `bq cp` fails | `monologue_frames` is untouched (copy target is a different name). `monologue_frames_new` still holds the migrated data. Retry `bq cp` after resolving the error. |
+| Step 4 `bq rm` fails after successful `bq cp` | Migration is complete — `monologue_frames` now has the correct schema. Run `bq rm --force morphic-gaos-prod:aos_logs.monologue_frames_new` manually to clean up. |
+| `monologue_frames` was already overwritten and data is corrupt | Restore from BigQuery table snapshots (if enabled) or re-backfill from Cloud Logging exports. The original data was written as structured log entries via `_log_cloud` — the BigQuery sink for `aos_logs` can be used as a secondary source. |
 
 > **Note:** Steps 2–4 require `roles/bigquery.dataEditor` on the dataset and `roles/bigquery.dataViewer` on the source table. No IAM changes to existing service accounts are required for the migration itself.
 
