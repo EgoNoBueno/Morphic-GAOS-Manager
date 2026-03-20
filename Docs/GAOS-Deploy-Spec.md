@@ -216,16 +216,20 @@ done
 # with all service account emails (see §4.1). No gcloud command required here.
 
 # ── CI/CD Deployer SA — used by GitHub Actions OpenTofu pipeline (see §9.3) ──
+# ⚠️  Prerequisite: the Artifact Registry repo "cloud-run-source-deploy" and the
+#    GCS bucket "gs://morphic-gaos-tfstate" must already exist before running the
+#    two resource-scoped bindings below. Both are created in §9.3 steps 1 and 2.
+#    Run §9.3 steps 1–2 first, then return here to complete these bindings.
 # Cloud Run admin: create/update services
 gcloud projects add-iam-policy-binding $PROJECT \
   --member="serviceAccount:deployer-sa@${PROJECT}.iam.gserviceaccount.com" \
   --role="roles/run.admin"
-# Artifact Registry: push container images
+# Artifact Registry: push container images (requires repo created in §9.3 step 2)
 gcloud artifacts repositories add-iam-policy-binding cloud-run-source-deploy \
   --location=us-central1 --project=$PROJECT \
   --member="serviceAccount:deployer-sa@${PROJECT}.iam.gserviceaccount.com" \
   --role="roles/artifactregistry.writer"
-# GCS: read/write OpenTofu state in the tfstate bucket
+# GCS: read/write OpenTofu state in the tfstate bucket (requires bucket created in §9.3 step 1)
 gcloud storage buckets add-iam-policy-binding gs://morphic-gaos-tfstate \
   --member="serviceAccount:deployer-sa@${PROJECT}.iam.gserviceaccount.com" \
   --role="roles/storage.objectAdmin"
