@@ -77,5 +77,8 @@ test_results_fresh.txt
 # OpenTofu / Terraform
 .terraform/
 *.tfplan
+*.tfstate
+*.tfstate.backup
+*.tfvars
 crash.log
 crash.*.log
