@@ -113,16 +113,32 @@ def test_sync_to_atlas_happy_path(settings_with_atlas):
 
 
 def test_sync_to_atlas_includes_supersedes_marker(settings_with_atlas):
-    """When entry.supersedes is set, both the Supersedes line and ⛔ marker appear."""
+    """⛔ header appears before the ID field and includes old_id and reason."""
     old_id = "old-memory-id-abc"
+    reason = "Updated vendor terms override the 2024 policy"
     entry = _make_entry(supersedes=old_id)
 
     with patch("tools.memory_mirror.append_content") as mock_append:
-        sync_to_atlas(entry)
+        sync_to_atlas(entry, supersession_reason=reason)
 
     appended_text: str = mock_append.call_args.kwargs["content"]
-    assert f"Supersedes: {old_id}" in appended_text
-    assert f"⛔ SUPERSEDED: Entry {old_id} retired by {entry.memory_id}" in appended_text
+    assert f"⛔ SUPERSEDED by {entry.memory_id}" in appended_text
+    assert f"Retires:    {old_id}" in appended_text
+    assert reason in appended_text
+    # Marker must come before the standard entry fields
+    assert appended_text.index("⛔") < appended_text.index("ID:")
+
+
+def test_sync_to_atlas_supersession_reason_defaults_when_not_passed(settings_with_atlas):
+    """When supersession_reason is omitted, '(no reason provided)' is used as fallback."""
+    old_id = "old-memory-id-xyz"
+    entry = _make_entry(supersedes=old_id)
+
+    with patch("tools.memory_mirror.append_content") as mock_append:
+        sync_to_atlas(entry)  # no supersession_reason argument
+
+    appended_text: str = mock_append.call_args.kwargs["content"]
+    assert "(no reason provided)" in appended_text
 
 
 def test_sync_to_atlas_no_supersedes_marker_when_not_set(settings_with_atlas):
@@ -134,7 +150,7 @@ def test_sync_to_atlas_no_supersedes_marker_when_not_set(settings_with_atlas):
 
     appended_text: str = mock_append.call_args.kwargs["content"]
     assert "⛔" not in appended_text
-    assert "Supersedes" not in appended_text
+    assert "Retires:" not in appended_text
 
 
 def test_sync_to_atlas_approved_at_none_renders_dash(settings_with_atlas):

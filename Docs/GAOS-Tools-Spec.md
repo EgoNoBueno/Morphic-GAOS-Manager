@@ -1565,18 +1565,25 @@ Mirrors every approved `MemoryEntry` to a human-readable Google Doc called the *
 > **Spec reference:** `GAOS-Memory-Spec.md §6 (Layer 4 — Semantic Memory)` · `Docs/GAOS-Nexus-Prime-Spec.md — knowledge_review node`
 
 ```python
-def sync_to_atlas(entry: MemoryEntry) -> None:
+def sync_to_atlas(entry: MemoryEntry, supersession_reason: str | None = None) -> None:
     """
     Append an approved MemoryEntry to the Knowledge Atlas Google Doc.
 
     Each entry is formatted as a structured text block (ID, agent, domain,
     type, content, confidence, approval timestamp, tags). When
-    ``entry.supersedes`` is set, a ⛔ SUPERSEDED audit marker is also appended
-    so the Atlas retains a permanent record of which entry retired which.
+    ``entry.supersedes`` is set, the block opens with a ⛔ SUPERSEDED header
+    placed *before* the standard fields so a reviewer scanning the doc sees
+    the retirement notice immediately, followed by the ``supersession_reason``
+    explaining why the old entry was retired.
 
     The Atlas doc must be pre-created in Google Drive — this function never
     auto-creates it. Copy the document ID into
     ``settings.docs.knowledge_atlas_doc_id``.
+
+    Args:
+        entry: The approved MemoryEntry to mirror.
+        supersession_reason: One-sentence LLM-provided explanation of why the
+            old entry is being retired. Defaults to "(no reason provided)".
 
     Raises:
         MemoryMirrorError: ``knowledge_atlas_doc_id`` is not configured, or
@@ -1598,6 +1605,7 @@ class MemoryMirrorError(Exception):
 
 ### Entry Format (appended per approved MemoryEntry)
 
+**Standard entry (no supersession):**
 ```
 ---
 ID:         <memory_id UUID>
@@ -1608,8 +1616,23 @@ Content:    <content>
 Confidence: 92%
 Approved:   2026-03-20T10:00:00Z
 Tags:       sales, q4
-Supersedes: <old_memory_id>          ← only if entry.supersedes is set
-⛔ SUPERSEDED: Entry <old> retired by <new>   ← only if entry.supersedes is set
+```
+
+**Supersession entry (`entry.supersedes` is set) — ⛔ header appears first:**
+```
+---
+⛔ SUPERSEDED by <new_memory_id>
+Retires:    <old_memory_id>
+Reason:     <supersession_reason from LLM>
+
+ID:         <new_memory_id>
+Agent:      <agent_id>
+Domain:     <domain>
+Type:       <knowledge_type>
+Content:    <content>
+Confidence: 92%
+Approved:   2026-03-20T10:00:00Z
+Tags:       sales, q4
 ```
 
 ### Settings Required

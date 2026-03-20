@@ -744,21 +744,22 @@ def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                 tags=candidate.get("tags", []),
             )
             write_approved_memory(entry=entry, project_id=state["project_id"])
+            supersession_reason = resp.data.get("supersession_reason") or None
             if entry.supersedes:
-                supersession_reason = resp.data.get("supersession_reason") or "(no reason provided)"
+                reason_for_log = supersession_reason or "(no reason provided)"
                 _log_cloud(
                     "nexus-prime",
                     state["project_id"],
                     "task",
                     state.get("task_id", ""),
                     f"SUPERSESSION_AUDIT: memory_id={entry.supersedes} retired by "
-                    f"new entry (domain={entry.domain}). Reason: {supersession_reason}",
+                    f"new entry (domain={entry.domain}). Reason: {reason_for_log}",
                     "INFO",
                 )
             try:
                 from tools.memory_mirror import MemoryMirrorError, sync_to_atlas
 
-                sync_to_atlas(entry)
+                sync_to_atlas(entry, supersession_reason=supersession_reason)
             except MemoryMirrorError as mirror_exc:
                 _log_cloud(
                     "nexus-prime",

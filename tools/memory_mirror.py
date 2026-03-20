@@ -39,8 +39,11 @@ class MemoryMirrorError(Exception):
 
 # ── Entry format ──────────────────────────────────────────────────────────────
 
-_ENTRY_TEMPLATE = (
-    "\n---\n"
+# Prepended when this entry supersedes an older one — appears before the fields
+# so a human reviewer sees the retirement notice immediately.
+_SUPERSESSION_HEADER = "⛔ SUPERSEDED by {new_id}\nRetires:    {old_id}\nReason:     {reason}\n\n"
+
+_ENTRY_FIELDS = (
     "ID:         {memory_id}\n"
     "Agent:      {agent_id}\n"
     "Domain:     {domain}\n"
@@ -55,12 +58,14 @@ _ENTRY_TEMPLATE = (
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
-def sync_to_atlas(entry: MemoryEntry) -> None:
+def sync_to_atlas(entry: MemoryEntry, supersession_reason: str | None = None) -> None:
     """Mirror an approved MemoryEntry to the Knowledge Atlas Google Doc.
 
-    Appends a structured text block for the new entry. If ``entry.supersedes``
-    is set, a ⛔ SUPERSEDED audit marker is appended so the Atlas contains a
-    permanent record of the retirement.
+    Appends a structured text block for the new entry. When ``entry.supersedes``
+    is set, the block opens with a ``⛔ SUPERSEDED by <new_id>`` header — placed
+    before the standard fields so a reviewer scanning the doc sees the retirement
+    notice immediately, then the ``supersession_reason`` explaining why the old
+    entry was retired.
 
     The Atlas doc ID is read from ``settings.docs.knowledge_atlas_doc_id``.
     The doc must be pre-created manually in Google Drive — this function will
@@ -68,6 +73,9 @@ def sync_to_atlas(entry: MemoryEntry) -> None:
 
     Args:
         entry: The approved MemoryEntry to mirror. Must have ``memory_id`` set.
+        supersession_reason: One-sentence explanation of why the old entry is
+            being retired, as returned by the LLM. Defaults to
+            ``"(no reason provided)"`` when omitted or ``None``.
 
     Raises:
         MemoryMirrorError: Atlas doc ID is not configured in settings.yaml, or
@@ -88,7 +96,7 @@ def sync_to_atlas(entry: MemoryEntry) -> None:
 
     approved_at_str = entry.approved_at.strftime("%Y-%m-%dT%H:%M:%SZ") if entry.approved_at else "—"
 
-    text = _ENTRY_TEMPLATE.format(
+    fields = _ENTRY_FIELDS.format(
         memory_id=entry.memory_id,
         agent_id=entry.agent_id,
         domain=entry.domain,
@@ -100,8 +108,15 @@ def sync_to_atlas(entry: MemoryEntry) -> None:
     )
 
     if entry.supersedes:
-        text += f"Supersedes: {entry.supersedes}\n"
-        text += f"⛔ SUPERSEDED: Entry {entry.supersedes} retired by {entry.memory_id}\n"
+        reason = supersession_reason or "(no reason provided)"
+        header = _SUPERSESSION_HEADER.format(
+            new_id=entry.memory_id,
+            old_id=entry.supersedes,
+            reason=reason,
+        )
+        text = "\n---\n" + header + fields
+    else:
+        text = "\n---\n" + fields
 
     try:
         append_content(doc_id=atlas_doc_id, content=text, project_id=entry.project_id)

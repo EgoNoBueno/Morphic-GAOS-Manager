@@ -588,7 +588,7 @@ def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             # Mirror to Knowledge Atlas — non-blocking; WARNING logged on failure
             try:
                 from tools.memory_mirror import MemoryMirrorError, sync_to_atlas
-                sync_to_atlas(entry)
+                sync_to_atlas(entry, supersession_reason=supersession_reason)
             except MemoryMirrorError as mirror_exc:
                 _log_cloud(
                     "nexus-prime", state["project_id"], "task",
