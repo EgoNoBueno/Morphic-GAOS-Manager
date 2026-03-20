@@ -3,6 +3,27 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-03-20T03:00-03:00 — Migrate CI/CD auth to Workload Identity Federation
+
+**What was done:** Replaced the long-lived SA key (`GCP_SA_KEY`) in the GitHub Actions
+pipeline with Workload Identity Federation (WIF) — eliminating any long-lived credential from
+the CI/CD path.
+
+**Files changed:**
+- `.github/workflows/deploy.yml` — added `permissions: id-token: write / contents: read` at
+  workflow level; replaced all 3 `credentials_json: ${{ secrets.GCP_SA_KEY }}` auth steps with
+  `workload_identity_provider: ${{ secrets.WIF_PROVIDER }}` + `service_account:`; updated header comment
+- `Docs/GAOS-Deploy-Spec.md §9.3` — replaced step 3 (SA key generation) with WIF bootstrap
+  commands (`workload-identity-pools create`, `providers create-oidc`, `add-iam-policy-binding`
+  with `attribute.repository` condition + `principalSet` member); replaced `deployer-key.json`
+  warning with `attribute-condition` scope note; removed "Migration to WIF (Phase 3 task)"
+  paragraph (implemented now, not deferred)
+
+**What was learned:** None (clean implementation, no surprises).
+
+**What's next:** Run the one-time WIF bootstrap (§9.3 step 3) in the GCP project,
+add `WIF_PROVIDER` as a GitHub Secret, then push to `master` to trigger the first WIF-based run.
+
 ---
 
 ## 2026-03-20T02:30-03:00 — OpenTofu IaC Pipeline ✅

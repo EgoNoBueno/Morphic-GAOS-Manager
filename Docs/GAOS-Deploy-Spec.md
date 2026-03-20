@@ -1030,17 +1030,39 @@ gcloud artifacts repositories create cloud-run-source-deploy \
   --location=us-central1 \
   --project=$PROJECT
 
-# 3. Download a key for the deployer SA and store it as a GitHub Secret
-#    Secret name: GCP_SA_KEY (repo → Settings → Secrets and variables → Actions)
-gcloud iam service-accounts keys create deployer-key.json \
-  --iam-account=deployer-sa@${PROJECT}.iam.gserviceaccount.com
-# Paste the content of deployer-key.json into GitHub Secret GCP_SA_KEY, then delete it:
-Remove-Item deployer-key.json   # PowerShell
+# 3. Configure Workload Identity Federation (no long-lived credentials)
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT --format='value(projectNumber)')
+
+gcloud iam workload-identity-pools create github-actions \
+  --location=global \
+  --display-name="GitHub Actions" \
+  --project=$PROJECT
+
+gcloud iam workload-identity-pools providers create-oidc github-oidc \
+  --location=global \
+  --workload-identity-pool=github-actions \
+  --display-name="GitHub OIDC" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="attribute.repository=='EgoNoBueno/Morphic-GAOS-Manager'" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --project=$PROJECT
+
+gcloud iam service-accounts add-iam-policy-binding \
+  deployer-sa@${PROJECT}.iam.gserviceaccount.com \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-actions/attribute.repository/EgoNoBueno/Morphic-GAOS-Manager" \
+  --project=$PROJECT
+
+# Store the provider resource name as GitHub Secret WIF_PROVIDER:
+echo "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-actions/providers/github-oidc"
+# (repo → Settings → Secrets and variables → Actions → New repository secret → WIF_PROVIDER)
 ```
 
-> ⚠️ **Warning — never commit `deployer-key.json` to the repository.** Delete it immediately
-> after copying its contents into the GitHub Secret. It is listed in `.gitignore` as a safety net,
-> but physical deletion is the only guarantee.
+> ⚠️ **Note — attribute-condition scope:** The `--attribute-condition` locks this WIF provider to
+> tokens issued for `EgoNoBueno/Morphic-GAOS-Manager` only. A fork cannot impersonate `deployer-sa`
+> even if it triggers a workflow — the condition is evaluated server-side by Google before the token
+> is issued. The IAM binding further restricts impersonation to the specific `attribute.repository`
+> principal set, not to the pool as a whole.
 
 **Create the GitHub Environment (one-time, via GitHub UI):**
 
@@ -1062,11 +1084,6 @@ deploying configuration that no longer matches the current infrastructure state.
 | `push` to `master` | `build` | `docker build` + `docker push` to Artifact Registry (SHA tag) |
 | after `build` | `plan` | `tofu plan -var="image_tag=<sha>" -out=tfplan` → upload artifact (3 days) |
 | after `plan` + human approval | `apply` | Download `tfplan` → `tofu apply tfplan` |
-
-**Migration to WIF (Phase 3 task):** The current auth mechanism uses a SA key stored as a
-GitHub Secret (`GCP_SA_KEY`). Migrate to Workload Identity Federation (WIF) in Phase 3 to
-eliminate long-lived credentials entirely. WIF requires creating a pool and provider in GCP —
-tracked as a Phase 3 deploy task.
 
 ---
 

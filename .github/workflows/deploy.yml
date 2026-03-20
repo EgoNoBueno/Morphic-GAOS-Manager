@@ -5,15 +5,20 @@
 # The "production" environment provides the human approval gate.
 #
 # Prerequisites (one-time setup, see GAOS-Deploy-Spec.md §9.3):
-#   1. Create GitHub Secret: GCP_SA_KEY (deployer SA key JSON)
-#   2. Create GitHub Environment: "production" with a required reviewer
-#   3. Bootstrap GCS state bucket and Artifact Registry repo (see §9.3)
+#   1. Configure WIF: pool + OIDC provider + IAM binding (see §9.3 step 3)
+#   2. Create GitHub Secret: WIF_PROVIDER (provider resource name from step 3)
+#   3. Create GitHub Environment: "production" with a required reviewer
+#   4. Bootstrap GCS state bucket and Artifact Registry repo (see §9.3)
 
 name: Deploy GAOS Agents
 
 on:
   push:
     branches: [master]
+
+permissions:
+  id-token: write   # Required: allows the workflow to request an OIDC token for WIF
+  contents: read
 
 env:
   PROJECT_ID: morphic-gaos-prod
@@ -33,7 +38,8 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: deployer-sa@morphic-gaos-prod.iam.gserviceaccount.com
 
       # Required step: gcloud auth configure-docker makes docker aware of the
       # *.pkg.dev credential helper. Without this, docker push returns 403
@@ -58,7 +64,8 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: deployer-sa@morphic-gaos-prod.iam.gserviceaccount.com
 
       - name: Set up OpenTofu
         uses: opentofu/setup-opentofu@v1
@@ -93,7 +100,8 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: deployer-sa@morphic-gaos-prod.iam.gserviceaccount.com
 
       - name: Set up OpenTofu
         uses: opentofu/setup-opentofu@v1
