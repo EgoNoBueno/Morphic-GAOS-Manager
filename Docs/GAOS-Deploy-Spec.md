@@ -765,7 +765,7 @@ table = bigquery.Table(
         bigquery.SchemaField('partial_result_available', 'BOOL'),
         bigquery.SchemaField('response_mode', 'STRING'),   # Direct|Reframe|Research|Tactical
         bigquery.SchemaField('reasoning_summary', 'STRING'),
-        bigquery.SchemaField('timestamp', 'TIMESTAMP'),    # UTC event time; insert_rows_json accepts ISO 8601 strings for TIMESTAMP columns
+        bigquery.SchemaField('timestamp', 'TIMESTAMP'),    # UTC event time
     ],
 )
 table.time_partitioning = bigquery.TimePartitioning(
