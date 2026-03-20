@@ -453,19 +453,24 @@ class TestChatEndpoint:
         # Patch after reload so the live module reference is used
         patcher = patch.object(main_mod, "_get_agent", return_value=mock_agent)
         patcher.start()
+        # Stub JWT verification — tests use a fake token; real crypto is exercised
+        # by TestVerifyChatJwt. The fail-closed guard requires an explicit no-op here.
+        jwt_patcher = patch.object(main_mod, "_verify_chat_jwt", return_value=None)
+        jwt_patcher.start()
         client = TestClient(main_mod.app, raise_server_exceptions=False)
-        return client, main_mod, patcher
+        return client, main_mod, patcher, jwt_patcher
 
     # E1
     def test_message_dispatches_chat_message_type(self):
         mock_agent = MagicMock()
         mock_agent.run = AsyncMock(return_value=MagicMock(task_id="t1"))
 
-        client, main_mod, patcher = self._reloaded_client(mock_agent)
+        client, main_mod, patcher, jwt_patcher = self._reloaded_client(mock_agent)
         try:
             resp = client.post("/chat", json=self._message_body(), headers=self._HEADERS)
         finally:
             patcher.stop()
+            jwt_patcher.stop()
 
         assert resp.status_code == 200
         assert mock_agent.run.called
@@ -482,11 +487,12 @@ class TestChatEndpoint:
         params = [{"key": "proposal_id", "value": _PROPOSAL_ID}]
         body = self._card_body("approve", params)
 
-        client, main_mod, patcher = self._reloaded_client(mock_agent)
+        client, main_mod, patcher, jwt_patcher = self._reloaded_client(mock_agent)
         try:
             resp = client.post("/chat", json=body, headers=self._HEADERS)
         finally:
             patcher.stop()
+            jwt_patcher.stop()
 
         assert resp.status_code == 200
         msg = _extract_envelope(mock_agent.run.call_args)
@@ -503,11 +509,12 @@ class TestChatEndpoint:
         params = [{"key": "proposal_id", "value": _PROPOSAL_ID}]
         body = self._card_body("reject", params)
 
-        client, main_mod, patcher = self._reloaded_client(mock_agent)
+        client, main_mod, patcher, jwt_patcher = self._reloaded_client(mock_agent)
         try:
             resp = client.post("/chat", json=body, headers=self._HEADERS)
         finally:
             patcher.stop()
+            jwt_patcher.stop()
 
         assert resp.status_code == 200
         msg = _extract_envelope(mock_agent.run.call_args)
@@ -525,11 +532,12 @@ class TestChatEndpoint:
         ]
         body = self._card_body("skill_approve", params)
 
-        client, main_mod, patcher = self._reloaded_client(mock_agent)
+        client, main_mod, patcher, jwt_patcher = self._reloaded_client(mock_agent)
         try:
             resp = client.post("/chat", json=body, headers=self._HEADERS)
         finally:
             patcher.stop()
+            jwt_patcher.stop()
 
         assert resp.status_code == 200
         msg = _extract_envelope(mock_agent.run.call_args)
@@ -549,11 +557,12 @@ class TestChatEndpoint:
             "message": {},
         }
 
-        client, main_mod, patcher = self._reloaded_client(mock_agent)
+        client, main_mod, patcher, jwt_patcher = self._reloaded_client(mock_agent)
         try:
             resp = client.post("/chat", json=body, headers=self._HEADERS)
         finally:
             patcher.stop()
+            jwt_patcher.stop()
 
         assert resp.status_code == 200
         mock_agent.run.assert_not_called()
@@ -565,11 +574,12 @@ class TestChatEndpoint:
 
         body = self._card_body("open_external_link")
 
-        client, main_mod, patcher = self._reloaded_client(mock_agent)
+        client, main_mod, patcher, jwt_patcher = self._reloaded_client(mock_agent)
         try:
             resp = client.post("/chat", json=body, headers=self._HEADERS)
         finally:
             patcher.stop()
+            jwt_patcher.stop()
 
         assert resp.status_code == 200
         mock_agent.run.assert_not_called()
@@ -579,11 +589,12 @@ class TestChatEndpoint:
         mock_agent = MagicMock()
         mock_agent.run = AsyncMock()
 
-        client, main_mod, patcher = self._reloaded_client(mock_agent, agent_name="scout")
+        client, main_mod, patcher, jwt_patcher = self._reloaded_client(mock_agent, agent_name="scout")
         try:
             resp = client.post("/chat", json=self._message_body(), headers=self._HEADERS)
         finally:
             patcher.stop()
+            jwt_patcher.stop()
 
         assert resp.status_code == 404
 
@@ -623,7 +634,7 @@ class TestChatEndpoint:
             data={},
         )
 
-        client, main_mod, patcher = self._reloaded_client(mock_agent)
+        client, main_mod, patcher, jwt_patcher = self._reloaded_client(mock_agent)
         try:
             with (
                 patch.object(main_mod, "_download_chat_attachment", return_value=b"fake-image-bytes"),
@@ -632,6 +643,7 @@ class TestChatEndpoint:
                 resp = client.post("/chat", json=body, headers=self._HEADERS)
         finally:
             patcher.stop()
+            jwt_patcher.stop()
 
         assert resp.status_code == 200
         msg = _extract_envelope(mock_agent.run.call_args)

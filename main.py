@@ -121,10 +121,10 @@ def _verify_chat_jwt(request: Request) -> None:
     confirm the audience matches the Cloud Run service URL so that only
     Google-originated Chat events can trigger state changes.
 
-    When ``CLOUD_RUN_URL`` is not set (e.g. local dev / CI), the cryptographic
-    check is skipped with a warning logged.  Cloud Run's
-    ``--no-allow-unauthenticated`` ingress still enforces authentication at
-    the network layer.
+    When ``CLOUD_RUN_URL`` is not set, the function checks for an explicit
+    opt-out via ``SKIP_CHAT_JWT_VERIFY=true``.  This must be set deliberately
+    for local dev / CI — the check is fail-closed by default so a production
+    misconfiguration cannot silently disable JWT enforcement.
     """
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
@@ -132,11 +132,25 @@ def _verify_chat_jwt(request: Request) -> None:
 
     service_url = os.environ.get("CLOUD_RUN_URL", "").rstrip("/")
     if not service_url:
-        log.warning(
-            "CLOUD_RUN_URL env var is not set — skipping Chat JWT audience verification. "
-            "Set CLOUD_RUN_URL to the Cloud Run service URL in production."
+        if os.environ.get("SKIP_CHAT_JWT_VERIFY", "").lower() in ("1", "true", "yes"):
+            log.warning(
+                "SKIP_CHAT_JWT_VERIFY is set — Chat JWT audience verification disabled. "
+                "This must never be set in production."
+            )
+            return
+        # Fail closed: CLOUD_RUN_URL is required in production. If it is absent
+        # and SKIP_CHAT_JWT_VERIFY is not explicitly set, refuse the request so
+        # misconfiguration does not silently disable JWT checks.
+        log.error(
+            "CLOUD_RUN_URL is not set and SKIP_CHAT_JWT_VERIFY is not enabled. "
+            "Cannot verify Chat JWT audience — rejecting request. "
+            "Set CLOUD_RUN_URL to the Cloud Run service URL, or set "
+            "SKIP_CHAT_JWT_VERIFY=true for local development only."
         )
-        return
+        raise HTTPException(
+            status_code=500,
+            detail="Server misconfiguration: CLOUD_RUN_URL is required for JWT verification.",
+        )
 
     token = auth[len("Bearer "):].strip()
     try:
