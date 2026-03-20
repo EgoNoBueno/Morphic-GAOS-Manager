@@ -14,6 +14,7 @@ Authentication:
 
 Spec: GAOS-Tools-Spec.md §16 · GAOS-Memory-Spec.md §3 (Layer 5b — Blueprint Factory)
 """
+
 from __future__ import annotations
 
 import logging
@@ -62,9 +63,7 @@ def _get_credentials() -> Any:
     key_path: str = getattr(getattr(settings, "docs", None), "service_account_key", "") or ""
 
     if key_path:
-        return service_account.Credentials.from_service_account_file(
-            key_path, scopes=_DOCS_SCOPES
-        )
+        return service_account.Credentials.from_service_account_file(key_path, scopes=_DOCS_SCOPES)
 
     import google.auth
 
@@ -298,11 +297,15 @@ def list_comments(doc_id: str, project_id: str) -> list[dict[str, Any]]:
 
     try:
         drive_svc = _get_drive_service()
-        response = drive_svc.comments().list(
-            fileId=doc_id,
-            fields="comments(id,content,author/displayName,createdTime,resolved)",
-            includeDeleted=False,
-        ).execute()
+        response = (
+            drive_svc.comments()
+            .list(
+                fileId=doc_id,
+                fields="comments(id,content,author/displayName,createdTime,resolved)",
+                includeDeleted=False,
+            )
+            .execute()
+        )
 
         results: list[dict[str, Any]] = []
         for c in response.get("comments", []):

@@ -32,6 +32,7 @@ Run from repo root (venv active):
   python scripts/smoke_test_6_7.py
   python scripts/smoke_test_6_7.py --project-id morphic-gaos-prod
 """
+
 from __future__ import annotations
 
 import argparse
@@ -41,7 +42,7 @@ import hmac
 import json
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -72,9 +73,7 @@ def _load_project_id() -> str:
 
 def _sign(secret: str, body_bytes: bytes) -> str:
     """Return base64-encoded HMAC-SHA256 of body_bytes."""
-    return base64.b64encode(
-        hmac.new(secret.encode(), body_bytes, hashlib.sha256).digest()
-    ).decode()
+    return base64.b64encode(hmac.new(secret.encode(), body_bytes, hashlib.sha256).digest()).decode()
 
 
 def _post(url: str, body_bytes: bytes, signature: str | None) -> dict:
@@ -82,10 +81,7 @@ def _post(url: str, body_bytes: bytes, signature: str | None) -> dict:
     POST body_bytes to url. If signature is None the ?signature param is omitted.
     Apps Script always returns HTTP 200; statusCode is in the JSON body.
     """
-    if signature is not None:
-        full_url = f"{url}?signature={quote(signature)}"
-    else:
-        full_url = url
+    full_url = f"{url}?signature={quote(signature)}" if signature is not None else url
 
     try:
         resp = httpx.post(
@@ -119,7 +115,7 @@ def _make_valid_payload(project_id: str, smoke_id: str) -> dict:
             "issue": "Automated smoke test — safe to delete",
             "trigger_reason": "SMOKE_TEST",
         },
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
 
@@ -130,7 +126,7 @@ def _canonical(payload: dict) -> bytes:
 def _check(test_num: int, description: str, result: dict, expected_code: int) -> bool:
     """Print test result and return True if passed."""
     got = result.get("statusCode", -1)
-    passed = (got == expected_code)
+    passed = got == expected_code
     status = "✅ PASSED" if passed else "❌ FAILED"
     print(f"  [{status}] Test {test_num}: {description}")
     if not passed:
@@ -144,8 +140,9 @@ def _check(test_num: int, description: str, result: dict, expected_code: int) ->
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run webhook smoke tests 6+7 (8 cases).")
-    parser.add_argument("--project-id", default=None,
-                        help="Override GCP project ID from settings.yaml")
+    parser.add_argument(
+        "--project-id", default=None, help="Override GCP project ID from settings.yaml"
+    )
     args = parser.parse_args()
 
     project_id = args.project_id or _load_project_id()
@@ -156,6 +153,7 @@ def main() -> None:
     print("\nFetching secrets from Secret Manager…")
     try:
         from tools.secrets import get_secret
+
         webhook_url = get_secret("WEBHOOK_URL", project_id)
         hmac_secret = get_secret("WEBHOOK_HMAC_SECRET", project_id)
     except Exception as exc:
@@ -239,12 +237,14 @@ def main() -> None:
 
     if passed == total:
         print("✅ ALL WEBHOOK TESTS PASSED — smoke tests 6+7 complete.")
-        print(f"\n⚠  Clean up: delete rows with Agent ID='smoke-test' from Agent_Approvals.")
+        print("\n⚠  Clean up: delete rows with Agent ID='smoke-test' from Agent_Approvals.")
     else:
         print("❌ SOME TESTS FAILED — see details above.")
         print("\nCommon causes:")
         print("  Test 1/5 fail: Project Registry has no active row for this project_id.")
-        print("  Test 2/3 fail: WEBHOOK_HMAC_SECRET in Secret Manager mismatches Apps Script properties.")
+        print(
+            "  Test 2/3 fail: WEBHOOK_HMAC_SECRET in Secret Manager mismatches Apps Script properties."
+        )
         print("  All fail: WEBHOOK_URL is outdated — re-run setup_apps_script.py --deploy.")
         sys.exit(1)
 

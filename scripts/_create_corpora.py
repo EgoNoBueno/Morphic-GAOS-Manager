@@ -1,8 +1,10 @@
 """Temporary script — create Vertex AI RAG corpora for all 7 domains."""
-import vertexai
-from vertexai import rag
-import yaml
+
 from pathlib import Path
+
+import vertexai
+import yaml
+from vertexai import rag
 
 SETTINGS = Path(__file__).parent.parent / "config" / "settings.yaml"
 

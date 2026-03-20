@@ -1,4 +1,5 @@
 """tests/test_webhook_sender.py — Unit tests for tools/webhook_sender.py"""
+
 import base64
 import hashlib
 import hmac
@@ -14,7 +15,6 @@ from tools.webhook_sender import (
     WebhookURLError,
     post_to_webhook,
 )
-
 
 # ── Settings fixture ───────────────────────────────────────────────────────
 

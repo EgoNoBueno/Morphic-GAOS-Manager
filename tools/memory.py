@@ -11,6 +11,7 @@ Access control:
 
 Spec: GAOS-Tools-Spec.md §8 + GAOS-Memory-Spec.md
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -141,21 +142,28 @@ def load_domain_memory(agent_id: str, project_id: str) -> dict[str, list[dict[st
 
     try:
         client = MemoryBankClient(project=project_id)
-        entries = client.list(filters={
-            "agent_id": agent_id,
-            "active": True,
-            "project_id": project_id,
-        })
+        entries = client.list(
+            filters={
+                "agent_id": agent_id,
+                "active": True,
+                "project_id": project_id,
+            }
+        )
         context: dict[str, list[dict[str, Any]]] = {
-            "fact": [], "pattern": [], "rule": [], "preference": []
+            "fact": [],
+            "pattern": [],
+            "rule": [],
+            "preference": [],
         }
         for e in entries:
             bucket = context.setdefault(e.knowledge_type, [])
-            bucket.append({
-                "memory_id": e.memory_id,
-                "content": e.content,
-                "tags": e.tags,
-            })
+            bucket.append(
+                {
+                    "memory_id": e.memory_id,
+                    "content": e.content,
+                    "tags": e.tags,
+                }
+            )
         return context
     except Exception as exc:
         raise MemoryBankError(f"load_domain_memory failed: {exc}") from exc
@@ -178,9 +186,7 @@ def write_approved_memory(entry: MemoryEntry, project_id: str) -> str:
     try:
         from vertexai.preview.memory import MemoryBankClient  # type: ignore[import-not-found]
     except ImportError as exc:
-        raise MemoryBankError(
-            "vertexai.preview.memory is not available."
-        ) from exc
+        raise MemoryBankError("vertexai.preview.memory is not available.") from exc
 
     try:
         client = MemoryBankClient(project=project_id)
@@ -223,9 +229,7 @@ def query_memory_bank(
     try:
         from vertexai.preview.memory import MemoryBankClient  # type: ignore[import-not-found]
     except ImportError as exc:
-        raise MemoryBankError(
-            "vertexai.preview.memory is not available."
-        ) from exc
+        raise MemoryBankError("vertexai.preview.memory is not available.") from exc
 
     try:
         client = MemoryBankClient(project=project_id)

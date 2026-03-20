@@ -1,4 +1,5 @@
 """tests/test_bigquery.py — Unit tests for tools/bigquery.py"""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +12,6 @@ from tools.bigquery import (
     insert_row,
     insert_rows,
 )
-
 
 # ── Settings fixture ───────────────────────────────────────────────────────
 
@@ -135,9 +135,7 @@ class TestInsertRows:
         with patch("tools.bigquery.bigquery.Client", return_value=mock_client):
             insert_rows("dataset.my_table", rows)
 
-        mock_client.insert_rows_json.assert_called_once_with(
-            "test-project.dataset.my_table", rows
-        )
+        mock_client.insert_rows_json.assert_called_once_with("test-project.dataset.my_table", rows)
 
     def test_batch_raises_bigquery_row_error_on_rejection(self):
         mock_client = MagicMock()

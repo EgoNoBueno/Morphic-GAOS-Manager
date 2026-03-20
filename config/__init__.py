@@ -9,10 +9,10 @@ Usage:
     settings = get_settings()
     project_id = settings.GCP_PROJECT_ID
 """
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import yaml
 from pydantic import BaseModel, Field
@@ -63,20 +63,20 @@ class ChatConfig(BaseModel):
 
 class VertexSearchConfig(BaseModel):
     location: str = "global"
-    playbook_datastore_id: str = ""    # Vertex AI Search datastore for Knowledge/playbooks/
-    knowledge_datastore_id: str = ""   # Vertex AI Search datastore for general Knowledge/
+    playbook_datastore_id: str = ""  # Vertex AI Search datastore for Knowledge/playbooks/
+    knowledge_datastore_id: str = ""  # Vertex AI Search datastore for general Knowledge/
 
 
 class DocsConfig(BaseModel):
-    service_account_key: str = ""        # Path to SA key JSON; leave empty to use ADC
-    blueprints_folder_id: str = ""       # Default Drive folder ID for Blueprint Docs
+    service_account_key: str = ""  # Path to SA key JSON; leave empty to use ADC
+    blueprints_folder_id: str = ""  # Default Drive folder ID for Blueprint Docs
 
 
 class GoogleSearchConfig(BaseModel):
     api_key_secret: str = "GOOGLE_SEARCH_API_KEY"  # Secret Manager key name
-    cx_secret: str = "GOOGLE_SEARCH_CX"            # Secret Manager CX name
-    max_search_depth: int = 3                       # Recursive query depth per mandate
-    max_queries_per_mandate: int = 15               # Hard cap on queries per RESEARCH_MANDATE
+    cx_secret: str = "GOOGLE_SEARCH_CX"  # Secret Manager CX name
+    max_search_depth: int = 3  # Recursive query depth per mandate
+    max_queries_per_mandate: int = 15  # Hard cap on queries per RESEARCH_MANDATE
 
 
 class Settings(BaseModel):
@@ -96,18 +96,18 @@ class Settings(BaseModel):
     def GCP_PROJECT_ID(self) -> str:
         return self.gcp.project_id
 
-    def get_project(self, project_id: str) -> Optional[ProjectConfig]:
+    def get_project(self, project_id: str) -> ProjectConfig | None:
         return self.projects.get(project_id)
 
 
 # ── Module-level singleton ─────────────────────────────────────────────────
 
-_settings: Optional[Settings] = None
+_settings: Settings | None = None
 
 _DEFAULT_PATH = Path(__file__).parent / "settings.yaml"
 
 
-def load_settings(path: Optional[Path] = None) -> Settings:
+def load_settings(path: Path | None = None) -> Settings:
     """
     Load and validate settings.yaml. Caches the result for the process lifetime.
 

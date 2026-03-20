@@ -19,6 +19,7 @@ TestHandleSkillRequestResolution (5 tests):
 TestSkillRequestRouting (1 test):
   SR12 route() returns "handle_skill_request" for SKILL_REQUEST message type.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -72,6 +73,7 @@ def _make_settings(tmp_path, yaml_text: str = _SETTINGS_YAML_WITH_CHAT) -> None:
     cfg = tmp_path / "settings.yaml"
     cfg.write_text(yaml_text)
     import config
+
     config._reset_for_testing()
     config.load_settings(cfg)
 
@@ -80,13 +82,16 @@ def _make_settings(tmp_path, yaml_text: str = _SETTINGS_YAML_WITH_CHAT) -> None:
 def reset_settings():
     yield
     import config
+
     config._reset_for_testing()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _make_a2a(msg_type, payload=None, source_agent="scout"):
     from models import A2AMessage
+
     return A2AMessage(
         source_agent=source_agent,
         target_agent="nexus-prime",
@@ -131,6 +136,7 @@ class TestHandleSkillRequestInbound:
     ):
         _make_settings(tmp_path, yaml_text)
         from models import MessageType
+
         msg = _make_a2a(
             MessageType.SKILL_REQUEST,
             payload={
@@ -153,6 +159,7 @@ class TestHandleSkillRequestInbound:
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             from agents.nexus_prime.orchestrator import handle_skill_request
+
             result = handle_skill_request(state)
         return result, mock_append, mock_card
 
@@ -184,6 +191,7 @@ class TestHandleSkillRequestInbound:
     def test_missing_package_name_returns_state_unchanged(self, tmp_path):
         _make_settings(tmp_path)
         from models import MessageType
+
         msg = _make_a2a(
             MessageType.SKILL_REQUEST,
             payload={"agent_id": "scout", "reason": "no package"},
@@ -197,6 +205,7 @@ class TestHandleSkillRequestInbound:
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             from agents.nexus_prime.orchestrator import handle_skill_request
+
             result = handle_skill_request(state)
 
         assert result["parked_proposals"] == []
@@ -205,9 +214,7 @@ class TestHandleSkillRequestInbound:
 
     # SR3
     def test_no_owner_space_writes_sheet_but_skips_card(self, tmp_path):
-        result, mock_append, mock_card = self._run(
-            tmp_path, yaml_text=_SETTINGS_YAML_NO_CHAT
-        )
+        result, mock_append, mock_card = self._run(tmp_path, yaml_text=_SETTINGS_YAML_NO_CHAT)
         mock_append.assert_called_once()
         mock_card.assert_not_called()
         assert len(result["parked_proposals"]) == 1
@@ -240,6 +247,7 @@ class TestHandleSkillRequestInbound:
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             from agents.nexus_prime.orchestrator import handle_skill_request
+
             result = handle_skill_request(state)
 
         assert result == state
@@ -267,6 +275,7 @@ class TestHandleSkillRequestResolution:
     ):
         _make_settings(tmp_path)
         from models import MessageType
+
         msg = _make_a2a(
             MessageType.SKILL_REQUEST,
             payload={
@@ -293,6 +302,7 @@ class TestHandleSkillRequestResolution:
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             from agents.nexus_prime.orchestrator import handle_skill_request
+
             result = handle_skill_request(state)
         return result, mock_update, mock_publish
 
@@ -332,9 +342,7 @@ class TestHandleSkillRequestResolution:
 
     # SR9
     def test_missing_proposal_id_skips_update_row(self, tmp_path):
-        result, mock_update, mock_publish = self._run(
-            tmp_path, proposal_id="", parked=[]
-        )
+        result, mock_update, mock_publish = self._run(tmp_path, proposal_id="", parked=[])
         mock_update.assert_not_called()
         # publish is still attempted using payload agent_id
         mock_publish.assert_called_once()
@@ -370,6 +378,7 @@ class TestSkillRequestRouting:
     def test_route_dispatches_skill_request_to_handler(self, tmp_path):
         _make_settings(tmp_path)
         from models import MessageType
+
         msg = _make_a2a(
             MessageType.SKILL_REQUEST,
             payload={"package_name": "numpy", "agent_id": "scout"},
@@ -378,5 +387,6 @@ class TestSkillRequestRouting:
         state["incoming_message"] = msg
 
         from agents.nexus_prime.orchestrator import route
+
         destination = route(state)
         assert destination == "handle_skill_request"

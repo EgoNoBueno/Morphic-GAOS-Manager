@@ -466,4 +466,19 @@ If an abstraction already exists, it **must** be used — not re-implemented inl
 
 ---
 
-_Last updated: 2026-03-18_
+## 25. Check the Problems Tab After Every File Edit
+
+**Rule:** After editing any Python file, run `get_errors` on that file before declaring the task complete. If errors are present, fix them in the same turn — do not hand back to the user with open Pylance or compile errors. A clean Problems tab is a required exit condition, not an optional check.
+
+**Scope:**
+- Run after every file edit, not just at end-of-session.
+- If multiple files were edited in one turn, check all of them.
+- Errors introduced by a previous session (pre-existing before this turn) should be flagged to the user but do not block the current task from being marked complete.
+
+**Trigger phrase:** Say *"check the Problems tab"* or *"check for errors"* to invoke this check manually at any point in a session.
+
+**Why:** Pylance catches type errors, unresolved references, and `NotRequired` TypedDict access violations that don't surface until runtime. Leaving them open creates a false sense of completion and shifts debugging cost to the next session.
+
+---
+
+_Last updated: 2026-03-20_

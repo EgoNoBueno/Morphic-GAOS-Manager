@@ -12,6 +12,7 @@ Provides:
   - utcnow_iso() / utcnow_date()      — UTC timestamp helpers
   - _elapsed_seconds()                — wall-clock duration from state start
 """
+
 from __future__ import annotations
 
 import ast
@@ -22,7 +23,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -58,11 +59,11 @@ _CONTEXT_TRIO_FILES = ("about-me.md", "brand-voice.md", "working-preferences.md"
 
 
 def utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def utcnow_date() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+    return datetime.now(UTC).date().isoformat()
 
 
 def _elapsed_seconds(state: dict) -> float:
@@ -71,6 +72,7 @@ def _elapsed_seconds(state: dict) -> float:
 
 
 # ── Model call wrapper ────────────────────────────────────────────────────────
+
 
 @dataclass
 class ModelResponse:
@@ -118,10 +120,12 @@ def _call_model(
         ModelResponse with text, rough cost_usd, and parsed data dict.
     """
     from config import get_settings
+
     settings = get_settings()
 
     if web_access and model.startswith("ollama/"):
         from tools.web_search import web_search
+
         snippets = web_search(prompt)
         if snippets:
             prompt = f"Web search results for context:\n{snippets}\n\n---\n\n{prompt}"
@@ -157,6 +161,7 @@ def _call_model_ollama(
 
     try:
         from tools.secrets import get_secret
+
         host = get_secret("OLLAMA_HOST", settings.GCP_PROJECT_ID).strip().rstrip("/")
     except Exception:
         host = "http://localhost:11434"
@@ -239,8 +244,8 @@ def _call_model_gemini(
             the AI Studio free quota (429) is hit.
     """
     import google.genai as genai
-    from google.genai import types as genai_types
     from google.api_core import exceptions as gapi_exc
+    from google.genai import types as genai_types
 
     from tools.secrets import get_secret
 
@@ -304,19 +309,50 @@ def _call_model_gemini(
 
 _BLOCKED_BUILTINS = {"exec", "eval", "compile", "__import__", "breakpoint"}
 _BLOCKED_PATTERNS = [
-    "os.system", "os.popen", "subprocess.call", "subprocess.run",
-    "subprocess.Popen", "__builtins__", "ctypes.", "socket.connect",
-    "pickle.loads", "pickle.load",
+    "os.system",
+    "os.popen",
+    "subprocess.call",
+    "subprocess.run",
+    "subprocess.Popen",
+    "__builtins__",
+    "ctypes.",
+    "socket.connect",
+    "pickle.loads",
+    "pickle.load",
 ]
 _ALLOWED_IMPORTS = {
-    "datetime", "json", "math", "re", "uuid", "hashlib", "time",
-    "typing", "dataclasses", "collections", "functools", "itertools",
-    "pathlib", "enum", "abc", "copy", "textwrap",
-    "google.cloud.bigquery", "google.cloud.logging", "google.cloud.pubsub",
-    "google.cloud.secretmanager", "google.cloud.storage",
-    "google.adk", "google.genai", "google.auth",
-    "gspread", "pydantic", "yaml",
-    "config", "models", "tools", "agents",
+    "datetime",
+    "json",
+    "math",
+    "re",
+    "uuid",
+    "hashlib",
+    "time",
+    "typing",
+    "dataclasses",
+    "collections",
+    "functools",
+    "itertools",
+    "pathlib",
+    "enum",
+    "abc",
+    "copy",
+    "textwrap",
+    "google.cloud.bigquery",
+    "google.cloud.logging",
+    "google.cloud.pubsub",
+    "google.cloud.secretmanager",
+    "google.cloud.storage",
+    "google.adk",
+    "google.genai",
+    "google.auth",
+    "gspread",
+    "pydantic",
+    "yaml",
+    "config",
+    "models",
+    "tools",
+    "agents",
     "langgraph",
 }
 
@@ -344,8 +380,7 @@ def validate_code_safety(code: str) -> dict[str, Any]:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if not any(
-                    alias.name == a or alias.name.startswith(a + ".")
-                    for a in _ALLOWED_IMPORTS
+                    alias.name == a or alias.name.startswith(a + ".") for a in _ALLOWED_IMPORTS
                 ):
                     return {"passed": False, "reason": f"Unapproved import: {alias.name}"}
 
@@ -355,8 +390,7 @@ def validate_code_safety(code: str) -> dict[str, Any]:
                 for alias in node.names:
                     full_name = f"{module}.{alias.name}" if alias.name != "*" else module
                     if not any(
-                        full_name == a or full_name.startswith(a + ".")
-                        for a in _ALLOWED_IMPORTS
+                        full_name == a or full_name.startswith(a + ".") for a in _ALLOWED_IMPORTS
                     ):
                         return {"passed": False, "reason": f"Unapproved import: {full_name}"}
 
@@ -370,7 +404,7 @@ def validate_code_safety(code: str) -> dict[str, Any]:
 # ── Self-evolution loop ───────────────────────────────────────────────────────
 
 _EVOLUTION_MAX_ITERATIONS = 5
-_EVOLUTION_MAX_TTL_S = 1800   # 30 minutes
+_EVOLUTION_MAX_TTL_S = 1800  # 30 minutes
 _EVOLUTION_MAX_COST_USD = 5.0
 
 
@@ -388,6 +422,7 @@ def _run_evolution_loop(
         "iteration_cap" | "ttl" | "cost_cap" | "no_progress" | "success"
     """
     from config import get_settings
+
     settings = get_settings()
 
     start_ts = time.time()
@@ -445,6 +480,7 @@ def _evo_result(code: str, iterations: int, cost: float, constraint: str, fp: st
 
 # ── Identity file loader ──────────────────────────────────────────────────────
 
+
 def _load_context_trio() -> str:
     """
     Read the three Context Trio files from Docs/ and return them as a single
@@ -494,6 +530,7 @@ def _load_identity_file(agent_name: str) -> str:
 
 # ── Cloud Logging helper ──────────────────────────────────────────────────────
 
+
 def _log_cloud(
     agent_id: str,
     project_id: str,
@@ -511,7 +548,9 @@ def _log_cloud(
     """
     try:
         from google.cloud import logging as gcloud_logging
+
         from config import get_settings
+
         settings = get_settings()
 
         client = gcloud_logging.Client(project=settings.GCP_PROJECT_ID)
@@ -531,6 +570,7 @@ def _log_cloud(
 
 # ── Dashboard heartbeat helper ────────────────────────────────────────────────
 
+
 def _write_heartbeat(
     agent_id: str,
     project_id: str,
@@ -548,6 +588,7 @@ def _write_heartbeat(
     """
     try:
         from tools.google_sheets import append_row
+
         row = {
             "timestamp": utcnow_iso(),
             "agent_id": agent_id,

@@ -13,6 +13,7 @@ Usage:
 
 Spec: GAOS-Tools-Spec.md §17
 """
+
 from __future__ import annotations
 
 import logging
@@ -62,7 +63,7 @@ def search(
     if not query or not query.strip():
         return []
 
-    from tools.secrets import get_secret, SecretNotFoundError, SecretAccessDenied
+    from tools.secrets import SecretAccessDenied, SecretNotFoundError, get_secret
 
     try:
         api_key = get_secret(_API_KEY_SECRET, project_id)
@@ -109,12 +110,14 @@ def search(
                 or metatags[0].get("og:updated_time", "")
                 or metatags[0].get("date", "")
             )
-        results.append({
-            "title": item.get("title", ""),
-            "url": item.get("link", ""),
-            "snippet": item.get("snippet", ""),
-            "date": date,
-        })
+        results.append(
+            {
+                "title": item.get("title", ""),
+                "url": item.get("link", ""),
+                "snippet": item.get("snippet", ""),
+                "date": date,
+            }
+        )
 
     return results
 

@@ -10,6 +10,7 @@ call read_file() and list_folder() only.
 
 Spec: GAOS-Tools-Spec.md §5
 """
+
 from __future__ import annotations
 
 import io
@@ -80,11 +81,7 @@ def _resolve_path(service: Any, root_folder_id: str, path: str) -> str | None:
     current_id = root_folder_id
     for part in parts:
         escaped = part.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
-        query = (
-            f"'{current_id}' in parents "
-            f"and name = '{escaped}' "
-            f"and trashed = false"
-        )
+        query = f"'{current_id}' in parents and name = '{escaped}' and trashed = false"
         resp = service.files().list(q=query, fields="files(id, name)").execute()
         files = resp.get("files", [])
         if not files:
@@ -138,16 +135,14 @@ def _retry_drive(
             code = int(exc.resp.status)
             if code == 429 or code >= 500:
                 last_exc = exc
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
                 continue
             if code == 403:
                 raise DrivePermissionError(
                     f"Service account lacks Drive permissions: {exc}"
                 ) from exc
             raise error_cls(f"Drive API error {code}: {exc}") from exc
-    raise error_cls(
-        f"Drive API still failing after 3 retries: {last_exc}"
-    ) from last_exc
+    raise error_cls(f"Drive API still failing after 3 retries: {last_exc}") from last_exc
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -171,12 +166,8 @@ def read_file(file_path: str, project_id: str) -> str:
     root = _get_drive_root(project_id)
     file_id = _resolve_path(service, root, file_path)
     if file_id is None:
-        raise KnowledgeFileNotFoundError(
-            f"File not found in Knowledge/: {file_path}"
-        )
-    content = _retry_drive(
-        service.files().get_media(fileId=file_id).execute
-    )
+        raise KnowledgeFileNotFoundError(f"File not found in Knowledge/: {file_path}")
+    content = _retry_drive(service.files().get_media(fileId=file_id).execute)
     return content.decode("utf-8") if isinstance(content, bytes) else content
 
 
@@ -216,21 +207,25 @@ def write_file(file_path: str, content: str, project_id: str) -> str:
     existing_id = _resolve_path(service, parent_id, file_name)
     if existing_id:
         result = _retry_drive(
-            service.files().update(
+            service.files()
+            .update(
                 fileId=existing_id,
                 media_body=media,
                 fields="id",
-            ).execute,
+            )
+            .execute,
             error_cls=DriveWriteError,
         )
     else:
         file_meta = {"name": file_name, "parents": [parent_id]}
         result = _retry_drive(
-            service.files().create(
+            service.files()
+            .create(
                 body=file_meta,
                 media_body=media,
                 fields="id",
-            ).execute,
+            )
+            .execute,
             error_cls=DriveWriteError,
         )
     return result["id"]
@@ -253,25 +248,23 @@ def copy_file(source_path: str, dest_path: str, project_id: str) -> str:
 
     source_id = _resolve_path(service, root, source_path)
     if source_id is None:
-        raise KnowledgeFileNotFoundError(
-            f"Source file not found: {source_path}"
-        )
+        raise KnowledgeFileNotFoundError(f"Source file not found: {source_path}")
 
     dest_parts = dest_path.rstrip("/").rsplit("/", 1)
     dest_folder_path = dest_parts[0] if len(dest_parts) == 2 else ""
     dest_name = dest_parts[-1]
     dest_parent_id = (
-        _ensure_folder_path(service, root, dest_folder_path)
-        if dest_folder_path
-        else root
+        _ensure_folder_path(service, root, dest_folder_path) if dest_folder_path else root
     )
 
     result = _retry_drive(
-        service.files().copy(
+        service.files()
+        .copy(
             fileId=source_id,
             body={"name": dest_name, "parents": [dest_parent_id]},
             fields="id",
-        ).execute,
+        )
+        .execute,
         error_cls=DriveWriteError,
     )
     return result["id"]
@@ -296,16 +289,14 @@ def list_folder(folder_path: str, project_id: str) -> list[str]:
 
     folder_id = _resolve_path(service, root, folder_path) if folder_path else root
     if folder_id is None:
-        raise KnowledgeFolderNotFoundError(
-            f"Folder not found in Knowledge/: {folder_path}"
-        )
+        raise KnowledgeFolderNotFoundError(f"Folder not found in Knowledge/: {folder_path}")
 
     results: list[str] = []
     _collect_files(service, folder_id, folder_path.rstrip("/"), results)
     return results
 
 
-def write_playbook(doc: "Any", body: str, project_id: str) -> str:
+def write_playbook(doc: Any, body: str, project_id: str) -> str:
     """
     Write a Playbook Markdown document to Knowledge/playbooks/ in Drive.
 
@@ -353,11 +344,15 @@ def _collect_files(service: Any, folder_id: str, prefix: str, out: list[str]) ->
     query = f"'{folder_id}' in parents and trashed = false"
     page_token: str | None = None
     while True:
-        resp = service.files().list(
-            q=query,
-            fields="nextPageToken, files(id, name, mimeType)",
-            pageToken=page_token,
-        ).execute()
+        resp = (
+            service.files()
+            .list(
+                q=query,
+                fields="nextPageToken, files(id, name, mimeType)",
+                pageToken=page_token,
+            )
+            .execute()
+        )
         for item in resp.get("files", []):
             rel = f"{prefix}/{item['name']}" if prefix else item["name"]
             if item["mimeType"] == "application/vnd.google-apps.folder":

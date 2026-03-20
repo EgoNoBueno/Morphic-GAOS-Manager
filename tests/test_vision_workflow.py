@@ -43,6 +43,7 @@ TestPollCommentsEndpoint (4 tests):
   P3   POST /poll-comments returns 401 without Authorization header.
   P4   POST /poll-comments response includes comments_published count.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -83,6 +84,7 @@ def _make_settings(tmp_path, yaml_text: str = _SETTINGS_YAML):
     cfg = tmp_path / "settings.yaml"
     cfg.write_text(yaml_text)
     import config
+
     config._reset_for_testing()
     config.load_settings(cfg)
     return cfg
@@ -92,13 +94,16 @@ def _make_settings(tmp_path, yaml_text: str = _SETTINGS_YAML):
 def reset_settings():
     yield
     import config
+
     config._reset_for_testing()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _make_a2a(msg_type, payload=None, source_agent="owner"):
-    from models import A2AMessage, MessageType
+    from models import A2AMessage
+
     return A2AMessage(
         source_agent=source_agent,
         target_agent="nexus-prime",
@@ -127,6 +132,7 @@ def _base_state(extra=None):
 
 def _fake_model_resp(text="Blueprint content"):
     from agents import ModelResponse
+
     return ModelResponse(text=text, data={}, cost_usd=0.001, tokens_used=100)
 
 
@@ -136,21 +142,39 @@ def _fake_model_resp(text="Blueprint content"):
 class TestVisionBlueprintNode:
     """Tests for agents.nexus_prime.orchestrator.vision_blueprint()."""
 
-    def _run(self, tmp_path, vision_text="Build a loyalty programme", doc_id="doc-123",
-             space_name="", extra_state=None, mock_doc_raises=None,
-             mock_sheet_raises=None, mock_chat_raises=None):
+    def _run(
+        self,
+        tmp_path,
+        vision_text="Build a loyalty programme",
+        doc_id="doc-123",
+        space_name="",
+        extra_state=None,
+        mock_doc_raises=None,
+        mock_sheet_raises=None,
+        mock_chat_raises=None,
+    ):
         _make_settings(tmp_path)
         from models import MessageType
-        msg = _make_a2a(MessageType.VISION_SUBMITTED, {
-            "vision_text": vision_text,
-            "submitted_by": "owner@example.com",
-            "space_name": space_name,
-        })
+
+        msg = _make_a2a(
+            MessageType.VISION_SUBMITTED,
+            {
+                "vision_text": vision_text,
+                "submitted_by": "owner@example.com",
+                "space_name": space_name,
+            },
+        )
         state = _base_state(extra_state)
         state["incoming_message"] = msg
 
-        mock_create = MagicMock(return_value=doc_id) if not mock_doc_raises else MagicMock(side_effect=mock_doc_raises)
-        mock_append_row = MagicMock() if not mock_sheet_raises else MagicMock(side_effect=mock_sheet_raises)
+        mock_create = (
+            MagicMock(return_value=doc_id)
+            if not mock_doc_raises
+            else MagicMock(side_effect=mock_doc_raises)
+        )
+        mock_append_row = (
+            MagicMock() if not mock_sheet_raises else MagicMock(side_effect=mock_sheet_raises)
+        )
         mock_card = MagicMock() if not mock_chat_raises else MagicMock(side_effect=mock_chat_raises)
 
         with (
@@ -161,6 +185,7 @@ class TestVisionBlueprintNode:
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             from agents.nexus_prime.orchestrator import vision_blueprint
+
             result = vision_blueprint(state)
         return result, mock_create, mock_append_row, mock_card
 
@@ -215,6 +240,7 @@ class TestVisionBlueprintNode:
         # no incoming_message key set
         with patch("agents.nexus_prime.orchestrator._log_cloud"):
             from agents.nexus_prime.orchestrator import vision_blueprint
+
             result = vision_blueprint(state)
         assert result == state
 
@@ -234,21 +260,33 @@ class TestVisionBlueprintNode:
 class TestIteratePlanNode:
     """Tests for agents.nexus_prime.orchestrator.iterate_plan()."""
 
-    def _run(self, tmp_path, constraint_text="No automated discounts",
-             blueprint_id="bp-1", existing_constraints=None, doc_id=None):
+    def _run(
+        self,
+        tmp_path,
+        constraint_text="No automated discounts",
+        blueprint_id="bp-1",
+        existing_constraints=None,
+        doc_id=None,
+    ):
         _make_settings(tmp_path)
         from models import MessageType
-        msg = _make_a2a(MessageType.PLAN_REVIEW, {
-            "blueprint_id": blueprint_id,
-            "constraint_text": constraint_text,
-            "comment_author": "owner@example.com",
-        })
+
+        msg = _make_a2a(
+            MessageType.PLAN_REVIEW,
+            {
+                "blueprint_id": blueprint_id,
+                "constraint_text": constraint_text,
+                "comment_author": "owner@example.com",
+            },
+        )
         active = {blueprint_id: doc_id} if doc_id else {}
-        state = _base_state({
-            "incoming_message": msg,
-            "active_blueprints": active,
-            "blueprint_constraints": list(existing_constraints or []),
-        })
+        state = _base_state(
+            {
+                "incoming_message": msg,
+                "active_blueprints": active,
+                "blueprint_constraints": list(existing_constraints or []),
+            }
+        )
 
         mock_append = MagicMock()
         mock_compaction = MagicMock(return_value="Compacted paragraph.")
@@ -258,6 +296,7 @@ class TestIteratePlanNode:
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             from agents.nexus_prime.orchestrator import iterate_plan
+
             result = iterate_plan(state)
         return result, mock_append, mock_compaction
 
@@ -271,21 +310,32 @@ class TestIteratePlanNode:
     def test_empty_constraint_text_skips(self, tmp_path):
         _make_settings(tmp_path)
         from models import MessageType
-        msg = _make_a2a(MessageType.PLAN_REVIEW, {
-            "blueprint_id": "bp-1",
-            "constraint_text": "",
-        })
+
+        msg = _make_a2a(
+            MessageType.PLAN_REVIEW,
+            {
+                "blueprint_id": "bp-1",
+                "constraint_text": "",
+            },
+        )
         state = _base_state({"incoming_message": msg, "blueprint_constraints": []})
         with patch("agents.nexus_prime.orchestrator._log_cloud"):
             from agents.nexus_prime.orchestrator import iterate_plan
+
             result = iterate_plan(state)
         assert result["blueprint_constraints"] == []
 
     # IP3
     def test_compaction_triggers_at_threshold(self, tmp_path):
         from agents.nexus_prime.orchestrator import _COMPACTION_THRESHOLD
+
         existing = [
-            {"blueprint_id": "bp-1", "text": f"C{i}", "comment_author": "a", "comment_timestamp": "t"}
+            {
+                "blueprint_id": "bp-1",
+                "text": f"C{i}",
+                "comment_author": "a",
+                "comment_timestamp": "t",
+            }
             for i in range(_COMPACTION_THRESHOLD - 1)
         ]
         result, _, mock_compaction = self._run(
@@ -296,14 +346,20 @@ class TestIteratePlanNode:
     # IP4
     def test_after_compaction_constraints_reduced(self, tmp_path):
         from agents.nexus_prime.orchestrator import _COMPACTION_THRESHOLD
+
         existing = [
-            {"blueprint_id": "bp-1", "text": f"C{i}", "comment_author": "a", "comment_timestamp": "t"}
+            {
+                "blueprint_id": "bp-1",
+                "text": f"C{i}",
+                "comment_author": "a",
+                "comment_timestamp": "t",
+            }
             for i in range(_COMPACTION_THRESHOLD - 1)
         ]
-        result, _, _ = self._run(
-            tmp_path, existing_constraints=existing, blueprint_id="bp-1"
-        )
-        bp_constraints = [c for c in result["blueprint_constraints"] if c.get("blueprint_id") == "bp-1"]
+        result, _, _ = self._run(tmp_path, existing_constraints=existing, blueprint_id="bp-1")
+        bp_constraints = [
+            c for c in result["blueprint_constraints"] if c.get("blueprint_id") == "bp-1"
+        ]
         # After compaction, all bp-1 constraints replaced by exactly 1 compacted entry
         assert len(bp_constraints) == 1
         assert "COMPACTED_CONSTRAINTS" in bp_constraints[0]["text"]
@@ -321,6 +377,7 @@ class TestIteratePlanNode:
         state = _base_state()
         with patch("agents.nexus_prime.orchestrator._log_cloud"):
             from agents.nexus_prime.orchestrator import iterate_plan
+
             result = iterate_plan(state)
         assert result == state
 
@@ -348,11 +405,15 @@ class TestRunCompaction:
         state = _base_state()
         mock_insert = MagicMock()
         with (
-            patch("agents.nexus_prime.orchestrator._call_model", return_value=_fake_model_resp("Compacted.")),
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                return_value=_fake_model_resp("Compacted."),
+            ),
             patch("tools.bigquery.insert_rows", mock_insert),
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             from agents.nexus_prime.orchestrator import _run_compaction
+
             _run_compaction(state, "bp-1", self._constraints(3))
 
         mock_insert.assert_called_once()
@@ -365,11 +426,15 @@ class TestRunCompaction:
         _make_settings(tmp_path)
         state = _base_state()
         with (
-            patch("agents.nexus_prime.orchestrator._call_model", return_value=_fake_model_resp("Summarised result.")),
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                return_value=_fake_model_resp("Summarised result."),
+            ),
             patch("tools.bigquery.insert_rows"),
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             from agents.nexus_prime.orchestrator import _run_compaction
+
             result = _run_compaction(state, "bp-1", self._constraints(2))
         assert result == "Summarised result."
 
@@ -378,11 +443,14 @@ class TestRunCompaction:
         _make_settings(tmp_path)
         state = _base_state()
         with (
-            patch("agents.nexus_prime.orchestrator._call_model", return_value=_fake_model_resp("OK.")),
+            patch(
+                "agents.nexus_prime.orchestrator._call_model", return_value=_fake_model_resp("OK.")
+            ),
             patch("tools.bigquery.insert_rows", side_effect=RuntimeError("BQ down")),
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             from agents.nexus_prime.orchestrator import _run_compaction
+
             result = _run_compaction(state, "bp-1", self._constraints(2))
         assert result == "OK."
 
@@ -413,14 +481,22 @@ class TestHandlePollComments:
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             from agents.nexus_prime.orchestrator import handle_poll_comments
+
             result = asyncio.run(handle_poll_comments("test-project"))
         return result, mock_publish
 
     # PC1
     def test_publishes_comment_received_for_unresolved(self, tmp_path):
         comments_map = {
-            "doc-111": [{"id": "c1", "content": "Make it premium", "resolved": False,
-                         "author": "owner", "created_time": "2026-01-01T00:00:00Z"}],
+            "doc-111": [
+                {
+                    "id": "c1",
+                    "content": "Make it premium",
+                    "resolved": False,
+                    "author": "owner",
+                    "created_time": "2026-01-01T00:00:00Z",
+                }
+            ],
             "doc-222": [],
         }
         result, mock_publish = self._run(tmp_path, comments_by_doc=comments_map)
@@ -432,8 +508,15 @@ class TestHandlePollComments:
     # PC2
     def test_skips_resolved_comments(self, tmp_path):
         comments_map = {
-            "doc-111": [{"id": "c1", "content": "Done", "resolved": True,
-                         "author": "owner", "created_time": "2026-01-01"}],
+            "doc-111": [
+                {
+                    "id": "c1",
+                    "content": "Done",
+                    "resolved": True,
+                    "author": "owner",
+                    "created_time": "2026-01-01",
+                }
+            ],
             "doc-222": [],
         }
         result, mock_publish = self._run(tmp_path, comments_by_doc=comments_map)
@@ -457,6 +540,7 @@ class TestHandlePollComments:
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             from agents.nexus_prime.orchestrator import handle_poll_comments
+
             result = asyncio.run(handle_poll_comments("test-project"))
         assert result["errors"] == 2  # one per doc
         assert result["comments_published"] == 0
@@ -471,7 +555,9 @@ class TestVisionEndpoint:
     def _client(self, tmp_path, agent_name="nexus-prime"):
         """Reload main with the specified AGENT_NAME environment variable."""
         import importlib
+
         import main as main_mod
+
         _make_settings(tmp_path)
         with patch.dict(os.environ, {"AGENT_NAME": agent_name, "GCP_PROJECT_ID": "test-project"}):
             importlib.reload(main_mod)
@@ -524,13 +610,18 @@ class TestVisionEndpoint:
         client, main_mod = self._client_with_mock_agent(tmp_path)
         resp = client.post(
             "/vision",
-            json={"vision_text": "Build a tool", "submitted_by": "alice@example.com",
-                  "space_name": "spaces/XYZ"},
+            json={
+                "vision_text": "Build a tool",
+                "submitted_by": "alice@example.com",
+                "space_name": "spaces/XYZ",
+            },
             headers=_AUTH_HEADER,
         )
         assert resp.status_code == 200
         call_arg = main_mod._agent_instance.run.call_args[0][0]
-        import base64, json
+        import base64
+        import json
+
         data = json.loads(base64.b64decode(call_arg["message"]["data"]))
         assert data["payload"]["vision_text"] == "Build a tool"
         assert data["payload"]["submitted_by"] == "alice@example.com"
@@ -552,7 +643,9 @@ class TestPollCommentsEndpoint:
 
     def _client(self, tmp_path, agent_name="nexus-prime"):
         import importlib
+
         import main as main_mod
+
         _make_settings(tmp_path)
         with patch.dict(os.environ, {"AGENT_NAME": agent_name, "GCP_PROJECT_ID": "test-project"}):
             importlib.reload(main_mod)

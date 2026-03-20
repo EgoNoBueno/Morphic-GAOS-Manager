@@ -9,27 +9,24 @@ Construction spec: Docs/GAOS-Agent-Spec.md
 Identity file:     Docs/agents/ledger.md
 Master spec:       Docs/GAOS-Manager-Spec.md §1.2
 """
+
 from __future__ import annotations
 
 import time
 import uuid
 from typing import Any
 
-from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
 
 from agents import (
     _call_model,
-    _elapsed_seconds,
     _load_identity_file,
     _log_cloud,
-    _run_evolution_loop,
     _write_heartbeat,
-    utcnow_date,
     utcnow_iso,
-    validate_code_safety,
 )
-from models import A2AMessage, AgentWorkingMemory, ApprovalProposal, MessageType
+from models import A2AMessage, AgentWorkingMemory, MessageType
 
 # ── Domain constants ──────────────────────────────────────────────────────────
 
@@ -46,32 +43,37 @@ _INBOUND_TOPICS = [
 
 # ── Helper: model aliases ─────────────────────────────────────────────────────
 
+
 def _local() -> str:
     from config import get_settings
+
     return get_settings().models.LOCAL_MODEL
 
 
 def _fast() -> str:
     from config import get_settings
+
     return get_settings().models.FAST_MODEL
 
 
 def _deep() -> str:
     from config import get_settings
+
     return get_settings().models.DEEP_MODEL
 
 
 # ── Graph nodes ───────────────────────────────────────────────────────────────
 
+
 def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
     """Step 1-7 of the agent boot sequence (GAOS-Agent-Spec.md §6)."""
-    from config import get_settings
-    from tools.google_sheets import get_all_records
-    from tools.memory import load_domain_memory, query_episodic
-    from tools.pubsub import ensure_topic_exists
-    from tools.project_registry import load_project_registry
-    from tools.secrets import get_secret, SecretNotFoundError, SecretAccessDenied
     import sys
+
+    from config import get_settings
+    from tools.memory import load_domain_memory, query_episodic
+    from tools.project_registry import load_project_registry
+    from tools.pubsub import ensure_topic_exists
+    from tools.secrets import SecretAccessDenied, SecretNotFoundError, get_secret
 
     settings = get_settings()
     pid = state.get("project_id") or settings.GCP_PROJECT_ID
@@ -96,16 +98,28 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
     try:
         get_secret("GEMINI_API_KEY", pid)
     except (SecretNotFoundError, SecretAccessDenied) as exc:
-        _log_cloud(_AGENT_ID, pid, "security", state.get("task_id", "boot"),
-                   f"STARTUP_FAILURE: {exc}", "CRITICAL")
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "security",
+            state.get("task_id", "boot"),
+            f"STARTUP_FAILURE: {exc}",
+            "CRITICAL",
+        )
         sys.exit(1)
 
     # Step 3: Project Registry validation
     try:
         active_ids = {p.project_id for p in load_project_registry(pid)}
         if pid not in active_ids and pid != settings.GCP_PROJECT_ID:
-            _log_cloud(_AGENT_ID, pid, "security", state.get("task_id", "boot"),
-                       f"STARTUP_FAILURE: unknown project_id '{pid}'", "CRITICAL")
+            _log_cloud(
+                _AGENT_ID,
+                pid,
+                "security",
+                state.get("task_id", "boot"),
+                f"STARTUP_FAILURE: unknown project_id '{pid}'",
+                "CRITICAL",
+            )
             sys.exit(1)
     except Exception:
         pass
@@ -118,17 +132,13 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
     # Step 5: Load domain memory into working memory cache
     try:
-        state["memory_context"] = load_domain_memory(
-            agent_id=_AGENT_ID, project_id=pid
-        )
+        state["memory_context"] = load_domain_memory(agent_id=_AGENT_ID, project_id=pid)
     except Exception:
         pass
 
     # Step 6: Episodic cache
     try:
-        state["episodic_cache"] = {
-            "recent": query_episodic(_AGENT_ID, pid, "accounting", limit=5)
-        }
+        state["episodic_cache"] = {"recent": query_episodic(_AGENT_ID, pid, "accounting", limit=5)}
     except Exception:
         pass
 
@@ -144,7 +154,7 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
     (overdue invoices, uncategorised expenses, month-end triggers) and
     formulates a work plan for this cycle.
     """
-    from tools.google_sheets import get_all_records, find_rows
+    from tools.google_sheets import get_all_records
 
     state["step_count"] = state.get("step_count", 0) + 1
     pid = state["project_id"]
@@ -188,7 +198,7 @@ def _dispatch(state: AgentWorkingMemory) -> AgentWorkingMemory:
     Attempt to call Tier 3 task agents for each planned task.
     Falls back to a direct in-process result if task modules are absent.
     """
-    planned = (state["messages"][-1].get("tasks", []) if state.get("messages") else [])
+    planned = state["messages"][-1].get("tasks", []) if state.get("messages") else []
 
     for task in planned[:5]:  # safety cap
         task_type = task.get("task_type", "unknown")
@@ -199,8 +209,10 @@ def _dispatch(state: AgentWorkingMemory) -> AgentWorkingMemory:
             # Tasks live in agents/ledger/tasks/ — import dynamically
             mod_name = f"agents.ledger.tasks.{task_type}"
             import importlib
+
             mod = importlib.import_module(mod_name)
             from models import AgentInput, AgentOutput
+
             inp = AgentInput(
                 task_id=str(uuid.uuid4()),
                 project_id=state["project_id"],
@@ -208,8 +220,12 @@ def _dispatch(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 context=item,
             )
             out: AgentOutput = mod.run(inp)
-            result = {"task_type": task_type, "status": out.status, "output": out.result,
-                      "cost_usd": out.cost_usd}
+            result = {
+                "task_type": task_type,
+                "status": out.status,
+                "output": out.result,
+                "cost_usd": out.cost_usd,
+            }
             state["cost_usd"] = state.get("cost_usd", 0.0) + out.cost_usd
         except (ModuleNotFoundError, AttributeError):
             # Task agent not yet deployed — log and continue
@@ -229,11 +245,13 @@ def _collect(state: AgentWorkingMemory) -> AgentWorkingMemory:
     """Aggregate sub-agent results and decide whether to escalate."""
     results = state.get("sub_task_results", [])
     escalated = [r for r in results if r.get("status") == "escalated"]
-    state["messages"].append({
-        "role": "system",
-        "content": f"Cycle results: {len(results)} tasks, {len(escalated)} escalated.",
-        "escalated": escalated,
-    })
+    state["messages"].append(
+        {
+            "role": "system",
+            "content": f"Cycle results: {len(results)} tasks, {len(escalated)} escalated.",
+            "escalated": escalated,
+        }
+    )
     return state
 
 
@@ -257,10 +275,15 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
     pid = state["project_id"]
     results = state.get("sub_task_results", [])
     rows_to_write = [
-        {"timestamp": utcnow_iso(), "agent_id": _AGENT_ID,
-         "task_type": r.get("task_type", ""), "status": r.get("status", ""),
-         "summary": str(r.get("output", ""))[:500]}
-        for r in results if r.get("status") == "success"
+        {
+            "timestamp": utcnow_iso(),
+            "agent_id": _AGENT_ID,
+            "task_type": r.get("task_type", ""),
+            "status": r.get("status", ""),
+            "summary": str(r.get("output", ""))[:500],
+        }
+        for r in results
+        if r.get("status") == "success"
     ]
 
     if rows_to_write:
@@ -290,16 +313,19 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
     open_proposals = len(state.get("parked_proposals", []))
     _write_heartbeat(
-        _AGENT_ID, pid, "IDLE",
+        _AGENT_ID,
+        pid,
+        "IDLE",
         state.get("current_objective", "Cycle complete"),
-        open_proposals, "", _SHEET_TAB,
+        open_proposals,
+        "",
+        _SHEET_TAB,
     )
     return state
 
 
 def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
     """Park a task pending Approval Gate response."""
-    from tools.google_sheets import append_row
     from tools.pubsub import publish
 
     pid = state["project_id"]
@@ -320,9 +346,15 @@ def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
     except Exception:
         pass
 
-    _write_heartbeat(_AGENT_ID, pid, "PARKED",
-                     f"Parked proposal {proposal_id}",
-                     len(state["parked_proposals"]), "", _SHEET_TAB)
+    _write_heartbeat(
+        _AGENT_ID,
+        pid,
+        "PARKED",
+        f"Parked proposal {proposal_id}",
+        len(state["parked_proposals"]),
+        "",
+        _SHEET_TAB,
+    )
     return state
 
 
@@ -335,10 +367,12 @@ def _resume(state: AgentWorkingMemory) -> AgentWorkingMemory:
         state["parked_proposals"] = [
             p for p in state.get("parked_proposals", []) if p != proposal_id
         ]
-        state["messages"].append({
-            "role": "system",
-            "content": f"Resumed: proposal={proposal_id} status={approval_status}",
-        })
+        state["messages"].append(
+            {
+                "role": "system",
+                "content": f"Resumed: proposal={proposal_id} status={approval_status}",
+            }
+        )
     return state
 
 
@@ -366,10 +400,15 @@ def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
     except Exception:
         pass
 
-    _write_heartbeat(_AGENT_ID, pid, "ESCALATED",
-                     f"Escalated: {last_error[:100]}",
-                     len(state.get("parked_proposals", [])),
-                     last_error[:200], _SHEET_TAB)
+    _write_heartbeat(
+        _AGENT_ID,
+        pid,
+        "ESCALATED",
+        f"Escalated: {last_error[:100]}",
+        len(state.get("parked_proposals", [])),
+        last_error[:200],
+        _SHEET_TAB,
+    )
     return state
 
 
@@ -410,49 +449,61 @@ def _write_playbook(state: AgentWorkingMemory) -> AgentWorkingMemory:
             f"## Agents Involved\n- {_AGENT_ID}\n\n"
             "## Milestones\n"
             + "\n".join(
-                f"- {r.get('task_type', '?')}: {r.get('status', '?')}"
-                for r in results[:10]
+                f"- {r.get('task_type', '?')}: {r.get('status', '?')}" for r in results[:10]
             )
             + "\n\n## Constraints\n_None recorded._\n\n## Open Questions\n_None._\n"
         )
         _drive_write_playbook(doc, body, pid)
-        state["messages"].append({
-            "role": "system",
-            "content": f"Playbook written: {doc.title}",
-        })
+        state["messages"].append(
+            {
+                "role": "system",
+                "content": f"Playbook written: {doc.title}",
+            }
+        )
     except Exception as exc:
-        _log_cloud(_AGENT_ID, pid, "task", state.get("task_id", ""),
-                   f"write_playbook failed: {exc}", "WARNING")
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", ""),
+            f"write_playbook failed: {exc}",
+            "WARNING",
+        )
     return state
 
 
 # ── Graph assembly ────────────────────────────────────────────────────────────
 
+
 def build_ledger_graph() -> Any:
     graph: StateGraph = StateGraph(AgentWorkingMemory)
-    graph.add_node("boot",           _boot)
-    graph.add_node("plan",           _plan)
-    graph.add_node("dispatch",       _dispatch)
-    graph.add_node("collect",        _collect)
-    graph.add_node("report",         _report)
+    graph.add_node("boot", _boot)
+    graph.add_node("plan", _plan)
+    graph.add_node("dispatch", _dispatch)
+    graph.add_node("collect", _collect)
+    graph.add_node("report", _report)
     graph.add_node("write_playbook", _write_playbook)
-    graph.add_node("park",           _park)
-    graph.add_node("resume",         _resume)
-    graph.add_node("escalate",       _escalate)
+    graph.add_node("park", _park)
+    graph.add_node("resume", _resume)
+    graph.add_node("escalate", _escalate)
 
     graph.set_entry_point("boot")
-    graph.add_edge("boot",           "plan")
-    graph.add_edge("plan",           "dispatch")
-    graph.add_edge("dispatch",       "collect")
-    graph.add_conditional_edges("collect", _should_escalate, {
-        "escalate": "escalate",
-        "report":   "report",
-    })
-    graph.add_edge("report",         "write_playbook")
+    graph.add_edge("boot", "plan")
+    graph.add_edge("plan", "dispatch")
+    graph.add_edge("dispatch", "collect")
+    graph.add_conditional_edges(
+        "collect",
+        _should_escalate,
+        {
+            "escalate": "escalate",
+            "report": "report",
+        },
+    )
+    graph.add_edge("report", "write_playbook")
     graph.add_edge("write_playbook", END)
-    graph.add_edge("park",           END)
-    graph.add_edge("resume",         "plan")
-    graph.add_edge("escalate",       END)
+    graph.add_edge("park", END)
+    graph.add_edge("resume", "plan")
+    graph.add_edge("escalate", END)
 
     return graph.compile(checkpointer=MemorySaver())
 
@@ -461,12 +512,14 @@ def build_ledger_graph() -> Any:
 
 try:
     from google.adk.agents import Agent as _BaseAgent
+
     _HAS_ADK = True
 except ImportError:
     _HAS_ADK = False
 
 
 if _HAS_ADK:
+
     class LedgerAgent(_BaseAgent):  # type: ignore[misc]
         name: str = _AGENT_ID
         description: str = "Accounting orchestrator — invoices, expenses, reconciliation, P&L."
@@ -476,6 +529,7 @@ if _HAS_ADK:
 
         def __init__(self, **data: Any) -> None:
             from config import get_settings
+
             data["model"] = get_settings().models.LOCAL_MODEL
             data["instruction"] = _load_identity_file(_AGENT_ID)
             super().__init__(**data)
@@ -483,6 +537,7 @@ if _HAS_ADK:
 
         async def run(self, agent_input: Any) -> Any:
             from models import AgentOutput
+
             initial: AgentWorkingMemory = _initial_state(agent_input)
             try:
                 final = await self._graph.ainvoke(
@@ -495,20 +550,26 @@ if _HAS_ADK:
                 status = "failed"
                 final = initial
             return AgentOutput(
-                task_id=final["task_id"], project_id=final["project_id"],
-                agent_id=_AGENT_ID, status=status, result={},
+                task_id=final["task_id"],
+                project_id=final["project_id"],
+                agent_id=_AGENT_ID,
+                status=status,
+                result={},
                 cost_usd=final.get("cost_usd", 0.0),
             )
 
 else:
+
     class LedgerAgent:  # type: ignore[no-redef]
         name = _AGENT_ID
+
         def __init__(self, **_: Any) -> None:
             self._graph = build_ledger_graph()
 
 
 def _initial_state(agent_input: Any) -> AgentWorkingMemory:
     from models import AgentInput
+
     if isinstance(agent_input, AgentInput):
         pid = agent_input.project_id
         tid = agent_input.task_id
@@ -516,15 +577,23 @@ def _initial_state(agent_input: Any) -> AgentWorkingMemory:
         pid = ""
         tid = str(uuid.uuid4())
     return {  # type: ignore[return-value]
-        "task_id": tid, "project_id": pid,
+        "task_id": tid,
+        "project_id": pid,
         "current_objective": "Starting",
-        "sub_task_results": [], "parked_proposals": [],
-        "error_history": [], "memory_context": {},
-        "episodic_cache": {}, "observation_buffer": [],
-        "cost_usd": 0.0, "iteration_count": 0,
-        "step_count": 0, "tokens_used": 0,
-        "incoming_message": None, "messages": [],
-        "hard_stop_triggered": False, "evolution_triggered": False,
+        "sub_task_results": [],
+        "parked_proposals": [],
+        "error_history": [],
+        "memory_context": {},
+        "episodic_cache": {},
+        "observation_buffer": [],
+        "cost_usd": 0.0,
+        "iteration_count": 0,
+        "step_count": 0,
+        "tokens_used": 0,
+        "incoming_message": None,
+        "messages": [],
+        "hard_stop_triggered": False,
+        "evolution_triggered": False,
         "_started_at": time.time(),
     }
 

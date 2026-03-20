@@ -25,6 +25,7 @@ Two-phase usage:
   Phase 2 (after browser consent):
     python scripts/setup_apps_script.py --post-auth
 """
+
 from __future__ import annotations
 
 import argparse
@@ -32,18 +33,17 @@ import json
 import platform
 import subprocess
 import sys
-import time
 import webbrowser
 from pathlib import Path
 
 # On Windows, gcloud is gcloud.cmd — use shell=True so the OS resolves it.
 _SHELL = platform.system() == "Windows"
 
-import google.auth
-import yaml
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+import google.auth  # noqa: E402
+import yaml  # noqa: E402
+from google.auth.transport.requests import Request  # noqa: E402
+from googleapiclient.discovery import build  # noqa: E402
+from googleapiclient.errors import HttpError  # noqa: E402
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -70,6 +70,7 @@ SCOPES = [
 ]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def load_settings() -> dict:
     if not SETTINGS_PATH.exists():
@@ -127,46 +128,55 @@ def build_script_content() -> dict:
         if not path.exists():
             sys.exit(f"Missing script file: {path}")
         source = path.read_text(encoding="utf-8")
-        files.append({
-            "name": filename.replace(".gs", ""),
-            "type": "SERVER_JS",
-            "source": source,
-        })
+        files.append(
+            {
+                "name": filename.replace(".gs", ""),
+                "type": "SERVER_JS",
+                "source": source,
+            }
+        )
     # appsscript.json manifest — required for Web App deployment
-    files.append({
-        "name": "appsscript",
-        "type": "JSON",
-        "source": json.dumps({
-            "timeZone": "America/Chicago",
-            "dependencies": {},
-            "webapp": {
-                "executeAs": "USER_DEPLOYING",
-                "access": "ANYONE_ANONYMOUS",
-            },
-            "executionApi": {
-                "access": "MYSELF",
-            },
-            "exceptionLogging": "STACKDRIVER",
-            "runtimeVersion": "V8",
-            "oauthScopes": [
-                "https://www.googleapis.com/auth/spreadsheets",
-                "https://www.googleapis.com/auth/" + "drive",
-                "https://www.googleapis.com/auth/script.external_request",
-                "https://www.googleapis.com/auth/userinfo.email",
-                "https://www.googleapis.com/auth/cloud-platform",
-            ],
-        }, indent=2),
-    })
+    files.append(
+        {
+            "name": "appsscript",
+            "type": "JSON",
+            "source": json.dumps(
+                {
+                    "timeZone": "America/Chicago",
+                    "dependencies": {},
+                    "webapp": {
+                        "executeAs": "USER_DEPLOYING",
+                        "access": "ANYONE_ANONYMOUS",
+                    },
+                    "executionApi": {
+                        "access": "MYSELF",
+                    },
+                    "exceptionLogging": "STACKDRIVER",
+                    "runtimeVersion": "V8",
+                    "oauthScopes": [
+                        "https://www.googleapis.com/auth/spreadsheets",
+                        "https://www.googleapis.com/auth/" + "drive",
+                        "https://www.googleapis.com/auth/script.external_request",
+                        "https://www.googleapis.com/auth/userinfo.email",
+                        "https://www.googleapis.com/auth/cloud-platform",
+                    ],
+                },
+                indent=2,
+            ),
+        }
+    )
     return {"files": files}
 
 
 def deploy_web_app(script_service, script_id: str) -> tuple[str, str]:
     """Create a versioned deployment and return (deployment_id, web_app_url)."""
     # The deployments API requires a non-zero version — create one first.
-    version_resp = script_service.projects().versions().create(
-        scriptId=script_id,
-        body={"description": "v1 — initial deploy"}
-    ).execute()
+    version_resp = (
+        script_service.projects()
+        .versions()
+        .create(scriptId=script_id, body={"description": "v1 — initial deploy"})
+        .execute()
+    )
     version_number = version_resp["versionNumber"]
 
     body = {
@@ -174,15 +184,9 @@ def deploy_web_app(script_service, script_id: str) -> tuple[str, str]:
         "manifestFileName": "appsscript",
         "description": "Morphic-G AOS webhook + approval handler",
     }
-    resp = script_service.projects().deployments().create(
-        scriptId=script_id, body=body
-    ).execute()
+    resp = script_service.projects().deployments().create(scriptId=script_id, body=body).execute()
     deployment_id = resp["deploymentId"]
-    web_app_url = (
-        resp.get("entryPoints", [{}])[0]
-        .get("webApp", {})
-        .get("url", "")
-    )
+    web_app_url = resp.get("entryPoints", [{}])[0].get("webApp", {}).get("url", "")
     return deployment_id, web_app_url
 
 
@@ -192,21 +196,54 @@ def store_secret(name: str, value: str) -> None:
     tmp.write_text(value, encoding="utf-8")
     try:
         result = subprocess.run(
-            ["gcloud", "secrets", "versions", "add", name,
-             "--data-file", str(tmp), "--project", PROJECT],
-            capture_output=True, text=True, shell=_SHELL
+            [
+                "gcloud",
+                "secrets",
+                "versions",
+                "add",
+                name,
+                "--data-file",
+                str(tmp),
+                "--project",
+                PROJECT,
+            ],
+            capture_output=True,
+            text=True,
+            shell=_SHELL,
         )
         if result.returncode != 0:
             # Secret may not exist yet — create it first
             subprocess.run(
-                ["gcloud", "secrets", "create", name,
-                 "--project", PROJECT, "--replication-policy", "automatic"],
-                capture_output=True, text=True, shell=_SHELL
+                [
+                    "gcloud",
+                    "secrets",
+                    "create",
+                    name,
+                    "--project",
+                    PROJECT,
+                    "--replication-policy",
+                    "automatic",
+                ],
+                capture_output=True,
+                text=True,
+                shell=_SHELL,
             )
             subprocess.run(
-                ["gcloud", "secrets", "versions", "add", name,
-                 "--data-file", str(tmp), "--project", PROJECT],
-                check=True, capture_output=True, text=True, shell=_SHELL
+                [
+                    "gcloud",
+                    "secrets",
+                    "versions",
+                    "add",
+                    name,
+                    "--data-file",
+                    str(tmp),
+                    "--project",
+                    PROJECT,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                shell=_SHELL,
             )
         print(f"  Secret {name}: stored")
     finally:
@@ -223,6 +260,7 @@ def save_script_id(script_id: str) -> None:
 
 
 # ── Phase 1: create + upload + deploy ────────────────────────────────────────
+
 
 def phase1() -> None:
     print("\n=== Phase 1: Create, upload, deploy ===\n")
@@ -253,9 +291,7 @@ def phase1() -> None:
     # Upload all .gs files
     print("Uploading script files...")
     content = build_script_content()
-    script_service.projects().updateContent(
-        scriptId=script_id, body=content
-    ).execute()
+    script_service.projects().updateContent(scriptId=script_id, body=content).execute()
     print(f"  Uploaded {len(SCRIPT_FILES)} files + appsscript.json manifest")
 
     # Deploy as Web App
@@ -276,11 +312,11 @@ def phase1() -> None:
             print(f"     https://script.google.com/d/{script_id}/edit")
     except HttpError as e:
         if "UNAUTHENTICATED" in str(e) or "403" in str(e):
-            print(f"\n  ⚠  Authorization required.")
-            print(f"     Opening Apps Script editor in browser — click 'Allow'.")
+            print("\n  ⚠  Authorization required.")
+            print("     Opening Apps Script editor in browser — click 'Allow'.")
             webbrowser.open(f"https://script.google.com/d/{script_id}/edit")
-            print(f"\n     After authorizing, run:")
-            print(f"       python scripts/setup_apps_script.py --post-auth")
+            print("\n     After authorizing, run:")
+            print("       python scripts/setup_apps_script.py --post-auth")
             return
         raise
 
@@ -289,6 +325,7 @@ def phase1() -> None:
 
 
 # ── Phase 2: set properties + install trigger ─────────────────────────────────
+
 
 def phase2() -> None:
     print("\n=== Phase 2: Script Properties + onChange trigger ===\n")
@@ -300,9 +337,20 @@ def phase2() -> None:
 
     # Fetch WEBHOOK_HMAC_SECRET from Secret Manager
     result = subprocess.run(
-        ["gcloud", "secrets", "versions", "access", "latest",
-         "--secret", "WEBHOOK_HMAC_SECRET", "--project", PROJECT],
-        capture_output=True, text=True, shell=_SHELL
+        [
+            "gcloud",
+            "secrets",
+            "versions",
+            "access",
+            "latest",
+            "--secret",
+            "WEBHOOK_HMAC_SECRET",
+            "--project",
+            PROJECT,
+        ],
+        capture_output=True,
+        text=True,
+        shell=_SHELL,
     )
     if result.returncode != 0:
         sys.exit("Could not read WEBHOOK_HMAC_SECRET from Secret Manager")
@@ -327,9 +375,7 @@ def phase2() -> None:
         "devMode": True,
     }
     try:
-        resp = script_service.scripts().run(
-            scriptId=script_id, body=run_body
-        ).execute()
+        resp = script_service.scripts().run(scriptId=script_id, body=run_body).execute()
         if resp.get("error"):
             print(f"  ⚠  Script run error: {resp['error']}")
         else:
@@ -338,7 +384,9 @@ def phase2() -> None:
         print(f"  ⚠  Could not run script remotely ({e}).")
         print("     Set these manually in Apps Script → Project Settings → Script Properties:")
         for k, v in props.items():
-            print(f"     {k} = {v if k != 'WEBHOOK_HMAC_SECRET' else '(value from Secret Manager)'}")
+            print(
+                f"     {k} = {v if k != 'WEBHOOK_HMAC_SECRET' else '(value from Secret Manager)'}"
+            )
 
     # Install onChange trigger by calling setupTrigger_ via API
     print("Installing onChange trigger...")
@@ -348,9 +396,7 @@ def phase2() -> None:
         "devMode": True,
     }
     try:
-        resp = script_service.scripts().run(
-            scriptId=script_id, body=trigger_body
-        ).execute()
+        resp = script_service.scripts().run(scriptId=script_id, body=trigger_body).execute()
         if resp.get("error"):
             print(f"  ⚠  Trigger install error: {resp['error']}")
             print("     Install manually: Apps Script → Triggers → Add Trigger")
@@ -370,9 +416,7 @@ def phase2() -> None:
         "devMode": True,
     }
     try:
-        resp = script_service.scripts().run(
-            scriptId=script_id, body=prot_body
-        ).execute()
+        resp = script_service.scripts().run(scriptId=script_id, body=prot_body).execute()
         if resp.get("error"):
             print(f"  ⚠  setupProtections error: {resp['error']}")
         else:
@@ -386,6 +430,7 @@ def phase2() -> None:
 
 
 # ── Push: re-upload .gs files only (no new deployment) ───────────────────────
+
 
 def push() -> None:
     """Re-upload all .gs files to the existing Apps Script project.
@@ -407,9 +452,7 @@ def push() -> None:
     print("Uploading script files...")
     content = build_script_content()
     try:
-        script_service.projects().updateContent(
-            scriptId=script_id, body=content
-        ).execute()
+        script_service.projects().updateContent(scriptId=script_id, body=content).execute()
     except HttpError as exc:
         status = exc.resp.status if hasattr(exc, "resp") else "?"
         print(f"  ❌ updateContent failed (HTTP {status}) for script_id={script_id}: {exc}")
@@ -422,17 +465,20 @@ def push() -> None:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Deploy Apps Script project to the Morphic-G AOS spreadsheet"
     )
     parser.add_argument(
-        "--post-auth", action="store_true",
-        help="Phase 2: set Script Properties and install triggers (run after browser consent)"
+        "--post-auth",
+        action="store_true",
+        help="Phase 2: set Script Properties and install triggers (run after browser consent)",
     )
     parser.add_argument(
-        "--push", action="store_true",
-        help="Re-upload all .gs files to the existing project (hot-reload, no new deployment)"
+        "--push",
+        action="store_true",
+        help="Re-upload all .gs files to the existing project (hot-reload, no new deployment)",
     )
     args = parser.parse_args()
 

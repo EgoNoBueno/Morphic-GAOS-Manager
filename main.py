@@ -22,6 +22,7 @@ here is defense-in-depth only.
 
 Spec: GAOS-Deploy-Spec.md §9
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -51,22 +52,22 @@ _AGENT_NAME: str = os.environ.get("AGENT_NAME", "nexus-prime")
 
 _AGENT_REGISTRY: dict[str, str] = {
     "nexus-prime": "agents.nexus_prime.orchestrator",
-    "ledger":      "agents.ledger.orchestrator",
-    "beacon":      "agents.beacon.orchestrator",
-    "pursuit":     "agents.pursuit.orchestrator",
-    "foreman":     "agents.foreman.orchestrator",
-    "steward":     "agents.steward.orchestrator",
-    "scout":       "agents.scout.orchestrator",
+    "ledger": "agents.ledger.orchestrator",
+    "beacon": "agents.beacon.orchestrator",
+    "pursuit": "agents.pursuit.orchestrator",
+    "foreman": "agents.foreman.orchestrator",
+    "steward": "agents.steward.orchestrator",
+    "scout": "agents.scout.orchestrator",
 }
 
 _AGENT_CLASS: dict[str, str] = {
     "nexus-prime": "NexusPrimeAgent",
-    "ledger":      "LedgerAgent",
-    "beacon":      "BeaconAgent",
-    "pursuit":     "PursuitAgent",
-    "foreman":     "ForemanAgent",
-    "steward":     "StewardAgent",
-    "scout":       "ScoutAgent",
+    "ledger": "LedgerAgent",
+    "beacon": "BeaconAgent",
+    "pursuit": "PursuitAgent",
+    "foreman": "ForemanAgent",
+    "steward": "StewardAgent",
+    "scout": "ScoutAgent",
 }
 
 _agent_instance: Any = None
@@ -80,10 +81,10 @@ def _get_agent() -> Any:
         class_name = _AGENT_CLASS.get(_AGENT_NAME)
         if module_path is None or class_name is None:
             raise RuntimeError(
-                f"Unknown AGENT_NAME='{_AGENT_NAME}'. "
-                f"Valid values: {list(_AGENT_REGISTRY)}"
+                f"Unknown AGENT_NAME='{_AGENT_NAME}'. Valid values: {list(_AGENT_REGISTRY)}"
             )
         import importlib
+
         module = importlib.import_module(module_path)
         cls = getattr(module, class_name)
         _agent_instance = cls()
@@ -96,8 +97,7 @@ def _get_agent() -> Any:
 # Google Chat signs push requests with this service account.
 _CHAT_ISSUER: str = "chat@system.gserviceaccount.com"
 _CHAT_CERTS_URL: str = (
-    "https://www.googleapis.com/service_accounts/v1/jwk/"
-    "chat@system.gserviceaccount.com"
+    "https://www.googleapis.com/service_accounts/v1/jwk/chat@system.gserviceaccount.com"
 )
 
 
@@ -152,10 +152,10 @@ def _verify_chat_jwt(request: Request) -> None:
             detail="Server misconfiguration: CLOUD_RUN_URL is required for JWT verification.",
         )
 
-    token = auth[len("Bearer "):].strip()
+    token = auth[len("Bearer ") :].strip()
     try:
-        from google.oauth2 import id_token as google_id_token
         from google.auth.transport import requests as google_auth_requests
+        from google.oauth2 import id_token as google_id_token
 
         id_info = google_id_token.verify_token(
             token,
@@ -189,6 +189,7 @@ async def _download_chat_attachment(download_uri: str) -> bytes:
         RuntimeError: If the download fails (network error, 4xx/5xx).
     """
     import httpx
+
     from config import get_settings
 
     settings = get_settings()
@@ -196,8 +197,8 @@ async def _download_chat_attachment(download_uri: str) -> bytes:
 
     try:
         if key_path and os.path.exists(key_path):
-            from google.oauth2 import service_account
             from google.auth.transport.requests import Request as GoogleRequest
+            from google.oauth2 import service_account
 
             creds = service_account.Credentials.from_service_account_file(
                 key_path,
@@ -208,9 +209,7 @@ async def _download_chat_attachment(download_uri: str) -> bytes:
             import google.auth
             from google.auth.transport.requests import Request as GoogleRequest
 
-            creds, _ = google.auth.default(
-                scopes=["https://www.googleapis.com/auth/chat.bot"]
-            )
+            creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/chat.bot"])
             creds.refresh(GoogleRequest())
 
         headers = {"Authorization": f"Bearer {creds.token}"}
@@ -255,7 +254,7 @@ async def pubsub(request: Request) -> JSONResponse:
         envelope = await request.json()
     except Exception as exc:
         log.warning("Failed to parse Pub/Sub envelope: %s", exc)
-        raise HTTPException(status_code=400, detail="Invalid JSON envelope.")
+        raise HTTPException(status_code=400, detail="Invalid JSON envelope.") from exc
 
     agent = _get_agent()
 
@@ -265,7 +264,7 @@ async def pubsub(request: Request) -> JSONResponse:
     except Exception as exc:
         # Return 500 so Pub/Sub retries the message.
         log.exception("Agent '%s' raised an exception: %s", _AGENT_NAME, exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return JSONResponse(content={"status": "ok"}, status_code=204)
 
@@ -284,8 +283,10 @@ async def ttl_sweep(request: Request) -> JSONResponse:
             detail=f"Agent '{_AGENT_NAME}' does not support /ttl-sweep.",
         )
 
+    import base64
+    import uuid
+
     from models import A2AMessage, MessageType
-    import uuid, json, base64
 
     # Synthesise a push envelope so the existing graph handles it via the
     # monitor → route → record path (TTL sweep is handled in monitor).
@@ -300,9 +301,7 @@ async def ttl_sweep(request: Request) -> JSONResponse:
     )
     envelope = {
         "message": {
-            "data": base64.b64encode(
-                synthetic_msg.model_dump_json().encode()
-            ).decode(),
+            "data": base64.b64encode(synthetic_msg.model_dump_json().encode()).decode(),
             "messageId": synthetic_msg.task_id,
         },
         "subscription": "scheduler/ttl-sweep",
@@ -313,7 +312,7 @@ async def ttl_sweep(request: Request) -> JSONResponse:
         await agent.run(envelope)
     except Exception as exc:
         log.exception("TTL sweep failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return JSONResponse(content={"status": "ok"})
 
@@ -336,10 +335,12 @@ async def sync(request: Request) -> JSONResponse:
     try:
         body = await request.json()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}") from exc
+
+    import base64
+    import uuid
 
     from models import A2AMessage, MessageType
-    import uuid, base64
 
     synthetic_msg = A2AMessage(
         source_agent="apps-script",
@@ -352,9 +353,7 @@ async def sync(request: Request) -> JSONResponse:
     )
     envelope = {
         "message": {
-            "data": base64.b64encode(
-                synthetic_msg.model_dump_json().encode()
-            ).decode(),
+            "data": base64.b64encode(synthetic_msg.model_dump_json().encode()).decode(),
             "messageId": synthetic_msg.task_id,
         },
         "subscription": "apps-script/sync",
@@ -365,12 +364,14 @@ async def sync(request: Request) -> JSONResponse:
         result = await agent.run(envelope)
     except Exception as exc:
         log.exception("Sync handler failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return JSONResponse(content={
-        "status": "ok",
-        "task_id": getattr(result, "task_id", ""),
-    })
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "task_id": getattr(result, "task_id", ""),
+        }
+    )
 
 
 @app.post("/archive")
@@ -402,7 +403,7 @@ async def archive(request: Request) -> JSONResponse:
         )
     except Exception as exc:
         log.exception("Nightly archive failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return JSONResponse(content={"status": "ok", **result})
 
@@ -437,7 +438,7 @@ async def daily_sync(request: Request) -> JSONResponse:
         )
     except Exception as exc:
         log.exception("Daily sync failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return JSONResponse(content={"status": "ok", **result})
 
@@ -483,17 +484,19 @@ async def chat(request: Request) -> JSONResponse:
     try:
         body = await request.json()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}") from exc
 
-    from tools.google_chat import ChatEventParseError, parse_chat_event
+    import base64
+    import uuid
+
     from models import A2AMessage, MessageType
-    import uuid, base64
+    from tools.google_chat import ChatEventParseError, parse_chat_event
 
     try:
         event = parse_chat_event(body)
     except ChatEventParseError as exc:
         log.warning("Could not parse Chat event: %s", exc)
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     event_type = event["event_type"]
     action_name = event.get("action_name", "")
@@ -534,19 +537,21 @@ async def chat(request: Request) -> JSONResponse:
             # then dispatch VISION_SUBMITTED so blueprint_factory generates a doc.
             # Restricted to DEEP_MODEL — multimodal accuracy requires Pro.
             # Budget impact: PRIORITY-2-COST-MONITOR tag in log for tracking.
+            import datetime
+
             from agents import _call_model
             from config import get_settings
-            import datetime
 
             settings = get_settings()
             download_uri = image_att.get("download_uri", "")
-            submitted_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            submitted_at = datetime.datetime.now(datetime.UTC).isoformat()
 
             try:
                 img_bytes = await _download_chat_attachment(download_uri)
             except Exception as exc:
                 log.error("Vision image download failed: %s", exc)
                 from tools.google_chat import send_message
+
                 try:
                     send_message(
                         event["space_name"],
@@ -572,8 +577,7 @@ async def chat(request: Request) -> JSONResponse:
                 )
                 vision_text = vision_resp.text.strip()
                 log.info(
-                    "PRIORITY-2-COST-MONITOR vision_extract tokens=%d model=%s "
-                    "submitted_by=%s",
+                    "PRIORITY-2-COST-MONITOR vision_extract tokens=%d model=%s submitted_by=%s",
                     vision_resp.tokens_used,
                     settings.models.DEEP_MODEL,
                     event["sender_email"],
@@ -581,6 +585,7 @@ async def chat(request: Request) -> JSONResponse:
             except Exception as exc:
                 log.error("Vision extraction model call failed: %s", exc)
                 from tools.google_chat import send_message
+
                 try:
                     send_message(
                         event["space_name"],
@@ -623,9 +628,7 @@ async def chat(request: Request) -> JSONResponse:
     )
     envelope = {
         "message": {
-            "data": base64.b64encode(
-                synthetic_msg.model_dump_json().encode()
-            ).decode(),
+            "data": base64.b64encode(synthetic_msg.model_dump_json().encode()).decode(),
             "messageId": synthetic_msg.task_id,
         },
         "subscription": "google-chat/push",
@@ -636,7 +639,7 @@ async def chat(request: Request) -> JSONResponse:
         await agent.run(envelope)
     except Exception as exc:
         log.exception("Chat handler failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return JSONResponse(content={"status": "ok"})
 
@@ -671,14 +674,16 @@ async def vision(request: Request) -> JSONResponse:
     try:
         body = await request.json()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}") from exc
 
     vision_text: str = body.get("vision_text", "")
     if not vision_text:
         raise HTTPException(status_code=400, detail="vision_text is required.")
 
+    import base64
+    import uuid
+
     from models import A2AMessage, MessageType
-    import uuid, base64
 
     project_id = body.get("project_id") or os.environ.get("GCP_PROJECT_ID", "")
     synthetic_msg = A2AMessage(
@@ -696,9 +701,7 @@ async def vision(request: Request) -> JSONResponse:
     )
     envelope = {
         "message": {
-            "data": base64.b64encode(
-                synthetic_msg.model_dump_json().encode()
-            ).decode(),
+            "data": base64.b64encode(synthetic_msg.model_dump_json().encode()).decode(),
             "messageId": synthetic_msg.task_id,
         },
         "subscription": "http/vision",
@@ -710,12 +713,14 @@ async def vision(request: Request) -> JSONResponse:
         log.info("Vision submitted: task_id=%s", getattr(result, "task_id", "?"))
     except Exception as exc:
         log.exception("Vision handler failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return JSONResponse(content={
-        "status": "ok",
-        "task_id": getattr(result, "task_id", synthetic_msg.task_id),
-    })
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "task_id": getattr(result, "task_id", synthetic_msg.task_id),
+        }
+    )
 
 
 @app.post("/poll-comments")
@@ -751,7 +756,7 @@ async def poll_comments(request: Request) -> JSONResponse:
         )
     except Exception as exc:
         log.exception("poll-comments handler failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return JSONResponse(content={"status": "ok", **result})
 
@@ -768,5 +773,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port,
         log_level="info",
-        workers=1,       # LangGraph state must not be shared across workers
+        workers=1,  # LangGraph state must not be shared across workers
     )

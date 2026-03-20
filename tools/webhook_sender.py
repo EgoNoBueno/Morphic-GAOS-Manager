@@ -7,6 +7,7 @@ HMAC-SHA256 using a secret retrieved from Secret Manager.
 
 Spec: GAOS-Tools-Spec.md §6
 """
+
 from __future__ import annotations
 
 import base64
@@ -81,9 +82,7 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
     # Validate webhook URL: must be HTTPS and not a private/internal address
     parsed = urlparse(webhook_url)
     if parsed.scheme != "https":
-        raise WebhookURLError(
-            f"Webhook URL must use HTTPS, got '{parsed.scheme}'."
-        )
+        raise WebhookURLError(f"Webhook URL must use HTTPS, got '{parsed.scheme}'.")
     try:
         addr = ipaddress.ip_address(parsed.hostname or "")
         if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
@@ -97,9 +96,7 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
     payload = dict(payload)  # shallow copy — don't mutate the caller's dict
     code_value = payload.get("Proposed Code") or payload.get("code")
     if code_value and "code_sha256" not in payload:
-        payload["code_sha256"] = hashlib.sha256(
-            str(code_value).encode("utf-8")
-        ).hexdigest()
+        payload["code_sha256"] = hashlib.sha256(str(code_value).encode("utf-8")).hexdigest()
 
     body = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     body_bytes = body.encode("utf-8")
@@ -135,7 +132,7 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
                 )
                 if resp.status_code < 500:
                     raise last_exc
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
                 continue
             # Apps Script always returns HTTP 200 — check the body statusCode too
             try:
@@ -147,20 +144,16 @@ def post_to_webhook(payload: dict, project_id: str) -> None:
                     )
                     if status_code < 500:
                         raise last_exc
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
                     continue
             except Exception:
                 pass  # non-JSON body — treat HTTP 200 as success
             return
         except httpx.TimeoutException as exc:
-            last_exc = WebhookTimeoutError(
-                f"Webhook request timed out after {_TIMEOUT_SECONDS}s."
-            )
+            last_exc = WebhookTimeoutError(f"Webhook request timed out after {_TIMEOUT_SECONDS}s.")
             last_exc.__cause__ = exc
-            time.sleep(2 ** attempt)
+            time.sleep(2**attempt)
         except (WebhookDeliveryError, WebhookTimeoutError):
             raise
 
-    raise (last_exc or WebhookDeliveryError(
-        f"Webhook still failing after {_MAX_RETRIES} retries."
-    ))
+    raise (last_exc or WebhookDeliveryError(f"Webhook still failing after {_MAX_RETRIES} retries."))

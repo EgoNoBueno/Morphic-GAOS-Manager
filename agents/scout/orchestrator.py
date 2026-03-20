@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
 
 from agents import (
-    _call_model, _load_identity_file, _log_cloud, _write_heartbeat, utcnow_iso,
+    _call_model,
+    _load_identity_file,
+    _log_cloud,
+    _write_heartbeat,
+    utcnow_iso,
 )
 from models import A2AMessage, AgentWorkingMemory, MessageType
 
@@ -19,39 +23,55 @@ _AGENT_ID = "scout"
 _SHEET_TAB = "Research Products"
 _OUTBOUND_TOPIC = "agent.scout.events"
 _INBOUND_TOPICS = [
-    "agent.nexus-prime.events", "agent.foreman.events", "agent.approvals.events",
+    "agent.nexus-prime.events",
+    "agent.foreman.events",
+    "agent.approvals.events",
 ]
 
 
 def _fast() -> str:
     from config import get_settings
+
     return get_settings().models.FAST_MODEL
 
 
 def _local() -> str:
     from config import get_settings
+
     return get_settings().models.LOCAL_MODEL
 
 
 # ── Boot ──────────────────────────────────────────────────────────────────────
 
+
 def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
+    import sys
+
     from config import get_settings
     from tools.memory import load_domain_memory, query_episodic
     from tools.pubsub import ensure_topic_exists
-    from tools.secrets import get_secret, SecretNotFoundError, SecretAccessDenied
-    import sys
+    from tools.secrets import SecretAccessDenied, SecretNotFoundError, get_secret
 
     settings = get_settings()
     pid = state.get("project_id") or settings.GCP_PROJECT_ID
     state["project_id"] = pid
     state.setdefault("_started_at", time.time())
-    for k, v in [("cost_usd", 0.0), ("step_count", 0), ("tokens_used", 0),
-                 ("hard_stop_triggered", False), ("evolution_triggered", False),
-                 ("messages", []), ("sub_task_results", []), ("parked_proposals", []),
-                 ("error_history", []), ("observation_buffer", []),
-                 ("memory_context", {}), ("episodic_cache", {}),
-                 ("iteration_count", 0), ("current_objective", "Booting")]:
+    for k, v in [
+        ("cost_usd", 0.0),
+        ("step_count", 0),
+        ("tokens_used", 0),
+        ("hard_stop_triggered", False),
+        ("evolution_triggered", False),
+        ("messages", []),
+        ("sub_task_results", []),
+        ("parked_proposals", []),
+        ("error_history", []),
+        ("observation_buffer", []),
+        ("memory_context", {}),
+        ("episodic_cache", {}),
+        ("iteration_count", 0),
+        ("current_objective", "Booting"),
+    ]:
         state.setdefault(k, v)
 
     try:
@@ -79,6 +99,7 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
 # ── Plan ──────────────────────────────────────────────────────────────────────
 
+
 def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
     from tools.google_sheets import get_all_records
 
@@ -90,9 +111,10 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
         rows = get_all_records(_SHEET_TAB, pid)
         # Products needing fresh research: stale or flagged for review
         pending_items = [
-            r for r in rows
+            r
+            for r in rows
             if r.get("research_status") in ("Stale", "Review Needed", "New")
-              or not r.get("last_researched_at")
+            or not r.get("last_researched_at")
         ][:10]
     except Exception:
         pass
@@ -102,19 +124,26 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
     if msg and msg.message_type == MessageType.ALERT:
         payload = msg.payload or {}
         if payload.get("alert_type") == "stock_insufficient":
-            pending_items.insert(0, {
-                "research_status": "Urgent",
-                "task_type": "sourcing_research",
-                "sku": payload.get("sku", ""),
-                "reason": "stockout_alert",
-            })
+            pending_items.insert(
+                0,
+                {
+                    "research_status": "Urgent",
+                    "task_type": "sourcing_research",
+                    "sku": payload.get("sku", ""),
+                    "reason": "stockout_alert",
+                },
+            )
     elif msg and msg.message_type in (MessageType.TASK_HANDOFF, MessageType.BROADCAST):
         pending_items.append(msg.payload or {})
 
     # FAST_MODEL for trend routing per identity spec
     summary = [
-        {k: v for k, v in r.items() if k in ("sku", "product_name", "research_status",
-                                              "task_type", "reason", "competitor_alert")}
+        {
+            k: v
+            for k, v in r.items()
+            if k
+            in ("sku", "product_name", "research_status", "task_type", "reason", "competitor_alert")
+        }
         for r in pending_items[:5]
     ]
     prompt = (
@@ -133,20 +162,32 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
 # ── Dispatch / Collect / Report / Park / Resume / Escalate ────────────────────
 
+
 def _dispatch(state: AgentWorkingMemory) -> AgentWorkingMemory:
-    planned = (state["messages"][-1].get("tasks", []) if state.get("messages") else [])
+    planned = state["messages"][-1].get("tasks", []) if state.get("messages") else []
     for task in planned[:5]:
         task_type = task.get("task_type", "unknown")
         result: dict[str, Any] = {"task_type": task_type, "status": "skipped", "output": {}}
         try:
             import importlib
+
             mod = importlib.import_module(f"agents.scout.tasks.{task_type}")
             from models import AgentInput
-            out = mod.run(AgentInput(task_id=str(uuid.uuid4()),
-                project_id=state["project_id"],
-                instruction=f"Process: {task_type}", context=task.get("item", {})))
-            result = {"task_type": task_type, "status": out.status,
-                      "output": out.result, "cost_usd": out.cost_usd}
+
+            out = mod.run(
+                AgentInput(
+                    task_id=str(uuid.uuid4()),
+                    project_id=state["project_id"],
+                    instruction=f"Process: {task_type}",
+                    context=task.get("item", {}),
+                )
+            )
+            result = {
+                "task_type": task_type,
+                "status": out.status,
+                "output": out.result,
+                "cost_usd": out.cost_usd,
+            }
             state["cost_usd"] = state.get("cost_usd", 0.0) + out.cost_usd
         except (ModuleNotFoundError, AttributeError):
             result["status"] = "skipped"
@@ -161,13 +202,20 @@ def _dispatch(state: AgentWorkingMemory) -> AgentWorkingMemory:
     if findings:
         try:
             from tools.pubsub import publish
-            publish(_OUTBOUND_TOPIC, A2AMessage(
-                source_agent=_AGENT_ID, target_agent="broadcast",
-                project_id=state["project_id"],
-                task_id=state.get("task_id", str(uuid.uuid4())),
-                message_type=MessageType.BROADCAST, priority=2,
-                payload={"research_findings": [r["output"] for r in findings]},
-            ), state["project_id"])
+
+            publish(
+                _OUTBOUND_TOPIC,
+                A2AMessage(
+                    source_agent=_AGENT_ID,
+                    target_agent="broadcast",
+                    project_id=state["project_id"],
+                    task_id=state.get("task_id", str(uuid.uuid4())),
+                    message_type=MessageType.BROADCAST,
+                    priority=2,
+                    payload={"research_findings": [r["output"] for r in findings]},
+                ),
+                state["project_id"],
+            )
         except Exception:
             pass
     return state
@@ -176,9 +224,13 @@ def _dispatch(state: AgentWorkingMemory) -> AgentWorkingMemory:
 def _collect(state: AgentWorkingMemory) -> AgentWorkingMemory:
     results = state.get("sub_task_results", [])
     escalated = [r for r in results if r.get("status") == "escalated"]
-    state["messages"].append({"role": "system",
-        "content": f"Cycle: {len(results)} tasks, {len(escalated)} escalated.",
-        "escalated": escalated})
+    state["messages"].append(
+        {
+            "role": "system",
+            "content": f"Cycle: {len(results)} tasks, {len(escalated)} escalated.",
+            "escalated": escalated,
+        }
+    )
     return state
 
 
@@ -193,10 +245,16 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
     pid = state["project_id"]
     results = state.get("sub_task_results", [])
     rows_to_write = [
-        {"timestamp": utcnow_iso(), "agent_id": _AGENT_ID, "type": "research",
-         "task_type": r.get("task_type", ""), "status": r.get("status", ""),
-         "summary": str(r.get("output", ""))[:500]}
-        for r in results if r.get("status") == "success"
+        {
+            "timestamp": utcnow_iso(),
+            "agent_id": _AGENT_ID,
+            "type": "research",
+            "task_type": r.get("task_type", ""),
+            "status": r.get("status", ""),
+            "summary": str(r.get("output", ""))[:500],
+        }
+        for r in results
+        if r.get("status") == "success"
     ]
     if rows_to_write:
         try:
@@ -204,36 +262,64 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
         except Exception:
             pass
     try:
-        publish(_OUTBOUND_TOPIC, A2AMessage(
-            source_agent=_AGENT_ID, target_agent="nexus-prime",
-            project_id=pid, task_id=state.get("task_id", str(uuid.uuid4())),
-            message_type=MessageType.STATUS_UPDATE, priority=1,
-            payload={"status": "WORKING", "cost_usd": state.get("cost_usd", 0.0)},
-        ), pid)
+        publish(
+            _OUTBOUND_TOPIC,
+            A2AMessage(
+                source_agent=_AGENT_ID,
+                target_agent="nexus-prime",
+                project_id=pid,
+                task_id=state.get("task_id", str(uuid.uuid4())),
+                message_type=MessageType.STATUS_UPDATE,
+                priority=1,
+                payload={"status": "WORKING", "cost_usd": state.get("cost_usd", 0.0)},
+            ),
+            pid,
+        )
     except Exception:
         pass
-    _write_heartbeat(_AGENT_ID, pid, "IDLE",
-                     state.get("current_objective", "Cycle complete"),
-                     len(state.get("parked_proposals", [])), "", _SHEET_TAB)
+    _write_heartbeat(
+        _AGENT_ID,
+        pid,
+        "IDLE",
+        state.get("current_objective", "Cycle complete"),
+        len(state.get("parked_proposals", [])),
+        "",
+        _SHEET_TAB,
+    )
     return state
 
 
 def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
     from tools.pubsub import publish
+
     pid = state["project_id"]
     proposal_id = str(uuid.uuid4())
     state["parked_proposals"].append(proposal_id)
     try:
-        publish(_OUTBOUND_TOPIC, A2AMessage(
-            source_agent=_AGENT_ID, target_agent="nexus-prime",
-            project_id=pid, task_id=state.get("task_id", proposal_id),
-            message_type=MessageType.TASK_HANDOFF, priority=3,
-            payload={"proposal_id": proposal_id},
-        ), pid)
+        publish(
+            _OUTBOUND_TOPIC,
+            A2AMessage(
+                source_agent=_AGENT_ID,
+                target_agent="nexus-prime",
+                project_id=pid,
+                task_id=state.get("task_id", proposal_id),
+                message_type=MessageType.TASK_HANDOFF,
+                priority=3,
+                payload={"proposal_id": proposal_id},
+            ),
+            pid,
+        )
     except Exception:
         pass
-    _write_heartbeat(_AGENT_ID, pid, "PARKED", f"Parked {proposal_id}",
-                     len(state["parked_proposals"]), "", _SHEET_TAB)
+    _write_heartbeat(
+        _AGENT_ID,
+        pid,
+        "PARKED",
+        f"Parked {proposal_id}",
+        len(state["parked_proposals"]),
+        "",
+        _SHEET_TAB,
+    )
     return state
 
 
@@ -247,23 +333,39 @@ def _resume(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
 def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
     from tools.pubsub import publish
+
     pid = state["project_id"]
     last_error = (state.get("error_history") or ["Unknown error"])[-1]
     try:
-        publish(_OUTBOUND_TOPIC, A2AMessage(
-            source_agent=_AGENT_ID, target_agent="nexus-prime",
-            project_id=pid, task_id=state.get("task_id", str(uuid.uuid4())),
-            message_type=MessageType.ESCALATION, priority=3,
-            payload={"description": last_error, "error_fingerprint": last_error[:64]},
-        ), pid)
+        publish(
+            _OUTBOUND_TOPIC,
+            A2AMessage(
+                source_agent=_AGENT_ID,
+                target_agent="nexus-prime",
+                project_id=pid,
+                task_id=state.get("task_id", str(uuid.uuid4())),
+                message_type=MessageType.ESCALATION,
+                priority=3,
+                payload={"description": last_error, "error_fingerprint": last_error[:64]},
+            ),
+            pid,
+        )
     except Exception:
         pass
-    _write_heartbeat(_AGENT_ID, pid, "ESCALATED", last_error[:100],
-                     len(state.get("parked_proposals", [])), last_error[:200], _SHEET_TAB)
+    _write_heartbeat(
+        _AGENT_ID,
+        pid,
+        "ESCALATED",
+        last_error[:100],
+        len(state.get("parked_proposals", [])),
+        last_error[:200],
+        _SHEET_TAB,
+    )
     return state
 
 
 # ── Graph assembly ────────────────────────────────────────────────────────────
+
 
 def _write_playbook(state: AgentWorkingMemory) -> AgentWorkingMemory:
     """Write a playbook to Drive if this task originated from VISION_SUBMITTED."""
@@ -290,19 +392,26 @@ def _write_playbook(state: AgentWorkingMemory) -> AgentWorkingMemory:
             f"## Agents Involved\n- {_AGENT_ID}\n\n"
             "## Milestones\n"
             + "\n".join(
-                f"- {r.get('task_type', '?')}: {r.get('status', '?')}"
-                for r in results[:10]
+                f"- {r.get('task_type', '?')}: {r.get('status', '?')}" for r in results[:10]
             )
             + "\n\n## Constraints\n_None recorded._\n\n## Open Questions\n_None._\n"
         )
         _drive_write_playbook(doc, body, pid)
-        state["messages"].append({
-            "role": "system",
-            "content": f"Playbook written: {doc.title}",
-        })
+        state["messages"].append(
+            {
+                "role": "system",
+                "content": f"Playbook written: {doc.title}",
+            }
+        )
     except Exception as exc:
-        _log_cloud(_AGENT_ID, pid, "task", state.get("task_id", ""),
-                   f"write_playbook failed: {exc}", "WARNING")
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", ""),
+            f"write_playbook failed: {exc}",
+            "WARNING",
+        )
     return state
 
 
@@ -324,7 +433,7 @@ def _discover(state: AgentWorkingMemory) -> AgentWorkingMemory:
     Scout identity spec: RESEARCH_MANDATE → _discover → _inject_knowledge.
     """
     from config import get_settings
-    from tools.google_search import research_topic, GoogleSearchError
+    from tools.google_search import GoogleSearchError, research_topic
 
     msg = state.get("incoming_message")
     if msg is None:
@@ -359,14 +468,20 @@ def _discover(state: AgentWorkingMemory) -> AgentWorkingMemory:
             break
 
         remaining = max_queries - queries_used
-        batch_q = query_strings[:min(5, remaining)]
+        batch_q = query_strings[: min(5, remaining)]
         try:
             batch_results = research_topic(batch_q, pid, max_queries=remaining)
             queries_used += len(batch_q)
             all_results.extend(batch_results)
         except GoogleSearchError as exc:
-            _log_cloud(_AGENT_ID, pid, "task", mandate_id,
-                       f"_discover depth {depth} error: {exc}", "WARNING")
+            _log_cloud(
+                _AGENT_ID,
+                pid,
+                "task",
+                mandate_id,
+                f"_discover depth {depth} error: {exc}",
+                "WARNING",
+            )
             break
 
         # Generate follow-up queries from batch findings (not on last depth)
@@ -406,14 +521,12 @@ def _discover(state: AgentWorkingMemory) -> AgentWorkingMemory:
         state["cost_usd"] = state.get("cost_usd", 0.0) + corr_resp.cost_usd
         candidates = corr_resp.data if isinstance(corr_resp.data, list) else []
         corroborated = [
-            c for c in candidates
-            if isinstance(c, dict) and c.get("source_count", 0) >= 5
+            c for c in candidates if isinstance(c, dict) and c.get("source_count", 0) >= 5
         ]
 
     # Persist all raw results for downstream reporting / Sheet writes
     state["sub_task_results"] = [
-        {"task_type": "discovery", "status": "success",
-         "output": r, "mandate_id": mandate_id}
+        {"task_type": "discovery", "status": "success", "output": r, "mandate_id": mandate_id}
         for r in all_results
     ]
 
@@ -422,8 +535,7 @@ def _discover(state: AgentWorkingMemory) -> AgentWorkingMemory:
         {
             "content": c.get("finding", ""),
             "knowledge_type": "market_intel",
-            "tags": [topic[:30], "market_intel",
-                     str(datetime.now(timezone.utc).year)],
+            "tags": [topic[:30], "market_intel", str(datetime.now(UTC).year)],
             "source_count": c.get("source_count", 5),
             "sources": c.get("sources", []),
             "mandate_id": mandate_id,
@@ -434,7 +546,10 @@ def _discover(state: AgentWorkingMemory) -> AgentWorkingMemory:
     state["iteration_count"] = queries_used
 
     _log_cloud(
-        _AGENT_ID, pid, "task", mandate_id,
+        _AGENT_ID,
+        pid,
+        "task",
+        mandate_id,
         f"_discover: {queries_used} queries, {len(all_results)} results, "
         f"{len(corroborated)} corroborated findings",
         "INFO",
@@ -487,18 +602,24 @@ def _inject_knowledge(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 pid,
             )
         except Exception as exc:
-            _log_cloud(_AGENT_ID, pid, "task", mandate_id,
-                       f"_inject_knowledge: publish failed: {exc}", "WARNING")
+            _log_cloud(
+                _AGENT_ID,
+                pid,
+                "task",
+                mandate_id,
+                f"_inject_knowledge: publish failed: {exc}",
+                "WARNING",
+            )
 
     # Append Section E Market Intelligence to Blueprint Doc if requested
     blueprint_doc_id = payload.get("blueprint_doc_id", "")
     if blueprint_doc_id and state.get("sub_task_results"):
         try:
             from tools.google_docs import append_content
-            today = datetime.now(timezone.utc).date().isoformat()
+
+            today = datetime.now(UTC).date().isoformat()
             findings_summary = (
-                f"\n\n## Section E — Market Intelligence "
-                f"(Scout Discovery, {today})\n\n"
+                f"\n\n## Section E — Market Intelligence (Scout Discovery, {today})\n\n"
             )
             if corroborated:
                 for i, obs in enumerate(corroborated[:10], 1):
@@ -511,8 +632,14 @@ def _inject_knowledge(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 findings_summary += "_No findings corroborated across ≥5 independent sources._\n"
             append_content(blueprint_doc_id, findings_summary, pid)
         except Exception as exc:
-            _log_cloud(_AGENT_ID, pid, "task", mandate_id,
-                       f"_inject_knowledge: append_content failed: {exc}", "WARNING")
+            _log_cloud(
+                _AGENT_ID,
+                pid,
+                "task",
+                mandate_id,
+                f"_inject_knowledge: append_content failed: {exc}",
+                "WARNING",
+            )
 
     return state
 
@@ -533,23 +660,31 @@ def _route_after_boot(state: AgentWorkingMemory) -> str:
 
 def build_scout_graph() -> Any:
     graph: StateGraph = StateGraph(AgentWorkingMemory)
-    for name, fn in [("boot", _boot), ("plan", _plan), ("dispatch", _dispatch),
-                     ("collect", _collect), ("report", _report),
-                     ("write_playbook", _write_playbook), ("park", _park),
-                     ("resume", _resume), ("escalate", _escalate),
-                     ("discover", _discover), ("inject_knowledge", _inject_knowledge)]:
+    for name, fn in [
+        ("boot", _boot),
+        ("plan", _plan),
+        ("dispatch", _dispatch),
+        ("collect", _collect),
+        ("report", _report),
+        ("write_playbook", _write_playbook),
+        ("park", _park),
+        ("resume", _resume),
+        ("escalate", _escalate),
+        ("discover", _discover),
+        ("inject_knowledge", _inject_knowledge),
+    ]:
         graph.add_node(name, fn)
     graph.set_entry_point("boot")
     # RESEARCH_MANDATE → discover → inject_knowledge → write_playbook path
-    graph.add_conditional_edges("boot", _route_after_boot,
-                                {"discover": "discover", "plan": "plan"})
+    graph.add_conditional_edges("boot", _route_after_boot, {"discover": "discover", "plan": "plan"})
     graph.add_edge("discover", "inject_knowledge")
     graph.add_edge("inject_knowledge", "write_playbook")
     # Standard research path
     graph.add_edge("plan", "dispatch")
     graph.add_edge("dispatch", "collect")
-    graph.add_conditional_edges("collect", _should_escalate,
-                                {"escalate": "escalate", "report": "report"})
+    graph.add_conditional_edges(
+        "collect", _should_escalate, {"escalate": "escalate", "report": "report"}
+    )
     graph.add_edge("report", "write_playbook")
     graph.add_edge("write_playbook", END)
     graph.add_edge("park", END)
@@ -562,21 +697,26 @@ def build_scout_graph() -> Any:
 
 try:
     from google.adk.agents import Agent as _BaseAgent
+
     _HAS_ADK = True
 except ImportError:
     _HAS_ADK = False
 
 
 if _HAS_ADK:
+
     class ScoutAgent(_BaseAgent):  # type: ignore[misc]
         name: str = _AGENT_ID
-        description: str = "Research orchestrator — market intelligence, competitor monitoring, sourcing."
+        description: str = (
+            "Research orchestrator — market intelligence, competitor monitoring, sourcing."
+        )
         model: str = ""
         instruction: str = ""
         tools: list = []
 
         def __init__(self, **data: Any) -> None:
             from config import get_settings
+
             data["model"] = get_settings().models.FAST_MODEL
             data["instruction"] = _load_identity_file(_AGENT_ID)
             super().__init__(**data)
@@ -584,24 +724,31 @@ if _HAS_ADK:
 
         async def run(self, agent_input: Any) -> Any:
             from models import AgentOutput
+
             initial = _initial_state(agent_input)
             try:
                 final = await self._graph.ainvoke(
-                    initial, config={"configurable": {"thread_id": initial["task_id"]}})
+                    initial, config={"configurable": {"thread_id": initial["task_id"]}}
+                )
                 status = "failed" if final.get("hard_stop_triggered") else "success"
             except Exception as exc:
                 _log_cloud(_AGENT_ID, "", "task", initial["task_id"], str(exc), "ERROR")
                 status = "failed"
                 final = initial
             return AgentOutput(
-                task_id=final["task_id"], project_id=final["project_id"],
-                agent_id=_AGENT_ID, status=status, result={},
+                task_id=final["task_id"],
+                project_id=final["project_id"],
+                agent_id=_AGENT_ID,
+                status=status,
+                result={},
                 cost_usd=final.get("cost_usd", 0.0),
             )
 
 else:
+
     class ScoutAgent:  # type: ignore[no-redef]
         name = _AGENT_ID
+
         def __init__(self, **_: Any) -> None:
             self._graph = build_scout_graph()
 
@@ -620,6 +767,7 @@ def _initial_state(agent_input: Any) -> AgentWorkingMemory:
         # Decode Pub/Sub push envelope when called from the Cloud Run handler
         try:
             from tools.pubsub import decode_push_message
+
             incoming = decode_push_message(agent_input)
             pid = incoming.project_id
             tid = incoming.task_id or str(uuid.uuid4())
@@ -627,12 +775,23 @@ def _initial_state(agent_input: Any) -> AgentWorkingMemory:
             pass
 
     return {  # type: ignore[return-value]
-        "task_id": tid, "project_id": pid, "current_objective": "Starting",
-        "sub_task_results": [], "parked_proposals": [], "error_history": [],
-        "memory_context": {}, "episodic_cache": {}, "observation_buffer": [],
-        "cost_usd": 0.0, "iteration_count": 0, "step_count": 0, "tokens_used": 0,
-        "incoming_message": incoming, "messages": [],
-        "hard_stop_triggered": False, "evolution_triggered": False,
+        "task_id": tid,
+        "project_id": pid,
+        "current_objective": "Starting",
+        "sub_task_results": [],
+        "parked_proposals": [],
+        "error_history": [],
+        "memory_context": {},
+        "episodic_cache": {},
+        "observation_buffer": [],
+        "cost_usd": 0.0,
+        "iteration_count": 0,
+        "step_count": 0,
+        "tokens_used": 0,
+        "incoming_message": incoming,
+        "messages": [],
+        "hard_stop_triggered": False,
+        "evolution_triggered": False,
         "_started_at": time.time(),
     }
 

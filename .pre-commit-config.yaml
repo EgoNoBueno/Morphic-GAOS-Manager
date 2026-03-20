@@ -1,0 +1,40 @@
+# .pre-commit-config.yaml
+# Pre-commit hooks for Morphic-GAOS-Manager.
+#
+# Install once per clone:   pre-commit install
+# Run manually on all files: pre-commit run --all-files
+#
+# Hooks run in order:
+#   1. detect-secrets  — blocks commits containing API keys / private keys
+#   2. ruff check      — lint + auto-fix (imports, style, simplifications)
+#   3. ruff format     — enforce 100-char line width and consistent style
+
+repos:
+  # ── Secret detection ────────────────────────────────────────────────────────
+  # Scans for known key patterns: Google API keys (AIza…), private key headers
+  # (-----BEGIN …), and other high-confidence credential signatures.
+  # Prevents accidental secret commits without requiring a secrets baseline file.
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        name: Detect secrets
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: |
+          (?x)^(
+            tests/.*|
+            \.secrets\.baseline|
+            config/settings\.yaml\.template
+          )$
+
+  # ── Ruff lint + format ───────────────────────────────────────────────────────
+  # Uses the existing [tool.ruff] config in pyproject.toml (line-length=100,
+  # target-version=py311, select=E,F,I,UP,B,SIM, ignore=E501).
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.2
+    hooks:
+      - id: ruff
+        name: ruff check --fix
+        args: ["--fix"]
+      - id: ruff-format
+        name: ruff format

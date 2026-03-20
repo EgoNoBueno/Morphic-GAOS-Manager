@@ -7,11 +7,11 @@ Fails fast on missing or inaccessible secrets — never returns None.
 
 Spec: GAOS-Tools-Spec.md §2
 """
+
 from __future__ import annotations
 
 from google.api_core.exceptions import NotFound, PermissionDenied
 from google.cloud import secretmanager
-
 
 # ── Error types ────────────────────────────────────────────────────────────
 
@@ -56,18 +56,16 @@ def get_secret(secret_id: str, project_id: str) -> str:
     try:
         response = client.access_secret_version(request={"name": name})
         return response.payload.data.decode("UTF-8")
-    except NotFound:
+    except NotFound as exc:
         raise SecretNotFoundError(
             f"Secret '{secret_id}' not found in project '{project_id}'. "
             "Run the provisioning steps in GAOS-Deploy-Spec.md §3."
-        )
-    except PermissionDenied:
+        ) from exc
+    except PermissionDenied as exc:
         raise SecretAccessDenied(
             f"Permission denied accessing secret '{secret_id}' in project "
             f"'{project_id}'. Ensure the service account has "
             "roles/secretmanager.secretAccessor for this secret."
-        )
-    except Exception as exc:
-        raise SecretManagerError(
-            f"Unexpected error accessing secret '{secret_id}': {exc}"
         ) from exc
+    except Exception as exc:
+        raise SecretManagerError(f"Unexpected error accessing secret '{secret_id}': {exc}") from exc

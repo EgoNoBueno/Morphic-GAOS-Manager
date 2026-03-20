@@ -1,4 +1,5 @@
 """tests/test_memory.py — Unit tests for tools/memory.py"""
+
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -11,7 +12,6 @@ from tools.memory import (
     query_episodic,
     write_approved_memory,
 )
-
 
 # ── Settings fixture ───────────────────────────────────────────────────────
 
@@ -272,9 +272,7 @@ class TestWriteApprovedMemory:
         mock_record.memory_id = "mem-new"
         mock_instance.create.return_value = mock_record
 
-        entry = self._make_entry(
-            content="Updated market hours", supersedes="mem-old-123"
-        )
+        entry = self._make_entry(content="Updated market hours", supersedes="mem-old-123")
         write_approved_memory(entry, "test-project")
 
         mock_instance.update.assert_called_once_with("mem-old-123", {"active": False})

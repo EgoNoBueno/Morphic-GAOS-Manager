@@ -37,6 +37,7 @@ TestInitialStatePubSub (2 tests):
   IS1  Dict agent_input with valid Pub/Sub envelope extracts incoming_message.
   IS2  AgentInput object sets project_id and task_id correctly.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -44,7 +45,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from models import AgentWorkingMemory
-
 
 # ── Settings fixture ─────────────────────────────────────────────────────────
 
@@ -76,6 +76,7 @@ def _make_settings(tmp_path, yaml_text: str = _SETTINGS_YAML):
     cfg = tmp_path / "settings.yaml"
     cfg.write_text(yaml_text)
     import config
+
     config._reset_for_testing()
     config.load_settings(cfg)
     return cfg
@@ -85,13 +86,16 @@ def _make_settings(tmp_path, yaml_text: str = _SETTINGS_YAML):
 def reset_settings():
     yield
     import config
+
     config._reset_for_testing()
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
+
 def _make_mandate(topic="loyalty program trends", blueprint_doc_id=""):
     from models import A2AMessage, MessageType
+
     return A2AMessage(
         source_agent="nexus-prime",
         target_agent="scout",
@@ -127,12 +131,18 @@ def _base_state(extra=None) -> AgentWorkingMemory:
 
 def _fake_model_resp(data=None, text=""):
     from agents import ModelResponse
+
     return ModelResponse(text=text, data=data or {}, cost_usd=0.001, tokens_used=50)
 
 
 def _fake_search_results(n=8):
     return [
-        {"title": f"Result {i}", "url": f"https://source{i}.com/article", "snippet": f"Snippet {i}", "date": ""}
+        {
+            "title": f"Result {i}",
+            "url": f"https://source{i}.com/article",
+            "snippet": f"Snippet {i}",
+            "date": "",
+        }
         for i in range(n)
     ]
 
@@ -153,13 +163,18 @@ class TestGoogleSearchTool:
     def test_happy_path_returns_result_list(self, tmp_path):
         _make_settings(tmp_path)
         items = [
-            {"title": "Loyalty Trends 2026", "link": "https://example.com", "snippet": "Key trends..."},
+            {
+                "title": "Loyalty Trends 2026",
+                "link": "https://example.com",
+                "snippet": "Key trends...",
+            },
         ]
         with (
             patch("tools.secrets.get_secret", return_value="fake-key"),
             patch("httpx.get", return_value=self._make_mock_response(items)),
         ):
             from tools.google_search import search
+
             results = search("loyalty trends 2026", "test-project")
         assert len(results) == 1
         assert results[0]["title"] == "Loyalty Trends 2026"
@@ -171,6 +186,7 @@ class TestGoogleSearchTool:
         _make_settings(tmp_path)
         with patch("httpx.get") as mock_get:
             from tools.google_search import search
+
             result = search("", "test-project")
         assert result == []
         mock_get.assert_not_called()
@@ -179,6 +195,7 @@ class TestGoogleSearchTool:
     def test_http_429_raises_google_search_error(self, tmp_path):
         _make_settings(tmp_path)
         import httpx
+
         mock_resp = MagicMock()
         mock_resp.status_code = 429
         exc = httpx.HTTPStatusError("rate limit", request=MagicMock(), response=mock_resp)
@@ -188,7 +205,8 @@ class TestGoogleSearchTool:
             patch("tools.secrets.get_secret", return_value="k"),
             patch("httpx.get", mock_get),
         ):
-            from tools.google_search import search, GoogleSearchError
+            from tools.google_search import GoogleSearchError, search
+
             with pytest.raises(GoogleSearchError, match="quota exceeded"):
                 search("query", "test-project")
 
@@ -196,8 +214,10 @@ class TestGoogleSearchTool:
     def test_missing_credentials_raises_google_search_error(self, tmp_path):
         _make_settings(tmp_path)
         from tools.secrets import SecretNotFoundError
+
         with patch("tools.secrets.get_secret", side_effect=SecretNotFoundError("no key")):
-            from tools.google_search import search, GoogleSearchError
+            from tools.google_search import GoogleSearchError, search
+
             with pytest.raises(GoogleSearchError, match="credentials not available"):
                 search("query", "test-project")
 
@@ -218,6 +238,7 @@ class TestGoogleSearchTool:
             patch("httpx.get", mock_get),
         ):
             from tools.google_search import search
+
             search("query", "test-project", num=20)
         assert captured["num"] == 10
 
@@ -233,10 +254,14 @@ class TestResearchTopic:
         _make_settings(tmp_path)
         # Both queries return the same URL among their results
         dup_url = "https://same.com/article"
-        results_q1 = [{"title": "A", "url": dup_url, "snippet": "", "date": ""},
-                      {"title": "B", "url": "https://unique1.com", "snippet": "", "date": ""}]
-        results_q2 = [{"title": "A2", "url": dup_url, "snippet": "", "date": ""},
-                      {"title": "C", "url": "https://unique2.com", "snippet": "", "date": ""}]
+        results_q1 = [
+            {"title": "A", "url": dup_url, "snippet": "", "date": ""},
+            {"title": "B", "url": "https://unique1.com", "snippet": "", "date": ""},
+        ]
+        results_q2 = [
+            {"title": "A2", "url": dup_url, "snippet": "", "date": ""},
+            {"title": "C", "url": "https://unique2.com", "snippet": "", "date": ""},
+        ]
         call_count = {"n": 0}
 
         def fake_search(query, project_id, num=10):
@@ -245,6 +270,7 @@ class TestResearchTopic:
 
         with patch("tools.google_search.search", fake_search):
             from tools.google_search import research_topic
+
             results = research_topic(["q1", "q2"], "test-project")
 
         urls = [r["url"] for r in results]
@@ -258,11 +284,18 @@ class TestResearchTopic:
 
         def fake_search(query, project_id, num=10):
             call_count["n"] += 1
-            return [{"title": f"R{call_count['n']}", "url": f"https://s{call_count['n']}.com",
-                     "snippet": "", "date": ""}]
+            return [
+                {
+                    "title": f"R{call_count['n']}",
+                    "url": f"https://s{call_count['n']}.com",
+                    "snippet": "",
+                    "date": "",
+                }
+            ]
 
         with patch("tools.google_search.search", fake_search):
             from tools.google_search import research_topic
+
             research_topic(["q1", "q2", "q3", "q4", "q5"], "test-project", max_queries=3)
 
         assert call_count["n"] == 3
@@ -277,11 +310,18 @@ class TestResearchTopic:
             call_count["n"] += 1
             if call_count["n"] == 1:
                 raise GoogleSearchError("transient error")
-            return [{"title": "OK", "url": f"https://ok{call_count['n']}.com",
-                     "snippet": "", "date": ""}]
+            return [
+                {
+                    "title": "OK",
+                    "url": f"https://ok{call_count['n']}.com",
+                    "snippet": "",
+                    "date": "",
+                }
+            ]
 
         with patch("tools.google_search.search", fake_search):
             from tools.google_search import research_topic
+
             results = research_topic(["q1", "q2", "q3"], "test-project")
 
         assert len(results) == 2
@@ -292,6 +332,7 @@ class TestResearchTopic:
         _make_settings(tmp_path)
         with patch("tools.google_search.search") as mock_search:
             from tools.google_search import research_topic
+
             result = research_topic([], "test-project")
         assert result == []
         mock_search.assert_not_called()
@@ -319,8 +360,10 @@ class TestDiscoverNode:
         if search_results is None:
             search_results = _fake_search_results(8)
 
-        init_queries = [{"query": "loyalty market 2026", "intent": "trends"},
-                        {"query": "loyalty competitor analysis", "intent": "competition"}]
+        init_queries = [
+            {"query": "loyalty market 2026", "intent": "trends"},
+            {"query": "loyalty competitor analysis", "intent": "competition"},
+        ]
         follow_queries: list = []
 
         call_n = {"n": 0}
@@ -344,6 +387,7 @@ class TestDiscoverNode:
             patch("tools.google_search.research_topic", fake_research),
         ):
             from agents.scout.orchestrator import _discover
+
             result = _discover(state)
 
         return result
@@ -354,6 +398,7 @@ class TestDiscoverNode:
         state = _base_state()
         with patch("agents.scout.orchestrator._call_model"):
             from agents.scout.orchestrator import _discover
+
             result = _discover(state)
         assert result["sub_task_results"] == []
 
@@ -367,8 +412,13 @@ class TestDiscoverNode:
 
     # DN3
     def test_corroborated_findings_in_observation_buffer(self, tmp_path):
-        corr = [{"finding": "Loyalty programs drive 20% repeat purchase", "source_count": 7,
-                 "sources": ["a.com", "b.com", "c.com", "d.com", "e.com", "f.com", "g.com"]}]
+        corr = [
+            {
+                "finding": "Loyalty programs drive 20% repeat purchase",
+                "source_count": 7,
+                "sources": ["a.com", "b.com", "c.com", "d.com", "e.com", "f.com", "g.com"],
+            }
+        ]
         state = self._run(tmp_path, corr_data=corr)
         assert len(state["observation_buffer"]) == 1
         obs = state["observation_buffer"][0]
@@ -386,6 +436,7 @@ class TestDiscoverNode:
     # DN5
     def test_search_error_is_graceful(self, tmp_path):
         from tools.google_search import GoogleSearchError
+
         state = self._run(tmp_path, search_raises=GoogleSearchError("API down"))
         # Should return without raising; sub_task_results empty
         assert isinstance(state, dict)
@@ -415,11 +466,13 @@ class TestInjectKnowledgeNode:
     ):
         _make_settings(tmp_path)
         msg = _make_mandate(topic="loyalty trends", blueprint_doc_id=blueprint_doc_id)
-        state = _base_state({
-            "incoming_message": msg,
-            "observation_buffer": observation_buffer or [],
-            "sub_task_results": sub_task_results or [{"status": "success", "output": {}}],
-        })
+        state = _base_state(
+            {
+                "incoming_message": msg,
+                "observation_buffer": observation_buffer or [],
+                "sub_task_results": sub_task_results or [{"status": "success", "output": {}}],
+            }
+        )
 
         mock_publish = MagicMock(side_effect=publish_raises) if publish_raises else MagicMock()
         mock_append = MagicMock(side_effect=append_raises) if append_raises else MagicMock()
@@ -430,14 +483,23 @@ class TestInjectKnowledgeNode:
             patch("agents.scout.orchestrator._log_cloud"),
         ):
             from agents.scout.orchestrator import _inject_knowledge
+
             result = _inject_knowledge(state)
 
         return result, mock_publish, mock_append
 
     def _corroborated(self):
-        return [{"content": "Loyalty drives revenue", "knowledge_type": "market_intel",
-                 "tags": ["loyalty"], "source_count": 6, "sources": [], "mandate_id": "m1",
-                 "confidence": 0.72}]
+        return [
+            {
+                "content": "Loyalty drives revenue",
+                "knowledge_type": "market_intel",
+                "tags": ["loyalty"],
+                "source_count": 6,
+                "sources": [],
+                "mandate_id": "m1",
+                "confidence": 0.72,
+            }
+        ]
 
     # IK1
     def test_publishes_when_corroborated_findings_present(self, tmp_path):
@@ -446,6 +508,7 @@ class TestInjectKnowledgeNode:
         call_args = mock_publish.call_args[0]
         msg = call_args[1]
         from models import MessageType
+
         assert msg.message_type == MessageType.KNOWLEDGE_INJECTION
         assert msg.target_agent == "nexus-prime"
         assert len(msg.payload["findings"]) == 1
@@ -498,23 +561,30 @@ class TestRouteAfterBoot:
         msg = _make_mandate()
         state = _base_state({"incoming_message": msg})
         from agents.scout.orchestrator import _route_after_boot
+
         assert _route_after_boot(state) == "discover"
 
     # RB2
     def test_other_message_routes_to_plan(self, tmp_path):
         _make_settings(tmp_path)
         from models import A2AMessage, MessageType
+
         for mt in (MessageType.ALERT, MessageType.TASK_HANDOFF, None):
             if mt is not None:
                 msg = A2AMessage(
-                    source_agent="foreman", target_agent="scout",
-                    project_id="test-project", task_id="t1",
-                    message_type=mt, priority=2, payload={},
+                    source_agent="foreman",
+                    target_agent="scout",
+                    project_id="test-project",
+                    task_id="t1",
+                    message_type=mt,
+                    priority=2,
+                    payload={},
                 )
                 state = _base_state({"incoming_message": msg})
             else:
                 state = _base_state()
             from agents.scout.orchestrator import _route_after_boot
+
             assert _route_after_boot(state) == "plan"
 
 
@@ -527,12 +597,17 @@ class TestInitialStatePubSub:
     # IS1
     def test_dict_envelope_extracts_incoming_message(self, tmp_path):
         _make_settings(tmp_path)
-        import base64, json
+        import base64
+
         from models import A2AMessage, MessageType
+
         mandate = A2AMessage(
-            source_agent="nexus-prime", target_agent="scout",
-            project_id="test-project", task_id="t-pubsub-1",
-            message_type=MessageType.RESEARCH_MANDATE, priority=3,
+            source_agent="nexus-prime",
+            target_agent="scout",
+            project_id="test-project",
+            task_id="t-pubsub-1",
+            message_type=MessageType.RESEARCH_MANDATE,
+            priority=3,
             payload={"topic": "e-com trends"},
         )
         envelope = {
@@ -542,9 +617,12 @@ class TestInitialStatePubSub:
             },
             "subscription": "projects/test/subscriptions/sub",
         }
-        with patch("agents.scout.orchestrator._call_model"), \
-             patch("agents.scout.orchestrator._log_cloud"):
+        with (
+            patch("agents.scout.orchestrator._call_model"),
+            patch("agents.scout.orchestrator._log_cloud"),
+        ):
             from agents.scout.orchestrator import _initial_state
+
             state = _initial_state(envelope)
 
         assert state["incoming_message"] is not None
@@ -556,9 +634,12 @@ class TestInitialStatePubSub:
     def test_agent_input_sets_project_and_task_id(self, tmp_path):
         _make_settings(tmp_path)
         from models import AgentInput
-        ai = AgentInput(task_id="task-xyz", project_id="proj-abc",
-                        instruction="do research", context={})
+
+        ai = AgentInput(
+            task_id="task-xyz", project_id="proj-abc", instruction="do research", context={}
+        )
         from agents.scout.orchestrator import _initial_state
+
         state = _initial_state(ai)
         assert state["task_id"] == "task-xyz"
         assert state["project_id"] == "proj-abc"

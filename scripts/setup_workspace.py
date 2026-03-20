@@ -19,6 +19,7 @@ Prerequisites:
   - .venv activated
   - Run from repo root: python scripts/setup_workspace.py
 """
+
 from __future__ import annotations
 
 import sys
@@ -63,30 +64,70 @@ TABS = [
 
 HEADERS: dict[str, list[str]] = {
     "Agent_Approvals": [
-        "ID", "Agent ID", "Issue", "Trigger Reason", "Stopping Constraint",
-        "Iterations Run", "Total Cost USD", "Proposed Code", "Status",
-        "Timestamp", "Approved By", "Approver Tier", "code_sha256", "Priority",
+        "ID",
+        "Agent ID",
+        "Issue",
+        "Trigger Reason",
+        "Stopping Constraint",
+        "Iterations Run",
+        "Total Cost USD",
+        "Proposed Code",
+        "Status",
+        "Timestamp",
+        "Approved By",
+        "Approver Tier",
+        "code_sha256",
+        "Priority",
     ],
     "Authorized Approvers": [
-        "email", "name", "tier", "active", "added_date", "notes",
+        "email",
+        "name",
+        "tier",
+        "active",
+        "added_date",
+        "notes",
     ],
     "Project Registry": [
-        "project_id", "project_name", "status", "sheet_workbook_id",
-        "drive_folder_id", "budget_ceiling_usd", "owner_email",
-        "created_date", "notes",
+        "project_id",
+        "project_name",
+        "status",
+        "sheet_workbook_id",
+        "drive_folder_id",
+        "budget_ceiling_usd",
+        "owner_email",
+        "created_date",
+        "notes",
     ],
     "Logs": [
-        "timestamp", "agent_id", "level", "message", "project_id",
+        "timestamp",
+        "agent_id",
+        "level",
+        "message",
+        "project_id",
     ],
     "Error Logs": [
-        "timestamp", "agent_id", "error_type", "message", "traceback", "project_id",
+        "timestamp",
+        "agent_id",
+        "error_type",
+        "message",
+        "traceback",
+        "project_id",
     ],
     "Pending_Knowledge": [
-        "timestamp", "agent_id", "observation", "source", "confidence",
-        "status", "project_id",
+        "timestamp",
+        "agent_id",
+        "observation",
+        "source",
+        "confidence",
+        "status",
+        "project_id",
     ],
     "Memory Repository Size": [
-        "timestamp", "corpus_name", "document_count", "size_bytes", "project_id",
+        "timestamp",
+        "corpus_name",
+        "document_count",
+        "size_bytes",
+        "project_id",
     ],
 }
 
@@ -110,6 +151,7 @@ def _get_clients():
 
 
 # ── Drive helpers ─────────────────────────────────────────────────────────────
+
 
 def create_folder(drive, name: str, parent_id: str | None = None) -> str:
     """Create a Drive folder and return its ID."""
@@ -145,6 +187,7 @@ def share_with_sa(drive, file_id: str, sa_email: str, role: str = "writer") -> N
 
 # ── Sheet helpers ─────────────────────────────────────────────────────────────
 
+
 def setup_tabs(gc: gspread.Client, spreadsheet_id: str) -> None:
     """Rename Sheet1 to first tab, add remaining tabs, add header rows."""
     sh = gc.open_by_key(spreadsheet_id)
@@ -170,6 +213,7 @@ def setup_tabs(gc: gspread.Client, spreadsheet_id: str) -> None:
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     print("Authenticating via ADC...")
     drive, gc = _get_clients()
@@ -185,7 +229,7 @@ def main() -> None:
     print(f"  spreadsheet ID: {sheet_id}")
 
     # 3. Knowledge folder + subfolders
-    print(f"\nCreating Knowledge/ folder structure...")
+    print("\nCreating Knowledge/ folder structure...")
     knowledge_id = create_folder(drive, KNOWLEDGE_FOLDER_NAME, root_id)
     print(f"  Knowledge/ folder ID: {knowledge_id}")
     for sub in KNOWLEDGE_SUBFOLDERS:
@@ -193,11 +237,11 @@ def main() -> None:
         print(f"  + {sub}/ : {sub_id}")
 
     # 4. Create tabs + headers in spreadsheet
-    print(f"\nSetting up tabs and headers...")
+    print("\nSetting up tabs and headers...")
     setup_tabs(gc, sheet_id)
 
     # 5. Share root folder with all SAs (inherits to children)
-    print(f"\nSharing root folder with service accounts...")
+    print("\nSharing root folder with service accounts...")
     for sa in SERVICE_ACCOUNTS:
         email = f"{sa}@{PROJECT}.iam.gserviceaccount.com"
         share_with_sa(drive, root_id, email, role="writer")

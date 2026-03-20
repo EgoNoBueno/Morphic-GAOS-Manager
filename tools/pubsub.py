@@ -11,6 +11,7 @@ Topic naming convention:
 
 Spec: GAOS-Tools-Spec.md §4
 """
+
 from __future__ import annotations
 
 import base64
@@ -97,9 +98,7 @@ def publish(topic_name: str, message: A2AMessage, project_id: str) -> str:
             "the agent boot sequence (step 5)."
         ) from exc
     except Exception as exc:
-        raise PubSubPublishError(
-            f"Failed to publish message to '{topic}': {exc}"
-        ) from exc
+        raise PubSubPublishError(f"Failed to publish message to '{topic}': {exc}") from exc
 
 
 def ensure_topic_exists(topic_name: str, project_id: str) -> None:
@@ -162,9 +161,7 @@ def decode_push_message(envelope: dict) -> A2AMessage:
         data_str = data_bytes.decode("utf-8")
         raw = json.loads(data_str)
     except (KeyError, ValueError, UnicodeDecodeError) as exc:
-        raise MessageDecodeError(
-            f"Failed to decode Pub/Sub push envelope: {exc}"
-        ) from exc
+        raise MessageDecodeError(f"Failed to decode Pub/Sub push envelope: {exc}") from exc
 
     try:
         return A2AMessage.model_validate(raw)

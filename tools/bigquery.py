@@ -10,16 +10,16 @@ Table references use the format: "dataset.table"
 (e.g., "aos_logs.task_outcomes"). The GCP project is inferred from
 settings.GCP_PROJECT_ID.
 """
+
 from __future__ import annotations
 
 import time
 from typing import Any
 
-from google.cloud import bigquery
 from google.api_core.exceptions import GoogleAPICallError
+from google.cloud import bigquery
 
 from config import get_settings
-
 
 # ── Error types ──────────────────────────────────────────────────────────────
 
@@ -71,15 +71,13 @@ def insert_row(table_ref: str, row: dict[str, Any], project_id: str = "") -> Non
         try:
             errors = client.insert_rows_json(full_ref, [row])
             if errors:
-                raise BigQueryRowError(
-                    f"BigQuery rejected row for '{full_ref}': {errors}"
-                )
+                raise BigQueryRowError(f"BigQuery rejected row for '{full_ref}': {errors}")
             return
         except BigQueryRowError:
             raise
         except GoogleAPICallError as exc:
             last_exc = exc
-            time.sleep(2 ** attempt)
+            time.sleep(2**attempt)
 
     raise BigQueryInsertError(
         f"BigQuery insert into '{full_ref}' failed after 3 retries: {last_exc}"
@@ -110,15 +108,13 @@ def insert_rows(table_ref: str, rows: list[dict[str, Any]], project_id: str = ""
         try:
             errors = client.insert_rows_json(full_ref, rows)
             if errors:
-                raise BigQueryRowError(
-                    f"BigQuery rejected rows for '{full_ref}': {errors}"
-                )
+                raise BigQueryRowError(f"BigQuery rejected rows for '{full_ref}': {errors}")
             return
         except BigQueryRowError:
             raise
         except GoogleAPICallError as exc:
             last_exc = exc
-            time.sleep(2 ** attempt)
+            time.sleep(2**attempt)
 
     raise BigQueryInsertError(
         f"BigQuery batch insert into '{full_ref}' failed after 3 retries: {last_exc}"

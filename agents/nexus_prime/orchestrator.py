@@ -10,15 +10,17 @@ Identity file:     Docs/agents/nexus-prime.md
 Master spec:       Docs/GAOS-Manager-Spec.md §1
 Nexus spec:        Docs/GAOS-Nexus-Prime-Spec.md
 """
+
 from __future__ import annotations
 
 import hashlib
 import time
 import uuid
-from typing import Any, Optional
+from datetime import UTC
+from typing import Any
 
-from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
 
 from agents import (
     ModelResponse,
@@ -28,10 +30,10 @@ from agents import (
     _load_identity_file,
     _log_cloud,
     _run_evolution_loop,
+    _write_heartbeat,
     utcnow_date,
     utcnow_iso,
     validate_code_safety,
-    _write_heartbeat,
 )
 from models import A2AMessage, AgentWorkingMemory, ApprovalProposal, MessageType, MonologueFrame
 
@@ -43,34 +45,35 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
     Extends the common AgentWorkingMemory with Nexus-Prime-specific fields.
     Defined in GAOS-Nexus-Prime-Spec.md §2.
     """
+
     active_broadcasts: list[A2AMessage]
     conflict_queue: list[dict]
     # parked_proposals (list[str]) is inherited from AgentWorkingMemory
 
     # Project initialization (ephemeral per task)
-    pending_project_row: Optional[dict]
-    new_project_id: Optional[str]
+    pending_project_row: dict | None
+    new_project_id: str | None
 
     # Evolution gate
-    candidate_code: Optional[str]
-    candidate_agent_id: Optional[str]
-    candidate_sha256: Optional[str]
+    candidate_code: str | None
+    candidate_agent_id: str | None
+    candidate_sha256: str | None
     safety_check_passed: bool
 
     # System health
     system_state_summary: dict
-    last_ttl_sweep_at: Optional[str]
+    last_ttl_sweep_at: str | None
 
     # Internal timing
     _started_at: float
 
     # Vision workflow (Phase 2.5 Step 5)
-    active_blueprints: dict           # maps blueprint_id → doc_id
-    blueprint_constraints: list[dict] # active constraint stack per blueprint
+    active_blueprints: dict  # maps blueprint_id → doc_id
+    blueprint_constraints: list[dict]  # active constraint stack per blueprint
 
     # Strategic Architect — think node
-    _next_node: str                   # Set by think(); routes to diagnose or knowledge_review
-    monologue_frame: Optional[dict]   # Last MonologueFrame dict; used by tests for assertion
+    _next_node: str  # Set by think(); routes to diagnose or knowledge_review
+    monologue_frame: dict | None  # Last MonologueFrame dict; used by tests for assertion
 
 
 # ── Constraint compaction threshold ──────────────────────────────────────────
@@ -86,6 +89,7 @@ _FORMAT_NODES = {"record"}
 
 def _model_for_node(node_name: str) -> str:
     from config import get_settings
+
     s = get_settings()
     if node_name in _DECISION_NODES:
         return s.models.DEEP_MODEL
@@ -95,6 +99,7 @@ def _model_for_node(node_name: str) -> str:
 
 
 # ── Prompt builders ───────────────────────────────────────────────────────────
+
 
 def _build_diagnosis_prompt(msg: A2AMessage, similar: list, recent_errors: list) -> str:
     return (
@@ -106,7 +111,7 @@ def _build_diagnosis_prompt(msg: A2AMessage, similar: list, recent_errors: list)
         + f"\n\nRecent sheet entries ({len(recent_errors)}):\n"
         + "\n".join(f"  - {r}" for r in recent_errors[:3])
         + "\n\nDecide: is self-repair possible, or is human approval required?\n"
-        "Return JSON: {\"suggests_code_change\": bool, \"rationale\": str, \"fix_summary\": str}"
+        'Return JSON: {"suggests_code_change": bool, "rationale": str, "fix_summary": str}'
     )
 
 
@@ -116,7 +121,7 @@ def _build_knowledge_review_prompt(candidate: dict, duplicates: list) -> str:
         f"Potential duplicates ({len(duplicates)}) in Memory Bank:\n"
         + "\n".join(f"  - {d}" for d in duplicates[:5])
         + "\n\nAssess confidence and duplication.\n"
-        "Return JSON: {\"confidence\": float, \"is_duplicate\": bool, \"rationale\": str}"
+        'Return JSON: {"confidence": float, "is_duplicate": bool, "rationale": str}'
     )
 
 
@@ -126,11 +131,12 @@ def _build_conflict_prompt(conflict: dict) -> str:
         f"  Agent A ({conflict.get('agent_a', '?')}): {conflict.get('value_a', '')}\n"
         f"  Agent B ({conflict.get('agent_b', '?')}): {conflict.get('value_b', '')}\n\n"
         "Arbitrate which value is correct. Return JSON: "
-        "{\"decision\": str, \"rationale\": str, \"winning_agent\": str}"
+        '{"decision": str, "rationale": str, "winning_agent": str}'
     )
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
+
 
 def _compute_priority(state: NexusPrimeWorkingMemory) -> int:
     msg = state.get("incoming_message")
@@ -141,7 +147,7 @@ def _compute_priority(state: NexusPrimeWorkingMemory) -> int:
 
 def _build_think_prompt(
     state: NexusPrimeWorkingMemory,
-    msg: Optional[A2AMessage],
+    msg: A2AMessage | None,
     priority: int,
 ) -> str:
     """Build the pre-response reasoning prompt for the think node."""
@@ -190,6 +196,7 @@ def _log_hard_stop(state: NexusPrimeWorkingMemory, reason: str) -> None:
 
 def _format_heartbeat(state: NexusPrimeWorkingMemory) -> str:
     from config import get_settings
+
     s = get_settings()
     model = s.models.LOCAL_MODEL
     parked = len(state.get("parked_proposals", []))
@@ -210,6 +217,7 @@ def _write_to_pending_knowledge(
     state: NexusPrimeWorkingMemory, candidate: dict, verdict: ModelResponse
 ) -> None:
     from tools.google_sheets import append_row
+
     row = {
         "timestamp": utcnow_iso(),
         "agent_id": candidate.get("agent_id", ""),
@@ -229,26 +237,31 @@ def _create_sheet_workbook(new_pid: str) -> str:
     """Clone the master Sheet workbook for a new project via Drive API. Returns file ID."""
     import google.auth
     from googleapiclient.discovery import build  # type: ignore[import-untyped]
+
     from config import get_settings
+
     settings = get_settings()
     template_id = settings.sheet.workbook_id
     # Full drive scope required: files().copy() on a pre-existing template file
     # (not created by this SA) cannot be authorised with drive.file scope.
-    creds, _ = google.auth.default(
-        scopes=["https://www.googleapis.com/auth/drive"]
-    )
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/drive"])
     service = build("drive", "v3", credentials=creds, cache_discovery=False)
-    result = service.files().copy(
-        fileId=template_id,
-        body={"name": f"[{new_pid}] AOS Dashboard"},
-    ).execute()
+    result = (
+        service.files()
+        .copy(
+            fileId=template_id,
+            body={"name": f"[{new_pid}] AOS Dashboard"},
+        )
+        .execute()
+    )
     return result.get("id", "")
 
 
 def _create_drive_folder(new_pid: str) -> str:
     """Create a Knowledge/ Drive folder for a new project. Returns folder path key."""
-    from tools.drive import write_file
     from config import get_settings
+    from tools.drive import write_file
+
     settings = get_settings()
     # write_file(file_path, content, project_id) — creates parent folders automatically
     write_file(
@@ -262,6 +275,7 @@ def _create_drive_folder(new_pid: str) -> str:
 def _trigger_sync_to_vertex(row: dict, state: NexusPrimeWorkingMemory) -> None:
     """Send the approved code to Apps Script syncSkillsToVertex() via webhook."""
     from tools.webhook_sender import post_to_webhook
+
     payload = {
         "action": "syncSkillsToVertex",
         "proposal_id": row.get("ID", ""),
@@ -332,8 +346,12 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             )
         except Exception as exc:
             _log_cloud(
-                "nexus-prime", project_id, "task", task_id,
-                f"think: _call_model failed — {exc}", "WARNING",
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"think: _call_model failed — {exc}",
+                "WARNING",
             )
             return state
 
@@ -361,8 +379,12 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         )
     except Exception as exc:
         _log_cloud(
-            "nexus-prime", project_id, "task", task_id,
-            f"think: MonologueFrame validation failed — {exc}", "WARNING",
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"think: MonologueFrame validation failed — {exc}",
+            "WARNING",
         )
         return state
 
@@ -372,12 +394,19 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         insert_row("aos_logs.monologue_frames", frame.model_dump(), project_id)
     except Exception as exc:
         _log_cloud(
-            "nexus-prime", project_id, "task", task_id,
-            f"think: BQ insert failed — {exc}", "WARNING",
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"think: BQ insert failed — {exc}",
+            "WARNING",
         )
 
     _log_cloud(
-        "nexus-prime", project_id, "task", task_id,
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
         f"think: mode={frame.response_mode} gap={frame.knowledge_gap_detected} next={next_node}",
     )
     return state
@@ -429,7 +458,8 @@ def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     try:
         all_proposals = get_all_records("Agent_Approvals", pid)
         state["parked_proposals"] = [
-            r["ID"] for r in all_proposals
+            r["ID"]
+            for r in all_proposals
             if r.get("Status") in ("Pending", "Needs Revision") and r.get("ID")
         ]
     except Exception:
@@ -439,9 +469,7 @@ def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     try:
         registry = get_all_records("Project Registry", pid)
         state["system_state_summary"] = {
-            r["project_id"]: r["status"]
-            for r in registry
-            if r.get("project_id")
+            r["project_id"]: r["status"] for r in registry if r.get("project_id")
         }
     except Exception:
         pass
@@ -473,25 +501,25 @@ def route(state: NexusPrimeWorkingMemory) -> str:
         return "record"
 
     routing_table = {
-        MessageType.STATUS_UPDATE:       "record",
-        MessageType.TASK_COMPLETE:       "record",
-        MessageType.ESCALATION:          "think",           # think → diagnose
-        MessageType.EVOLUTION_REQUEST:   "think",           # think → diagnose
-        MessageType.APPROVAL_RESULT:     "_route_approval",
-        MessageType.KNOWLEDGE_CANDIDATE: "think",           # think → knowledge_review
-        MessageType.BROADCAST:           "conflict_resolve",
-        MessageType.NEW_PROJECT:         "init_project",
-        MessageType.VISION_SUBMITTED:    "vision_blueprint",
-        MessageType.PLAN_REVIEW:         "iterate_plan",
-        MessageType.COMMENT_RECEIVED:    "iterate_plan",
-        MessageType.SKILL_REQUEST:       "handle_skill_request",
+        MessageType.STATUS_UPDATE: "record",
+        MessageType.TASK_COMPLETE: "record",
+        MessageType.ESCALATION: "think",  # think → diagnose
+        MessageType.EVOLUTION_REQUEST: "think",  # think → diagnose
+        MessageType.APPROVAL_RESULT: "_route_approval",
+        MessageType.KNOWLEDGE_CANDIDATE: "think",  # think → knowledge_review
+        MessageType.BROADCAST: "conflict_resolve",
+        MessageType.NEW_PROJECT: "init_project",
+        MessageType.VISION_SUBMITTED: "vision_blueprint",
+        MessageType.PLAN_REVIEW: "iterate_plan",
+        MessageType.COMMENT_RECEIVED: "iterate_plan",
+        MessageType.SKILL_REQUEST: "handle_skill_request",
     }
     return routing_table.get(msg.message_type, "record")
 
 
 def _route_approval(state: NexusPrimeWorkingMemory) -> str:
     """Sub-router for APPROVAL_RESULT messages."""
-    result = (state.get("incoming_message") or {})
+    result = state.get("incoming_message") or {}
     status = getattr(result, "payload", {}).get("status", "") if hasattr(result, "payload") else ""
     if status == "Approved":
         return "promote"
@@ -613,6 +641,7 @@ def propose_gate(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         # Notify owner via Google Chat card with strategic reasoning
         from config import get_settings
         from tools.google_chat import send_approval_card
+
         settings = get_settings()
         owner_space: str = getattr(settings.chat, "owner_space", "") or ""
         if owner_space:
@@ -633,14 +662,21 @@ def propose_gate(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                 )
             except Exception as card_exc:
                 _log_cloud(
-                    "nexus-prime", state["project_id"], "task",
+                    "nexus-prime",
+                    state["project_id"],
+                    "task",
                     state.get("task_id", ""),
-                    f"propose_gate: Chat card failed (non-fatal): {card_exc}", "WARNING"
+                    f"propose_gate: Chat card failed (non-fatal): {card_exc}",
+                    "WARNING",
                 )
     except Exception as exc:
         _log_cloud(
-            "nexus-prime", state["project_id"], "task",
-            state.get("task_id", ""), f"propose_gate error: {exc}", "ERROR"
+            "nexus-prime",
+            state["project_id"],
+            "task",
+            state.get("task_id", ""),
+            f"propose_gate error: {exc}",
+            "ERROR",
         )
 
     return state
@@ -679,6 +715,7 @@ def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     if confidence >= 0.80 and not is_dup:
         try:
             from models import MemoryEntry
+
             entry = MemoryEntry(
                 project_id=state["project_id"],
                 agent_id=msg.source_agent,
@@ -719,8 +756,14 @@ def promote(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         return state
 
     if row is None:
-        _log_cloud("nexus-prime", state["project_id"], "security",
-                   state.get("task_id", ""), f"promote: proposal {proposal_id} not found", "ERROR")
+        _log_cloud(
+            "nexus-prime",
+            state["project_id"],
+            "security",
+            state.get("task_id", ""),
+            f"promote: proposal {proposal_id} not found",
+            "ERROR",
+        )
         return state
 
     # Hash verification — reject if tampered
@@ -728,13 +771,17 @@ def promote(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     stored_sha = row.get("code_sha256", "")
     if live_sha != stored_sha:
         _log_cloud(
-            "nexus-prime", state["project_id"], "security",
+            "nexus-prime",
+            state["project_id"],
+            "security",
             state.get("task_id", ""),
             f"CODE_HASH_MISMATCH proposal={proposal_id}",
             "CRITICAL",
         )
         try:
-            update_row("Agent_Approvals", proposal_id, {"Status": "Needs Revision"}, state["project_id"])
+            update_row(
+                "Agent_Approvals", proposal_id, {"Status": "Needs Revision"}, state["project_id"]
+            )
         except Exception:
             pass
         return state
@@ -746,9 +793,7 @@ def promote(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     except Exception:
         pass
 
-    state["parked_proposals"] = [
-        p for p in state.get("parked_proposals", []) if p != proposal_id
-    ]
+    state["parked_proposals"] = [p for p in state.get("parked_proposals", []) if p != proposal_id]
     return state
 
 
@@ -777,27 +822,48 @@ def init_project(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     try:
         new_sheet_id = _create_sheet_workbook(new_pid)
     except Exception as exc:
-        _log_cloud("nexus-prime", pid, "task", state.get("task_id", ""),
-                   f"init_project: sheet creation failed — {exc}", "ERROR")
+        _log_cloud(
+            "nexus-prime",
+            pid,
+            "task",
+            state.get("task_id", ""),
+            f"init_project: sheet creation failed — {exc}",
+            "ERROR",
+        )
         return state
 
     try:
         new_folder_id = _create_drive_folder(new_pid)
     except Exception as exc:
-        _log_cloud("nexus-prime", pid, "task", state.get("task_id", ""),
-                   f"init_project: drive folder creation failed — {exc}", "ERROR")
+        _log_cloud(
+            "nexus-prime",
+            pid,
+            "task",
+            state.get("task_id", ""),
+            f"init_project: drive folder creation failed — {exc}",
+            "ERROR",
+        )
         return state
 
     try:
-        update_row("Project Registry", row.get("ID", new_pid), {
-            "status": "Active",
-            "sheet_workbook_id": new_sheet_id,
-            "drive_folder_id": new_folder_id,
-        }, pid)
+        update_row(
+            "Project Registry",
+            row.get("ID", new_pid),
+            {
+                "status": "Active",
+                "sheet_workbook_id": new_sheet_id,
+                "drive_folder_id": new_folder_id,
+            },
+            pid,
+        )
     except Exception:
         pass
 
-    state["pending_project_row"] = {**row, "sheet_workbook_id": new_sheet_id, "drive_folder_id": new_folder_id}
+    state["pending_project_row"] = {
+        **row,
+        "sheet_workbook_id": new_sheet_id,
+        "drive_folder_id": new_folder_id,
+    }
     state["new_project_id"] = new_pid
     return state
 
@@ -971,19 +1037,22 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
       Error Logs tab:  30 days → aos_logs.evolution_tasks
       Agent_Approvals: 90 days (closed status only) → aos_logs.approval_history
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
+
     from config import get_settings
+    from tools.bigquery import insert_rows as bq_insert_rows
     from tools.google_sheets import (
+        append_row,
         get_all_records,
         get_all_records_with_row_numbers,
-        delete_rows as sheets_delete_rows,
-        append_row,
     )
-    from tools.bigquery import insert_rows as bq_insert_rows
+    from tools.google_sheets import (
+        delete_rows as sheets_delete_rows,
+    )
     from tools.pubsub import publish
 
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff_30 = now - timedelta(days=30)
     cutoff_90 = now - timedelta(days=90)
     task_id = str(uuid.uuid4())
@@ -994,9 +1063,9 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
         """Parse ISO timestamp; returns epoch on failure so malformed rows stay."""
         try:
             dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+            return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
         except (ValueError, AttributeError):
-            return datetime(1970, 1, 1, tzinfo=timezone.utc)
+            return datetime(1970, 1, 1, tzinfo=UTC)
 
     # ── 1. Weekly observability summary (Mondays only) ────────────────────────
     if now.weekday() == 0:
@@ -1006,7 +1075,9 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
             week_cutoff = now - timedelta(days=7)
             recent_logs = [r for r in logs_week if _parse_ts(r.get("timestamp", "")) >= week_cutoff]
             recent_errs = [r for r in err_week if _parse_ts(r.get("timestamp", "")) >= week_cutoff]
-            top_agents = list({r.get("agent_id", "?") for r in recent_logs[:50] if r.get("agent_id")})
+            top_agents = list(
+                {r.get("agent_id", "?") for r in recent_logs[:50] if r.get("agent_id")}
+            )
             summary_prompt = (
                 f"Summarize in one sentence: week ending {now.strftime('%Y-W%U')}, "
                 f"{len(recent_logs)} log entries, {len(recent_errs)} error entries. "
@@ -1015,82 +1086,120 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
             )
             resp = _call_model(summary_prompt, model=settings.models.LOCAL_MODEL)
             cost_usd += resp.cost_usd
-            bq_insert_rows("aos_logs.observability_weekly", [{
-                "week_label": now.strftime("%Y-W%U"),
-                "log_count": len(recent_logs),
-                "error_count": len(recent_errs),
-                "summary": resp.text.strip()[:1000],
-                "project_id": project_id,
-                "created_at": now.isoformat(),
-            }])
+            bq_insert_rows(
+                "aos_logs.observability_weekly",
+                [
+                    {
+                        "week_label": now.strftime("%Y-W%U"),
+                        "log_count": len(recent_logs),
+                        "error_count": len(recent_errs),
+                        "summary": resp.text.strip()[:1000],
+                        "project_id": project_id,
+                        "created_at": now.isoformat(),
+                    }
+                ],
+            )
         except Exception as exc:
-            _log_cloud("nexus-prime", project_id, "task", task_id,
-                       f"archive weekly summary failed: {exc}", "WARNING")
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"archive weekly summary failed: {exc}",
+                "WARNING",
+            )
 
     # ── 2+3. Archive Logs tab → task_outcomes ────────────────────────────────
     try:
         log_numbered = get_all_records_with_row_numbers("Logs", project_id)
-        aged_logs = [(rn, r) for rn, r in log_numbered
-                     if _parse_ts(r.get("timestamp", "")) < cutoff_30]
+        aged_logs = [
+            (rn, r) for rn, r in log_numbered if _parse_ts(r.get("timestamp", "")) < cutoff_30
+        ]
         if aged_logs:
-            bq_rows = [{
-                "task_id": task_id,
-                "project_id": r.get("project_id", project_id),
-                "agent_id": r.get("agent_id", ""),
-                "task_type": r.get("level", "LOG"),
-                "status": "archived",
-                "error_fingerprint": "",
-                "cost_usd": 0.0,
-                "duration_seconds": 0.0,
-                "timestamp": r.get("timestamp", ""),
-                "log_date": r.get("timestamp", "")[:10],
-            } for _, r in aged_logs]
+            bq_rows = [
+                {
+                    "task_id": task_id,
+                    "project_id": r.get("project_id", project_id),
+                    "agent_id": r.get("agent_id", ""),
+                    "task_type": r.get("level", "LOG"),
+                    "status": "archived",
+                    "error_fingerprint": "",
+                    "cost_usd": 0.0,
+                    "duration_seconds": 0.0,
+                    "timestamp": r.get("timestamp", ""),
+                    "log_date": r.get("timestamp", "")[:10],
+                }
+                for _, r in aged_logs
+            ]
             try:
                 bq_insert_rows("aos_logs.task_outcomes", bq_rows)
                 sheets_delete_rows("Logs", [rn for rn, _ in aged_logs], project_id)
                 stats["Logs"] = len(aged_logs)
             except Exception as exc:
-                _log_cloud("nexus-prime", project_id, "task", task_id,
-                           f"archive Logs → BQ failed: {exc}", "ERROR")
+                _log_cloud(
+                    "nexus-prime",
+                    project_id,
+                    "task",
+                    task_id,
+                    f"archive Logs → BQ failed: {exc}",
+                    "ERROR",
+                )
                 stats["Logs"] = 0
         else:
             stats["Logs"] = 0
     except Exception as exc:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"archive Logs read failed: {exc}", "ERROR")
+        _log_cloud(
+            "nexus-prime", project_id, "task", task_id, f"archive Logs read failed: {exc}", "ERROR"
+        )
         stats["Logs"] = 0
 
     # ── Archive Error Logs tab → evolution_tasks ─────────────────────────────
     try:
         err_numbered = get_all_records_with_row_numbers("Error Logs", project_id)
-        aged_errs = [(rn, r) for rn, r in err_numbered
-                     if _parse_ts(r.get("timestamp", "")) < cutoff_30]
+        aged_errs = [
+            (rn, r) for rn, r in err_numbered if _parse_ts(r.get("timestamp", "")) < cutoff_30
+        ]
         if aged_errs:
-            bq_rows = [{
-                "task_id": str(uuid.uuid4()),
-                "project_id": r.get("project_id", project_id),
-                "agent_id": r.get("agent_id", ""),
-                "error_type": r.get("error_type", ""),
-                "error_message": r.get("message", "")[:1000],
-                "iterations": 0,
-                "stopping_constraint": "archived",
-                "cost_usd": 0.0,
-                "timestamp": r.get("timestamp", ""),
-                "log_date": r.get("timestamp", "")[:10],
-            } for _, r in aged_errs]
+            bq_rows = [
+                {
+                    "task_id": str(uuid.uuid4()),
+                    "project_id": r.get("project_id", project_id),
+                    "agent_id": r.get("agent_id", ""),
+                    "error_type": r.get("error_type", ""),
+                    "error_message": r.get("message", "")[:1000],
+                    "iterations": 0,
+                    "stopping_constraint": "archived",
+                    "cost_usd": 0.0,
+                    "timestamp": r.get("timestamp", ""),
+                    "log_date": r.get("timestamp", "")[:10],
+                }
+                for _, r in aged_errs
+            ]
             try:
                 bq_insert_rows("aos_logs.evolution_tasks", bq_rows)
                 sheets_delete_rows("Error Logs", [rn for rn, _ in aged_errs], project_id)
                 stats["Error Logs"] = len(aged_errs)
             except Exception as exc:
-                _log_cloud("nexus-prime", project_id, "task", task_id,
-                           f"archive Error Logs → BQ failed: {exc}", "ERROR")
+                _log_cloud(
+                    "nexus-prime",
+                    project_id,
+                    "task",
+                    task_id,
+                    f"archive Error Logs → BQ failed: {exc}",
+                    "ERROR",
+                )
                 stats["Error Logs"] = 0
         else:
             stats["Error Logs"] = 0
     except Exception as exc:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"archive Error Logs read failed: {exc}", "ERROR")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"archive Error Logs read failed: {exc}",
+            "ERROR",
+        )
         stats["Error Logs"] = 0
 
     # ── Archive Agent_Approvals → approval_history ───────────────────────────
@@ -1098,53 +1207,72 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
     try:
         approval_numbered = get_all_records_with_row_numbers("Agent_Approvals", project_id)
         aged_approvals = [
-            (rn, r) for rn, r in approval_numbered
+            (rn, r)
+            for rn, r in approval_numbered
             if r.get("Status", "") in _CLOSED_STATUSES
             and _parse_ts(r.get("Timestamp", "")) < cutoff_90
         ]
         if aged_approvals:
-            bq_rows = [{
-                "proposal_id": r.get("ID", ""),
-                "project_id": project_id,
-                "agent_id": r.get("Agent ID", ""),
-                "issue": r.get("Issue", "")[:500],
-                "status": r.get("Status", ""),
-                "approved_by": r.get("Approved By", ""),
-                "approver_tier": int(r.get("Approver Tier", 0) or 0),
-                "cost_usd": float(r.get("Total Cost USD", 0) or 0),
-                "code_sha256": r.get("code_sha256", ""),
-                "timestamp": r.get("Timestamp", ""),
-                "log_date": r.get("Timestamp", "")[:10],
-            } for _, r in aged_approvals]
+            bq_rows = [
+                {
+                    "proposal_id": r.get("ID", ""),
+                    "project_id": project_id,
+                    "agent_id": r.get("Agent ID", ""),
+                    "issue": r.get("Issue", "")[:500],
+                    "status": r.get("Status", ""),
+                    "approved_by": r.get("Approved By", ""),
+                    "approver_tier": int(r.get("Approver Tier", 0) or 0),
+                    "cost_usd": float(r.get("Total Cost USD", 0) or 0),
+                    "code_sha256": r.get("code_sha256", ""),
+                    "timestamp": r.get("Timestamp", ""),
+                    "log_date": r.get("Timestamp", "")[:10],
+                }
+                for _, r in aged_approvals
+            ]
             try:
                 bq_insert_rows("aos_logs.approval_history", bq_rows)
                 sheets_delete_rows("Agent_Approvals", [rn for rn, _ in aged_approvals], project_id)
                 stats["Agent_Approvals"] = len(aged_approvals)
             except Exception as exc:
-                _log_cloud("nexus-prime", project_id, "task", task_id,
-                           f"archive Agent_Approvals → BQ failed: {exc}", "ERROR")
+                _log_cloud(
+                    "nexus-prime",
+                    project_id,
+                    "task",
+                    task_id,
+                    f"archive Agent_Approvals → BQ failed: {exc}",
+                    "ERROR",
+                )
                 stats["Agent_Approvals"] = 0
         else:
             stats["Agent_Approvals"] = 0
     except Exception as exc:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"archive Agent_Approvals read failed: {exc}", "ERROR")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"archive Agent_Approvals read failed: {exc}",
+            "ERROR",
+        )
         stats["Agent_Approvals"] = 0
 
     # ── 4. Report ─────────────────────────────────────────────────────────────
     total_archived = sum(stats.values())
-    report_msg = (
-        f"NIGHTLY_ARCHIVE complete: {total_archived} rows archived. "
-        + " | ".join(f"{tab}={n}" for tab, n in stats.items())
+    report_msg = f"NIGHTLY_ARCHIVE complete: {total_archived} rows archived. " + " | ".join(
+        f"{tab}={n}" for tab, n in stats.items()
     )
     try:
-        append_row("Logs", {
-            "timestamp": now.isoformat(),
-            "agent_id": "nexus-prime",
-            "level": "ARCHIVE",
-            "message": report_msg,
-            "project_id": project_id,
-        }, project_id)
+        append_row(
+            "Logs",
+            {
+                "timestamp": now.isoformat(),
+                "agent_id": "nexus-prime",
+                "level": "ARCHIVE",
+                "message": report_msg,
+                "project_id": project_id,
+            },
+            project_id,
+        )
     except Exception:
         pass
 
@@ -1199,30 +1327,37 @@ async def handle_daily_sync(project_id: str) -> dict[str, Any]:
 
     Spec: GAOS-Manager-Spec.md §2.5 (Phase 2.5 Step 2)
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta
+
     from config import get_settings
-    from tools.google_sheets import get_all_records
     from tools.google_chat import send_card
+    from tools.google_sheets import get_all_records
 
     settings = get_settings()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff = now - timedelta(hours=24)
     task_id = str(uuid.uuid4())
 
     def _parse_ts(ts_str: str) -> datetime:
         try:
             dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+            return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
         except (ValueError, AttributeError):
-            return datetime(1970, 1, 1, tzinfo=timezone.utc)
+            return datetime(1970, 1, 1, tzinfo=UTC)
 
     # ── 1. Overnight Logs ────────────────────────────────────────────────────
     try:
         all_logs = get_all_records("Logs", project_id)
         overnight_logs = [r for r in all_logs if _parse_ts(r.get("timestamp", "")) >= cutoff]
     except Exception as exc:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"daily-sync: failed to read Logs tab: {exc}", "WARNING")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"daily-sync: failed to read Logs tab: {exc}",
+            "WARNING",
+        )
         overnight_logs = []
 
     # ── 2. Overnight Error Logs ───────────────────────────────────────────────
@@ -1230,8 +1365,14 @@ async def handle_daily_sync(project_id: str) -> dict[str, Any]:
         all_errors = get_all_records("Error Logs", project_id)
         overnight_errors = [r for r in all_errors if _parse_ts(r.get("timestamp", "")) >= cutoff]
     except Exception as exc:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"daily-sync: failed to read Error Logs tab: {exc}", "WARNING")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"daily-sync: failed to read Error Logs tab: {exc}",
+            "WARNING",
+        )
         overnight_errors = []
 
     # ── 3. Pending approvals ─────────────────────────────────────────────────
@@ -1239,8 +1380,14 @@ async def handle_daily_sync(project_id: str) -> dict[str, Any]:
         all_approvals = get_all_records("Agent_Approvals", project_id)
         pending = [r for r in all_approvals if r.get("status", "").lower() in ("pending", "")]
     except Exception as exc:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"daily-sync: failed to read Agent_Approvals tab: {exc}", "WARNING")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"daily-sync: failed to read Agent_Approvals tab: {exc}",
+            "WARNING",
+        )
         pending = []
 
     # ── 4. Compose briefing card ─────────────────────────────────────────────
@@ -1251,20 +1398,24 @@ async def handle_daily_sync(project_id: str) -> dict[str, Any]:
     activity_section: dict = {
         "header": "Overnight Activity (last 24 h)",
         "widgets": [
-            {"textParagraph": {
-                "text": (
-                    f"📋 <b>{len(overnight_logs)}</b> log "
-                    f"{'entry' if len(overnight_logs) == 1 else 'entries'} "
-                    f"across {len(active_agents)} agent(s): {agent_list}"
-                ),
-            }},
-            {"textParagraph": {
-                "text": (
-                    f"{'⚠️' if overnight_errors else '✅'} "
-                    f"<b>{len(overnight_errors)}</b> "
-                    f"error{'s' if overnight_errors != 1 else ''} logged overnight"
-                ),
-            }},
+            {
+                "textParagraph": {
+                    "text": (
+                        f"📋 <b>{len(overnight_logs)}</b> log "
+                        f"{'entry' if len(overnight_logs) == 1 else 'entries'} "
+                        f"across {len(active_agents)} agent(s): {agent_list}"
+                    ),
+                }
+            },
+            {
+                "textParagraph": {
+                    "text": (
+                        f"{'⚠️' if overnight_errors else '✅'} "
+                        f"<b>{len(overnight_errors)}</b> "
+                        f"error{'s' if overnight_errors != 1 else ''} logged overnight"
+                    ),
+                }
+            },
         ],
     }
 
@@ -1290,7 +1441,10 @@ async def handle_daily_sync(project_id: str) -> dict[str, Any]:
     owner_space = settings.chat.owner_space
     if not owner_space:
         _log_cloud(
-            "nexus-prime", project_id, "task", task_id,
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
             "daily-sync: chat.owner_space not configured — briefing card not sent",
             "WARNING",
         )
@@ -1298,11 +1452,20 @@ async def handle_daily_sync(project_id: str) -> dict[str, Any]:
         try:
             send_card(owner_space, card)
         except Exception as exc:
-            _log_cloud("nexus-prime", project_id, "task", task_id,
-                       f"daily-sync: failed to send briefing card: {exc}", "WARNING")
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"daily-sync: failed to send briefing card: {exc}",
+                "WARNING",
+            )
 
     _log_cloud(
-        "nexus-prime", project_id, "task", task_id,
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
         f"DAILY_SYNC complete: {len(overnight_logs)} logs, "
         f"{len(overnight_errors)} errors, {len(pending)} pending approvals",
     )
@@ -1324,7 +1487,7 @@ def _build_vision_prompt(vision_text: str, project_id: str) -> str:
     return (
         f"You are Nexus-Prime, the AOS general manager. The owner has submitted the following "
         f"business vision:\n\n"
-        f"\"{vision_text}\"\n\n"
+        f'"{vision_text}"\n\n'
         f"Generate a structured project blueprint in Markdown with the following sections:\n"
         f"## Objective\n"
         f"## Success Criteria\n"
@@ -1341,7 +1504,7 @@ def _build_vision_prompt(vision_text: str, project_id: str) -> str:
 def _build_compaction_prompt(constraints: list[dict]) -> str:
     """Build the constraint compaction prompt for Gemini Flash."""
     lines = "\n".join(
-        f"C{i + 1}: \"{c.get('text', c.get('constraint_text', ''))}\""
+        f'C{i + 1}: "{c.get("text", c.get("constraint_text", ""))}"'
         for i, c in enumerate(constraints)
     )
     return (
@@ -1366,9 +1529,9 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     Spec: GAOS-Manager-Spec.md §2.5 Step 5
     """
     from config import get_settings
+    from tools.google_chat import send_approval_card
     from tools.google_docs import create_document
     from tools.google_sheets import append_row
-    from tools.google_chat import send_approval_card
 
     msg = state.get("incoming_message")
     if msg is None:
@@ -1382,8 +1545,14 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     task_id = state.get("task_id", str(uuid.uuid4()))
 
     if not vision_text:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   "vision_blueprint: empty vision_text — skipping", "WARNING")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            "vision_blueprint: empty vision_text — skipping",
+            "WARNING",
+        )
         return state
 
     settings = get_settings()
@@ -1404,7 +1573,10 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             f"(multimodal vision extraction — {settings.models.DEEP_MODEL})_"
         )
         _log_cloud(
-            "nexus-prime", project_id, "task", task_id,
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
             f"PRIORITY-2-COST-MONITOR vision_blueprint image_source tokens={resp.tokens_used} "
             f"submitted_by={submitted_by}",
             "INFO",
@@ -1423,11 +1595,18 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             initial_content=blueprint_content,
         )
         doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"vision_blueprint: created doc {doc_id}")
+        _log_cloud(
+            "nexus-prime", project_id, "task", task_id, f"vision_blueprint: created doc {doc_id}"
+        )
     except Exception as exc:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"vision_blueprint: doc creation failed: {exc}", "ERROR")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"vision_blueprint: doc creation failed: {exc}",
+            "ERROR",
+        )
 
     # ── 3. Register blueprint in working memory ───────────────────────────────
     active: dict = state.get("active_blueprints") or {}  # type: ignore[assignment]
@@ -1448,8 +1627,14 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     try:
         append_row("Project_Incubator", incubator_row, project_id)
     except Exception as exc:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"vision_blueprint: Sheet append failed: {exc}", "WARNING")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"vision_blueprint: Sheet append failed: {exc}",
+            "WARNING",
+        )
 
     # ── 5. Send approval card to owner's Chat space ───────────────────────────
     owner_space = settings.chat.owner_space if settings.chat.owner_space else space_name
@@ -1460,17 +1645,28 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                 proposal_id=blueprint_id,
                 agent_id="nexus-prime",
                 issue_summary=f"New vision submitted by {submitted_by}: {vision_text[:120]}",
-                proposed_action=f"Blueprint Doc created. Review and approve to proceed.",
+                proposed_action="Blueprint Doc created. Review and approve to proceed.",
                 priority=3,
                 cost_usd=state.get("cost_usd", 0.0),
                 doc_url=doc_url,
             )
         except Exception as exc:
-            _log_cloud("nexus-prime", project_id, "task", task_id,
-                       f"vision_blueprint: Chat card failed: {exc}", "WARNING")
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"vision_blueprint: Chat card failed: {exc}",
+                "WARNING",
+            )
 
-    _log_cloud("nexus-prime", project_id, "task", task_id,
-               f"vision_blueprint complete: blueprint_id={blueprint_id} doc_id={doc_id}")
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"vision_blueprint complete: blueprint_id={blueprint_id} doc_id={doc_id}",
+    )
     return state
 
 
@@ -1515,11 +1711,22 @@ def _run_compaction(
     try:
         insert_rows("aos_logs.blueprint_constraints", bq_rows, project_id)
     except Exception as exc:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"_run_compaction: BQ archive failed: {exc}", "WARNING")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"_run_compaction: BQ archive failed: {exc}",
+            "WARNING",
+        )
 
-    _log_cloud("nexus-prime", project_id, "task", task_id,
-               f"_run_compaction: compacted {len(constraints)} constraints for blueprint {blueprint_id}")
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"_run_compaction: compacted {len(constraints)} constraints for blueprint {blueprint_id}",
+    )
     return compacted_text
 
 
@@ -1550,17 +1757,25 @@ def iterate_plan(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     task_id = state.get("task_id", str(uuid.uuid4()))
 
     if not constraint_text:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   "iterate_plan: empty constraint_text — skipping", "WARNING")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            "iterate_plan: empty constraint_text — skipping",
+            "WARNING",
+        )
         return state
 
     constraints: list[dict] = list(state.get("blueprint_constraints") or [])  # type: ignore[assignment]
-    constraints.append({
-        "blueprint_id": blueprint_id,
-        "text": constraint_text,
-        "comment_author": comment_author,
-        "comment_timestamp": comment_timestamp,
-    })
+    constraints.append(
+        {
+            "blueprint_id": blueprint_id,
+            "text": constraint_text,
+            "comment_author": comment_author,
+            "comment_timestamp": comment_timestamp,
+        }
+    )
 
     doc_content_to_append = constraint_text
 
@@ -1593,12 +1808,22 @@ def iterate_plan(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                 project_id=project_id,
             )
         except Exception as exc:
-            _log_cloud("nexus-prime", project_id, "task", task_id,
-                       f"iterate_plan: append_content failed for doc {doc_id}: {exc}", "WARNING")
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"iterate_plan: append_content failed for doc {doc_id}: {exc}",
+                "WARNING",
+            )
 
-    _log_cloud("nexus-prime", project_id, "task", task_id,
-               f"iterate_plan complete: blueprint_id={blueprint_id} "
-               f"total_constraints={len(constraints)}")
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"iterate_plan complete: blueprint_id={blueprint_id} total_constraints={len(constraints)}",
+    )
     return state
 
 
@@ -1629,10 +1854,17 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
     incubator_rows: list[dict] = []
     try:
         from tools.google_sheets import get_all_records
+
         incubator_rows = get_all_records("Project_Incubator", project_id)
     except Exception as exc:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"poll_comments: failed to read Project_Incubator: {exc}", "WARNING")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"poll_comments: failed to read Project_Incubator: {exc}",
+            "WARNING",
+        )
 
     active_docs = [
         (row.get("id", ""), row.get("doc_id", ""))
@@ -1644,8 +1876,14 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
         try:
             comments = list_comments(doc_id=doc_id, project_id=project_id)
         except Exception as exc:
-            _log_cloud("nexus-prime", project_id, "task", task_id,
-                       f"poll_comments: list_comments failed for doc {doc_id}: {exc}", "WARNING")
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"poll_comments: list_comments failed for doc {doc_id}: {exc}",
+                "WARNING",
+            )
             errors += 1
             continue
 
@@ -1654,6 +1892,7 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
                 continue
 
             from models import A2AMessage, MessageType
+
             msg = A2AMessage(
                 source_agent="doc-comment-poll",
                 target_agent="nexus-prime",
@@ -1678,14 +1917,24 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
                 )
                 published += 1
             except Exception as exc:
-                _log_cloud("nexus-prime", project_id, "task", task_id,
-                           f"poll_comments: publish failed for comment {comment.get('id')}: {exc}",
-                           "WARNING")
+                _log_cloud(
+                    "nexus-prime",
+                    project_id,
+                    "task",
+                    task_id,
+                    f"poll_comments: publish failed for comment {comment.get('id')}: {exc}",
+                    "WARNING",
+                )
                 errors += 1
 
-    _log_cloud("nexus-prime", project_id, "task", task_id,
-               f"poll_comments complete: {published} published, {errors} errors, "
-               f"{len(active_docs)} docs polled")
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"poll_comments complete: {published} published, {errors} errors, "
+        f"{len(active_docs)} docs polled",
+    )
 
     return {
         "docs_polled": len(active_docs),
@@ -1750,8 +1999,14 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
                     project_id,
                 )
             except Exception as exc:
-                _log_cloud("nexus-prime", project_id, "task", task_id,
-                           f"handle_skill_request: update_row failed: {exc}", "WARNING")
+                _log_cloud(
+                    "nexus-prime",
+                    project_id,
+                    "task",
+                    task_id,
+                    f"handle_skill_request: update_row failed: {exc}",
+                    "WARNING",
+                )
 
             # Remove from parked list
             state["parked_proposals"] = [
@@ -1783,8 +2038,14 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
             try:
                 publish(topic, reply, project_id)
             except Exception as exc:
-                _log_cloud("nexus-prime", project_id, "task", task_id,
-                           f"handle_skill_request: publish Approved failed: {exc}", "WARNING")
+                _log_cloud(
+                    "nexus-prime",
+                    project_id,
+                    "task",
+                    task_id,
+                    f"handle_skill_request: publish Approved failed: {exc}",
+                    "WARNING",
+                )
         else:
             alert = A2AMessage(
                 source_agent="nexus-prime",
@@ -1803,12 +2064,23 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
             try:
                 publish(topic, alert, project_id)
             except Exception as exc:
-                _log_cloud("nexus-prime", project_id, "task", task_id,
-                           f"handle_skill_request: publish Rejected failed: {exc}", "WARNING")
+                _log_cloud(
+                    "nexus-prime",
+                    project_id,
+                    "task",
+                    task_id,
+                    f"handle_skill_request: publish Rejected failed: {exc}",
+                    "WARNING",
+                )
 
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"handle_skill_request: resolution {status} for proposal={proposal_id} "
-                   f"package={package_name} agent={requesting_agent}")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"handle_skill_request: resolution {status} for proposal={proposal_id} "
+            f"package={package_name} agent={requesting_agent}",
+        )
         return state
 
     # ── Inbound request path ──────────────────────────────────────────────────
@@ -1818,8 +2090,14 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
     pypi_url: str = payload.get("pypi_url", "")
 
     if not package_name:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   "handle_skill_request: missing package_name — skipping", "WARNING")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            "handle_skill_request: missing package_name — skipping",
+            "WARNING",
+        )
         return state
 
     proposal_id = str(uuid.uuid4())
@@ -1829,7 +2107,9 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
         "ID": proposal_id,
         "Agent ID": agent_id,
         "Issue": f"Skill import request: {package_name}",
-        "Trigger Reason": reason[:500] if reason else "ModuleNotFoundError in Write-Test-Refine loop",
+        "Trigger Reason": reason[:500]
+        if reason
+        else "ModuleNotFoundError in Write-Test-Refine loop",
         "Stopping Constraint": "Owner must approve before library is installed",
         "Iterations Run": 0,
         "Total Cost USD": 0.0,
@@ -1844,8 +2124,14 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
         append_row("Agent_Approvals", row, project_id)
         state["parked_proposals"].append(proposal_id)
     except Exception as exc:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   f"handle_skill_request: Sheet append failed: {exc}", "WARNING")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"handle_skill_request: Sheet append failed: {exc}",
+            "WARNING",
+        )
 
     # Send Chat card to owner's space
     settings = get_settings()
@@ -1861,19 +2147,37 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
                 pypi_url=pypi_url,
             )
         except Exception as exc:
-            _log_cloud("nexus-prime", project_id, "task", task_id,
-                       f"handle_skill_request: Chat card failed: {exc}", "WARNING")
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"handle_skill_request: Chat card failed: {exc}",
+                "WARNING",
+            )
     else:
-        _log_cloud("nexus-prime", project_id, "task", task_id,
-                   "handle_skill_request: chat.owner_space not configured — card not sent", "WARNING")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            "handle_skill_request: chat.owner_space not configured — card not sent",
+            "WARNING",
+        )
 
-    _log_cloud("nexus-prime", project_id, "task", task_id,
-               f"handle_skill_request: inbound request parked proposal_id={proposal_id} "
-               f"package={package_name} agent={agent_id}")
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"handle_skill_request: inbound request parked proposal_id={proposal_id} "
+        f"package={package_name} agent={agent_id}",
+    )
     return state
 
 
 # ── Graph assembly ────────────────────────────────────────────────────────────
+
 
 def build_nexus_prime_graph() -> Any:
     """
@@ -1882,42 +2186,42 @@ def build_nexus_prime_graph() -> Any:
     """
     graph: StateGraph = StateGraph(NexusPrimeWorkingMemory)
 
-    graph.add_node("boot",              boot)
-    graph.add_node("monitor",           monitor)
-    graph.add_node("route",             route)
-    graph.add_node("think",             think)
-    graph.add_node("diagnose",          diagnose)
-    graph.add_node("propose_gate",      propose_gate)
-    graph.add_node("knowledge_review",  knowledge_review)
-    graph.add_node("promote",           promote)
-    graph.add_node("init_project",      init_project)
-    graph.add_node("notify_agents",     notify_agents)
-    graph.add_node("conflict_resolve",  conflict_resolve)
+    graph.add_node("boot", boot)
+    graph.add_node("monitor", monitor)
+    graph.add_node("route", route)
+    graph.add_node("think", think)
+    graph.add_node("diagnose", diagnose)
+    graph.add_node("propose_gate", propose_gate)
+    graph.add_node("knowledge_review", knowledge_review)
+    graph.add_node("promote", promote)
+    graph.add_node("init_project", init_project)
+    graph.add_node("notify_agents", notify_agents)
+    graph.add_node("conflict_resolve", conflict_resolve)
     graph.add_node("park_or_broadcast", park_or_broadcast)
-    graph.add_node("record",            record)
-    graph.add_node("vision_blueprint",  vision_blueprint)
-    graph.add_node("iterate_plan",      iterate_plan)
+    graph.add_node("record", record)
+    graph.add_node("vision_blueprint", vision_blueprint)
+    graph.add_node("iterate_plan", iterate_plan)
     graph.add_node("handle_skill_request", handle_skill_request)
 
     graph.set_entry_point("boot")
-    graph.add_edge("boot",    "monitor")
+    graph.add_edge("boot", "monitor")
     graph.add_edge("monitor", "route")
 
     graph.add_conditional_edges(
         "route",
         route,
         {
-            "think":                 "think",
-            "diagnose":              "diagnose",
-            "knowledge_review":      "knowledge_review",
-            "init_project":          "init_project",
-            "conflict_resolve":      "conflict_resolve",
-            "promote":               "promote",
-            "park_or_broadcast":     "park_or_broadcast",
-            "record":                "record",
-            "vision_blueprint":      "vision_blueprint",
-            "iterate_plan":          "iterate_plan",
-            "handle_skill_request":  "handle_skill_request",
+            "think": "think",
+            "diagnose": "diagnose",
+            "knowledge_review": "knowledge_review",
+            "init_project": "init_project",
+            "conflict_resolve": "conflict_resolve",
+            "promote": "promote",
+            "park_or_broadcast": "park_or_broadcast",
+            "record": "record",
+            "vision_blueprint": "vision_blueprint",
+            "iterate_plan": "iterate_plan",
+            "handle_skill_request": "handle_skill_request",
         },
     )
 
@@ -1926,24 +2230,24 @@ def build_nexus_prime_graph() -> Any:
         "think",
         _route_from_think,
         {
-            "diagnose":        "diagnose",
+            "diagnose": "diagnose",
             "knowledge_review": "knowledge_review",
-            "record":          "record",
+            "record": "record",
         },
     )
 
-    graph.add_edge("diagnose",          "propose_gate")
-    graph.add_edge("propose_gate",      "record")
-    graph.add_edge("knowledge_review",  "record")
-    graph.add_edge("promote",           "record")
-    graph.add_edge("init_project",      "notify_agents")
-    graph.add_edge("notify_agents",     "record")
-    graph.add_edge("conflict_resolve",  "record")
+    graph.add_edge("diagnose", "propose_gate")
+    graph.add_edge("propose_gate", "record")
+    graph.add_edge("knowledge_review", "record")
+    graph.add_edge("promote", "record")
+    graph.add_edge("init_project", "notify_agents")
+    graph.add_edge("notify_agents", "record")
+    graph.add_edge("conflict_resolve", "record")
     graph.add_edge("park_or_broadcast", "record")
-    graph.add_edge("vision_blueprint",     "record")
-    graph.add_edge("iterate_plan",         "record")
+    graph.add_edge("vision_blueprint", "record")
+    graph.add_edge("iterate_plan", "record")
     graph.add_edge("handle_skill_request", "record")
-    graph.add_edge("record",               END)
+    graph.add_edge("record", END)
 
     return graph.compile(checkpointer=MemorySaver())
 
@@ -1952,12 +2256,14 @@ def build_nexus_prime_graph() -> Any:
 
 try:
     from google.adk.agents import Agent as _BaseAgent
+
     _HAS_ADK = True
 except ImportError:
     _HAS_ADK = False
 
 
 if _HAS_ADK:
+
     class NexusPrimeAgent(_BaseAgent):  # type: ignore[misc]
         """
         Tier 1 Root Agent — ADK wrapper for Nexus-Prime.
@@ -1978,6 +2284,7 @@ if _HAS_ADK:
 
         def __init__(self, **data: Any) -> None:
             from config import get_settings
+
             settings = get_settings()
             data["model"] = settings.models.DEEP_MODEL
             data["instruction"] = _load_identity_file("nexus-prime")
@@ -2037,7 +2344,6 @@ if _HAS_ADK:
                 status = "failed"
                 final_state = initial_state
 
-            from models import AgentOutput
             return AgentOutput(
                 task_id=final_state.get("task_id", initial_state["task_id"]),
                 project_id=final_state.get("project_id", ""),
@@ -2051,6 +2357,7 @@ else:
     # Fallback stub when google-adk is not installed (CI / unit tests)
     class NexusPrimeAgent:  # type: ignore[no-redef]
         """Fallback: google-adk not available."""
+
         name = "nexus-prime"
         _graph = None
 

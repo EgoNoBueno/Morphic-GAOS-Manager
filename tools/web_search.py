@@ -9,6 +9,7 @@ Usage:
     snippets = web_search("current price of steel per ton 2026")
     # Returns a multi-line string of top results, or "" on failure.
 """
+
 from __future__ import annotations
 
 import logging

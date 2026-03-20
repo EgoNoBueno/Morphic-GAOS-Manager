@@ -1,4 +1,5 @@
 """tests/test_vertex_search.py — Unit tests for tools/vertex_search.py"""
+
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -34,12 +35,15 @@ projects:
     drive_folder_id: folder-abc
 """
 
-_YAML_WITH_VS = _BASE_YAML + """\
+_YAML_WITH_VS = (
+    _BASE_YAML
+    + """\
 vertex_search:
   location: global
   playbook_datastore_id: playbook-ds-001
   knowledge_datastore_id: knowledge-ds-001
 """
+)
 
 
 @pytest.fixture()
@@ -47,6 +51,7 @@ def settings_with_vs(tmp_path):
     cfg = tmp_path / "settings.yaml"
     cfg.write_text(_YAML_WITH_VS)
     import config
+
     config._reset_for_testing()
     config.load_settings(cfg)
     yield
@@ -58,6 +63,7 @@ def settings_no_vs(tmp_path):
     cfg = tmp_path / "settings.yaml"
     cfg.write_text(_BASE_YAML)
     import config
+
     config._reset_for_testing()
     config.load_settings(cfg)
     yield

@@ -16,17 +16,19 @@ Arguments:
 Exit:
     Ctrl-C to stop. Logs every cycle to stdout and to the Logs Sheet tab.
 """
+
 from __future__ import annotations
 
 import argparse
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 
 # Ensure stdout handles full Unicode (e.g. model responses with em-dashes, arrows)
 import io as _io
+
 if isinstance(sys.stdout, _io.TextIOWrapper):
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -34,15 +36,14 @@ from agents import _call_model
 from config import get_settings
 from tools.google_sheets import append_row, get_all_records, init_sheets_client
 
-
 _AGENT_ID = "observability-loop"
 _LOG_LEVEL = "SYSTEM_THOUGHTS"
-_MAX_LOG_ROWS = 50      # rows read for context; keeps prompt small
+_MAX_LOG_ROWS = 50  # rows read for context; keeps prompt small
 _MAX_SUMMARY_CHARS = 400
 
 
 def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _run_cycle(project_id: str, settings) -> None:
@@ -101,7 +102,9 @@ def _run_cycle(project_id: str, settings) -> None:
     }
     try:
         append_row("Logs", row, project_id)
-        print(f"[{_utcnow()}] SYSTEM_THOUGHTS appended ({len(sample)} rows sampled, model={model_used}):")
+        print(
+            f"[{_utcnow()}] SYSTEM_THOUGHTS appended ({len(sample)} rows sampled, model={model_used}):"
+        )
         print(f"  -> {thought[:120]}{'...' if len(thought) > 120 else ''}")
     except Exception as exc:
         print(f"[{_utcnow()}] ERROR appending to Logs: {exc}")
@@ -115,12 +118,15 @@ def _agent_id_with_model(model: str) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="GAOS Phase 2 observability loop")
-    parser.add_argument("--interval", type=int, default=5,
-                        help="Poll interval in minutes (default: 5)")
-    parser.add_argument("--project", default="morphic-gaos-prod",
-                        help="GAOS project_id (default: morphic-gaos-prod)")
-    parser.add_argument("--once", action="store_true",
-                        help="Run one cycle and exit")
+    parser.add_argument(
+        "--interval", type=int, default=5, help="Poll interval in minutes (default: 5)"
+    )
+    parser.add_argument(
+        "--project",
+        default="morphic-gaos-prod",
+        help="GAOS project_id (default: morphic-gaos-prod)",
+    )
+    parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
     args = parser.parse_args()
 
     settings = get_settings()
@@ -129,7 +135,7 @@ def main() -> None:
 
     init_sheets_client(project_id)
 
-    print(f"=== GAOS Observability Loop ===")
+    print("=== GAOS Observability Loop ===")
     print(f"Project  : {project_id}")
     print(f"Model    : {settings.models.LOCAL_MODEL}")
     print(f"Fallback : {settings.models.LOCAL_MODEL_FALLBACK}")

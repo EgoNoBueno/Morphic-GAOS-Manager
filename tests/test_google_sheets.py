@@ -1,6 +1,6 @@
 """tests/test_google_sheets.py — Unit tests for tools/google_sheets.py"""
-from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+
+from unittest.mock import MagicMock, patch
 
 import gspread
 import pytest
@@ -9,14 +9,13 @@ import tools.google_sheets as sheets_mod
 from tools.google_sheets import (
     RateLimitError,
     RowNotFoundError,
-    SheetsReadError,
     SheetsWriteError,
     TabNotFoundError,
     WorkbookNotFoundError,
-    _TokenBucket,
     _quote_tab,
     _range,
     _retry,
+    _TokenBucket,
     append_row,
     batch_append_rows,
     find_row,
@@ -26,7 +25,6 @@ from tools.google_sheets import (
     read_range,
     update_row,
 )
-
 
 # ── Settings fixture ───────────────────────────────────────────────────────
 
@@ -80,8 +78,8 @@ def _make_ws(tab_name: str, headers: list[str], rows: list[list] = None) -> Magi
     ws.row_count = 100
     ws.row_values.return_value = headers
     all_records = []
-    for row in (rows or []):
-        all_records.append(dict(zip(headers, row)))
+    for row in rows or []:
+        all_records.append(dict(zip(headers, row, strict=False)))
     ws.get_all_records.return_value = all_records
     return ws
 
@@ -282,7 +280,7 @@ class TestUpdateRow:
             update_row("Approvals", 999, {"Status": "x"}, "default")
 
     def test_update_unknown_column_raises(self):
-        ws = self._setup(["ID", "Status"])
+        self._setup(["ID", "Status"])
         with pytest.raises(SheetsWriteError, match="NonExistent"):
             update_row("Approvals", 2, {"NonExistent": "x"}, "default")
 
@@ -385,6 +383,7 @@ class TestTokenBucket:
 
     def test_bucket_refills_over_time(self):
         import time as time_mod
+
         bucket = _TokenBucket(rate=1000.0, capacity=1.0)  # fast refill
         bucket.consume(timeout=0.0)  # drain
         time_mod.sleep(0.015)  # allow refill at 1000 tokens/sec

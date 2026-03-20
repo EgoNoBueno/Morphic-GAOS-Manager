@@ -36,9 +36,9 @@ TestChatEndpoint (8 tests):
   E7   POST /chat returns 404 when AGENT_NAME != nexus-prime.
   E8   POST /chat with image attachment dispatches VISION_SUBMITTED via vision extract.
 """
+
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import os
@@ -106,10 +106,12 @@ def _fake_service(captured: dict | None = None):
     messages_mock = MagicMock()
     messages_mock.create.return_value = create_mock
     if captured is not None:
+
         def _create(parent, body):
             captured["parent"] = parent
             captured["body"] = body
             return create_mock
+
         messages_mock.create.side_effect = _create
 
     spaces_mock = MagicMock()
@@ -210,8 +212,14 @@ class TestGoogleChatTool:
         svc = _fake_service(captured)
         with patch("tools.google_chat._get_chat_service", return_value=svc):
             send_approval_card(
-                _SPACE, _PROPOSAL_ID, "beacon", "issue", "action", 4, 0.0,
-                doc_url="https://docs.google.com/document/d/fake"
+                _SPACE,
+                _PROPOSAL_ID,
+                "beacon",
+                "issue",
+                "action",
+                4,
+                0.0,
+                doc_url="https://docs.google.com/document/d/fake",
             )
 
         card = captured["body"]["cardsV2"][0]["card"]
@@ -230,7 +238,13 @@ class TestGoogleChatTool:
         svc = _fake_service(captured)
         with patch("tools.google_chat._get_chat_service", return_value=svc):
             send_approval_card(
-                _SPACE, _PROPOSAL_ID, "beacon", "issue", "action", 4, 0.0,
+                _SPACE,
+                _PROPOSAL_ID,
+                "beacon",
+                "issue",
+                "action",
+                4,
+                0.0,
                 reasoning_summary="Detected 3 unmatched invoices; shifting to Research mode.",
             )
 
@@ -239,11 +253,7 @@ class TestGoogleChatTool:
         assert len(card["sections"]) == 3
         # Second section must contain the reasoning text.
         reasoning_widgets = card["sections"][1]["widgets"]
-        texts = [
-            w["textParagraph"]["text"]
-            for w in reasoning_widgets
-            if "textParagraph" in w
-        ]
+        texts = [w["textParagraph"]["text"] for w in reasoning_widgets if "textParagraph" in w]
         assert any("unmatched invoices" in t for t in texts)
 
     # C14
@@ -402,6 +412,7 @@ def _build_client(agent_name: str = "nexus-prime") -> TestClient:
     """Import main.py fresh with the given AGENT_NAME env var."""
     with patch.dict(os.environ, {"AGENT_NAME": agent_name, "GCP_PROJECT_ID": "test-project"}):
         import importlib
+
         import main as main_mod
 
         importlib.reload(main_mod)
@@ -442,6 +453,7 @@ class TestChatEndpoint:
     def _reloaded_client(self, mock_agent: MagicMock, agent_name: str = "nexus-prime"):
         """Reload main with env vars set, then patch _get_agent on the live module."""
         import importlib
+
         import main as main_mod
 
         with patch.dict(
@@ -589,7 +601,9 @@ class TestChatEndpoint:
         mock_agent = MagicMock()
         mock_agent.run = AsyncMock()
 
-        client, main_mod, patcher, jwt_patcher = self._reloaded_client(mock_agent, agent_name="scout")
+        client, main_mod, patcher, jwt_patcher = self._reloaded_client(
+            mock_agent, agent_name="scout"
+        )
         try:
             resp = client.post("/chat", json=self._message_body(), headers=self._HEADERS)
         finally:
@@ -637,7 +651,9 @@ class TestChatEndpoint:
         client, main_mod, patcher, jwt_patcher = self._reloaded_client(mock_agent)
         try:
             with (
-                patch.object(main_mod, "_download_chat_attachment", return_value=b"fake-image-bytes"),
+                patch.object(
+                    main_mod, "_download_chat_attachment", return_value=b"fake-image-bytes"
+                ),
                 patch("agents._call_model", return_value=mock_vision_resp),
             ):
                 resp = client.post("/chat", json=body, headers=self._HEADERS)

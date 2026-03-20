@@ -18,12 +18,13 @@ Usage:
 
 Spec: GAOS-Memory-Spec.md §5 (Layer 3), §6 (Layer 4)
 """
+
 from __future__ import annotations
 
 import argparse
 import sys
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 sys.path.insert(0, ".")
@@ -53,7 +54,7 @@ def _increment_confidence(current: float) -> float:
 
 
 def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _parse_dt(value: str) -> datetime | None:
@@ -66,7 +67,7 @@ def _parse_dt(value: str) -> datetime | None:
     try:
         dt = datetime.fromisoformat(value)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
     except (ValueError, TypeError):
         return None
@@ -94,7 +95,7 @@ def run_expiry_sweep(
     """
     from tools.bigquery import insert_row  # deferred
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=_EXPIRY_DAYS)
+    cutoff = datetime.now(UTC) - timedelta(days=_EXPIRY_DAYS)
     expired = 0
 
     for row in rows:
@@ -193,8 +194,7 @@ def run_confidence_sweep(
         print(
             f"  [confidence] {knowledge_id[:12]}… "
             f"conf {old_confidence:.3f} → {new_confidence:.3f} "
-            f"(obs {new_count})"
-            + (" → PROPOSE" if crosses_threshold else "")
+            f"(obs {new_count})" + (" → PROPOSE" if crosses_threshold else "")
         )
 
         updates: dict[str, Any] = {
@@ -285,7 +285,7 @@ def run_promotion_sweep(
         except (ValueError, TypeError):
             confidence = 0.0
 
-        approved_at = _parse_dt(str(row.get("approved_at", ""))) or datetime.now(timezone.utc)
+        approved_at = _parse_dt(str(row.get("approved_at", ""))) or datetime.now(UTC)
 
         entry = MemoryEntry(
             project_id=project_id,
@@ -293,11 +293,7 @@ def run_promotion_sweep(
             knowledge_type=str(row.get("knowledge_type", "fact")),
             domain=str(row.get("domain", "global")),
             content=str(row.get("content", "")),
-            evidence=[
-                t.strip()
-                for t in str(row.get("evidence", "")).split(",")
-                if t.strip()
-            ],
+            evidence=[t.strip() for t in str(row.get("evidence", "")).split(",") if t.strip()],
             confidence=confidence,
             approved_by=str(row.get("approved_by", "")),
             approved_at=approved_at,
@@ -314,10 +310,7 @@ def run_promotion_sweep(
                 )
                 print(f"  [promotion] Written as memory_id={memory_id}")
             except MemoryBankError as exc:
-                print(
-                    f"  [promotion] WARNING — Memory Bank write failed "
-                    f"for {knowledge_id}: {exc}"
-                )
+                print(f"  [promotion] WARNING — Memory Bank write failed for {knowledge_id}: {exc}")
                 continue
             except Exception as exc:
                 print(f"  [promotion] WARNING — Unexpected error for {knowledge_id}: {exc}")

@@ -7,12 +7,12 @@ Sheet workbook, Drive folder, and Pub/Sub topic prefix.
 
 Spec: GAOS-Tools-Spec.md §7
 """
+
 from __future__ import annotations
 
 from pydantic import BaseModel, ValidationError
 
-from tools.google_sheets import TabNotFoundError, get_all_records
-
+from tools.google_sheets import get_all_records
 
 # ── Error types ──────────────────────────────────────────────────────────────
 
@@ -45,15 +45,15 @@ class ProjectRecord(BaseModel):
         drive_folder_id | budget_ceiling_usd | owner_email | created_date | notes
     """
 
-    project_id: str                 # Unique slug (e.g., "acme", "northstar")
-    project_name: str               # Human-readable display name
-    status: str                     # "Active" | "Pending" | "Paused" | "Archived"
-    sheet_workbook_id: str          # Google Sheets workbook ID for this project
-    drive_folder_id: str            # Knowledge/ root Drive folder ID
-    budget_ceiling_usd: str = ""   # Monthly LLM spend ceiling (blank = no limit)
-    owner_email: str = ""          # Google account to notify on escalations
-    created_date: str = ""         # ISO 8601 date the project was registered
-    notes: str = ""                # Free-text context for Nexus-Prime
+    project_id: str  # Unique slug (e.g., "acme", "northstar")
+    project_name: str  # Human-readable display name
+    status: str  # "Active" | "Pending" | "Paused" | "Archived"
+    sheet_workbook_id: str  # Google Sheets workbook ID for this project
+    drive_folder_id: str  # Knowledge/ root Drive folder ID
+    budget_ceiling_usd: str = ""  # Monthly LLM spend ceiling (blank = no limit)
+    owner_email: str = ""  # Google account to notify on escalations
+    created_date: str = ""  # ISO 8601 date the project was registered
+    notes: str = ""  # Free-text context for Nexus-Prime
 
 
 # ── Tab name ─────────────────────────────────────────────────────────────────
@@ -118,14 +118,8 @@ def get_project(project_id: str, system_project_id: str) -> ProjectRecord:
     for record in records:
         if record.project_id == project_id:
             if record.status == "Paused":
-                raise ProjectPausedError(
-                    f"Project '{project_id}' is currently paused."
-                )
+                raise ProjectPausedError(f"Project '{project_id}' is currently paused.")
             if record.status == "Archived":
-                raise ProjectArchivedError(
-                    f"Project '{project_id}' has been archived."
-                )
+                raise ProjectArchivedError(f"Project '{project_id}' has been archived.")
             return record
-    raise ProjectNotFoundError(
-        f"No project with project_id='{project_id}' found in the registry."
-    )
+    raise ProjectNotFoundError(f"No project with project_id='{project_id}' found in the registry.")

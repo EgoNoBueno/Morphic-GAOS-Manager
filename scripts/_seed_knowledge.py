@@ -2,12 +2,13 @@
 Create seed knowledge files in the Google Drive Knowledge/ folder.
 Reads drive_folder_id from config/settings.yaml.
 """
+
 from __future__ import annotations
 
-import yaml
 from pathlib import Path
 
 import google.auth
+import yaml
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
@@ -255,11 +256,18 @@ def get_or_create_folder(drive, parent_id: str, name: str) -> str:
     files = results.get("files", [])
     if files:
         return files[0]["id"]
-    folder = drive.files().create(body={
-        "name": name,
-        "mimeType": "application/vnd.google-apps.folder",
-        "parents": [parent_id],
-    }, fields="id").execute()
+    folder = (
+        drive.files()
+        .create(
+            body={
+                "name": name,
+                "mimeType": "application/vnd.google-apps.folder",
+                "parents": [parent_id],
+            },
+            fields="id",
+        )
+        .execute()
+    )
     return folder["id"]
 
 
@@ -314,6 +322,7 @@ def main() -> None:
 
 def _media(content: str):
     from googleapiclient.http import MediaInMemoryUpload
+
     return MediaInMemoryUpload(content.encode("utf-8"), mimetype="text/plain")
 
 

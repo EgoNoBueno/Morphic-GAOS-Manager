@@ -1,7 +1,7 @@
 """tests/test_pubsub.py — Unit tests for tools/pubsub.py"""
+
 import base64
 import json
-from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,7 +18,6 @@ from tools.pubsub import (
     ensure_topic_exists,
     publish,
 )
-
 
 # ── Settings fixture ───────────────────────────────────────────────────────
 
@@ -54,6 +53,7 @@ def load_test_settings(tmp_path):
 
 
 # ── Sample A2AMessage ──────────────────────────────────────────────────────
+
 
 @pytest.fixture()
 def sample_message():

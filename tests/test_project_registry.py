@@ -1,4 +1,5 @@
 """tests/test_project_registry.py — Unit tests for tools/project_registry.py"""
+
 from unittest.mock import patch
 
 import pytest
@@ -13,7 +14,6 @@ from tools.project_registry import (
     get_project,
     load_project_registry,
 )
-
 
 # ── Settings fixture ───────────────────────────────────────────────────────
 

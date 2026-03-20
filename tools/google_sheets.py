@@ -14,6 +14,7 @@ Key behaviours enforced here:
 
 Spec: GAOS-Tools-Spec.md §3
 """
+
 from __future__ import annotations
 
 import threading
@@ -25,7 +26,6 @@ import gspread
 import gspread.exceptions
 
 from config import get_settings
-
 
 # ── Error types ────────────────────────────────────────────────────────────
 
@@ -127,12 +127,10 @@ def _retry(fn: Any, *args: Any, **kwargs: Any) -> Any:
             code = getattr(exc.response, "status_code", 0)
             if code == 429 or code >= 500:
                 last_err = exc
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
                 continue
             raise
-    raise RateLimitError(
-        f"Sheets API still failing after 3 retries: {last_err}"
-    ) from last_err
+    raise RateLimitError(f"Sheets API still failing after 3 retries: {last_err}") from last_err
 
 
 def _get_worksheet(tab: str) -> gspread.Worksheet:
@@ -141,8 +139,8 @@ def _get_worksheet(tab: str) -> gspread.Worksheet:
         raise RuntimeError("init_sheets_client() must be called before any Sheet operation.")
     try:
         return _spreadsheet.worksheet(tab)
-    except gspread.exceptions.WorksheetNotFound:
-        raise TabNotFoundError(f"Tab '{tab}' not found in workbook.")
+    except gspread.exceptions.WorksheetNotFound as exc:
+        raise TabNotFoundError(f"Tab '{tab}' not found in workbook.") from exc
 
 
 def _col_index(ws: gspread.Worksheet, header: str) -> int:
@@ -150,10 +148,8 @@ def _col_index(ws: gspread.Worksheet, header: str) -> int:
     headers = ws.row_values(1)
     try:
         return headers.index(header) + 1
-    except ValueError:
-        raise SheetsReadError(
-            f"Column '{header}' not found in tab headers: {headers}"
-        )
+    except ValueError as exc:
+        raise SheetsReadError(f"Column '{header}' not found in tab headers: {headers}") from exc
 
 
 # ── Initialisation ─────────────────────────────────────────────────────────
@@ -186,19 +182,21 @@ def init_sheets_client(project_id: str) -> None:
             "Add it under 'projects.<project_id>.sheet_id' in config/settings.yaml."
         )
 
-    creds, _ = google.auth.default(scopes=[
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive.file",
-    ])
+    creds, _ = google.auth.default(
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive.file",
+        ]
+    )
     _client = gspread.Client(auth=creds)
 
     try:
         _spreadsheet = _client.open_by_key(project.sheet_id)
-    except gspread.exceptions.SpreadsheetNotFound:
+    except gspread.exceptions.SpreadsheetNotFound as exc:
         raise WorkbookNotFoundError(
             f"Spreadsheet '{project.sheet_id}' not found or inaccessible. "
             "Ensure the ADC identity has been granted access to the workbook."
-        )
+        ) from exc
 
 
 # ── Core functions ─────────────────────────────────────────────────────────
@@ -217,9 +215,7 @@ def append_row(tab: str, row: dict[str, Any], project_id: str) -> None:
     batch_append_rows(tab, [row], project_id)
 
 
-def batch_append_rows(
-    tab: str, rows: list[dict[str, Any]], project_id: str
-) -> None:
+def batch_append_rows(tab: str, rows: list[dict[str, Any]], project_id: str) -> None:
     """
     Append multiple rows in a single API call (values_append).
     All rows must have identical key sets matching the tab header.
@@ -294,9 +290,7 @@ def read_range(tab: str, a1_range: str, project_id: str) -> list[list[Any]]:
         raise SheetsReadError(f"Range read '{full_range}' failed: {exc}") from exc
 
 
-def update_row(
-    tab: str, row_index: int | str, updates: dict[str, Any], project_id: str
-) -> None:
+def update_row(tab: str, row_index: int | str, updates: dict[str, Any], project_id: str) -> None:
     """
     Update specific columns in an existing row.
 
@@ -317,16 +311,13 @@ def update_row(
         # gspread 6.x returns None (not an exception) when nothing matches.
         cell = _retry(ws.find, row_index, in_column=1)
         if cell is None:
-            raise RowNotFoundError(
-                f"No row with ID='{row_index}' in tab '{tab}'."
-            )
+            raise RowNotFoundError(f"No row with ID='{row_index}' in tab '{tab}'.")
         actual_row = cell.row
     else:
         row_count = ws.row_count
         if row_index < 1 or row_index > row_count:
             raise RowNotFoundError(
-                f"Row {row_index} is out of range for tab '{tab}' "
-                f"(1–{row_count})."
+                f"Row {row_index} is out of range for tab '{tab}' (1–{row_count})."
             )
         actual_row = row_index
 
@@ -334,13 +325,9 @@ def update_row(
     cells_to_update = []
     for col_header, value in updates.items():
         if col_header not in headers:
-            raise SheetsWriteError(
-                f"Column '{col_header}' not found in tab '{tab}' headers."
-            )
+            raise SheetsWriteError(f"Column '{col_header}' not found in tab '{tab}' headers.")
         col_idx = headers.index(col_header) + 1
-        cells_to_update.append(
-            gspread.Cell(row=actual_row, col=col_idx, value=str(value))
-        )
+        cells_to_update.append(gspread.Cell(row=actual_row, col=col_idx, value=str(value)))
 
     if not cells_to_update:
         return
@@ -350,14 +337,10 @@ def update_row(
     try:
         _retry(ws.update_cells, cells_to_update)
     except gspread.exceptions.APIError as exc:
-        raise SheetsWriteError(
-            f"Row update on '{tab}' row {row_index} failed: {exc}"
-        ) from exc
+        raise SheetsWriteError(f"Row update on '{tab}' row {row_index} failed: {exc}") from exc
 
 
-def find_row(
-    tab: str, column: str, value: str, project_id: str
-) -> dict[str, Any] | None:
+def find_row(tab: str, column: str, value: str, project_id: str) -> dict[str, Any] | None:
     """
     Return the first row where `column` equals `value`, as a dict.
     Returns None if no matching row exists. Case-sensitive match.
@@ -372,9 +355,7 @@ def find_row(
     return None
 
 
-def find_rows(
-    tab: str, column: str, value: str, project_id: str
-) -> list[dict[str, Any]]:
+def find_rows(tab: str, column: str, value: str, project_id: str) -> list[dict[str, Any]]:
     """
     Return all rows where `column` equals `value`. Returns empty list if none match.
     """
@@ -382,9 +363,7 @@ def find_rows(
     return [r for r in records if str(r.get(column, "")) == value]
 
 
-def get_all_records_with_row_numbers(
-    tab: str, project_id: str
-) -> list[tuple[int, dict[str, Any]]]:
+def get_all_records_with_row_numbers(tab: str, project_id: str) -> list[tuple[int, dict[str, Any]]]:
     """
     Return all data rows as (sheet_row_number, record) pairs.
 
@@ -410,8 +389,7 @@ def get_all_records_with_row_numbers(
     result: list[tuple[int, dict[str, Any]]] = []
     for sheet_row_number, row_values in enumerate(all_values[1:], start=2):
         record = {
-            headers[j]: (row_values[j] if j < len(row_values) else "")
-            for j in range(len(headers))
+            headers[j]: (row_values[j] if j < len(row_values) else "") for j in range(len(headers))
         }
         result.append((sheet_row_number, record))
     return result
@@ -444,6 +422,4 @@ def delete_rows(tab: str, row_numbers: list[int], project_id: str) -> None:
         try:
             _retry(ws.delete_rows, row_num)
         except gspread.exceptions.APIError as exc:
-            raise SheetsWriteError(
-                f"Delete row {row_num} from '{tab}' failed: {exc}"
-            ) from exc
+            raise SheetsWriteError(f"Delete row {row_num} from '{tab}' failed: {exc}") from exc

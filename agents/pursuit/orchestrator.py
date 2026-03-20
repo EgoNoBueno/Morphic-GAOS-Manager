@@ -9,17 +9,22 @@ Construction spec: Docs/GAOS-Agent-Spec.md
 Identity file:     Docs/agents/pursuit.md
 Master spec:       Docs/GAOS-Manager-Spec.md §1.2
 """
+
 from __future__ import annotations
 
 import time
 import uuid
 from typing import Any
 
-from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
 
 from agents import (
-    _call_model, _load_identity_file, _log_cloud, _write_heartbeat, utcnow_iso,
+    _call_model,
+    _load_identity_file,
+    _log_cloud,
+    _write_heartbeat,
+    utcnow_iso,
 )
 from models import A2AMessage, AgentWorkingMemory, MessageType
 
@@ -29,35 +34,50 @@ _AGENT_ID = "pursuit"
 _SHEET_TAB = "Sales by Product"
 _OUTBOUND_TOPIC = "agent.pursuit.events"
 _INBOUND_TOPICS = [
-    "agent.nexus-prime.events", "agent.beacon.events",
-    "agent.foreman.events", "agent.approvals.events",
+    "agent.nexus-prime.events",
+    "agent.beacon.events",
+    "agent.foreman.events",
+    "agent.approvals.events",
 ]
 
 
 def _local() -> str:
     from config import get_settings
+
     return get_settings().models.LOCAL_MODEL
 
 
 # ── Boot ──────────────────────────────────────────────────────────────────────
 
+
 def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
+    import sys
+
     from config import get_settings
     from tools.memory import load_domain_memory, query_episodic
     from tools.pubsub import ensure_topic_exists
-    from tools.secrets import get_secret, SecretNotFoundError, SecretAccessDenied
-    import sys
+    from tools.secrets import SecretAccessDenied, SecretNotFoundError, get_secret
 
     settings = get_settings()
     pid = state.get("project_id") or settings.GCP_PROJECT_ID
     state["project_id"] = pid
     state.setdefault("_started_at", time.time())
-    for k, v in [("cost_usd", 0.0), ("step_count", 0), ("tokens_used", 0),
-                 ("hard_stop_triggered", False), ("evolution_triggered", False),
-                 ("messages", []), ("sub_task_results", []), ("parked_proposals", []),
-                 ("error_history", []), ("observation_buffer", []),
-                 ("memory_context", {}), ("episodic_cache", {}),
-                 ("iteration_count", 0), ("current_objective", "Booting")]:
+    for k, v in [
+        ("cost_usd", 0.0),
+        ("step_count", 0),
+        ("tokens_used", 0),
+        ("hard_stop_triggered", False),
+        ("evolution_triggered", False),
+        ("messages", []),
+        ("sub_task_results", []),
+        ("parked_proposals", []),
+        ("error_history", []),
+        ("observation_buffer", []),
+        ("memory_context", {}),
+        ("episodic_cache", {}),
+        ("iteration_count", 0),
+        ("current_objective", "Booting"),
+    ]:
         state.setdefault(k, v)
 
     try:
@@ -86,6 +106,7 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
 # ── Plan ──────────────────────────────────────────────────────────────────────
 
+
 def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
     from tools.google_sheets import get_all_records
 
@@ -97,7 +118,8 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
         rows = get_all_records(_SHEET_TAB, pid)
         # Leads without scoring or with overdue follow-up
         pending_items = [
-            r for r in rows
+            r
+            for r in rows
             if not r.get("lead_score") or r.get("status") in ("Follow-Up Due", "Stale-Review")
         ][:10]
     except Exception:
@@ -108,10 +130,12 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
         pending_items.append(msg.payload or {})
 
     # Check Foreman stockout alerts — suspend quoting affected products
-    if msg and msg.message_type == MessageType.ALERT:
-        if (msg.payload or {}).get("alert_type") == "stock_insufficient":
-            pending_items.append({"task_type": "suspend_quoting",
-                                   "sku": msg.payload.get("sku", "")})
+    if (
+        msg
+        and msg.message_type == MessageType.ALERT
+        and (msg.payload or {}).get("alert_type") == "stock_insufficient"
+    ):
+        pending_items.append({"task_type": "suspend_quoting", "sku": msg.payload.get("sku", "")})
 
     prompt = (
         f"Sales pipeline plan. Pending leads/tasks ({len(pending_items)}): {pending_items[:5]}\n"
@@ -130,20 +154,32 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
 # ── Dispatch / Collect / Report / Park / Resume / Escalate ────────────────────
 # (pattern identical to Ledger — domain-specific task module paths differ)
 
+
 def _dispatch(state: AgentWorkingMemory) -> AgentWorkingMemory:
-    planned = (state["messages"][-1].get("tasks", []) if state.get("messages") else [])
+    planned = state["messages"][-1].get("tasks", []) if state.get("messages") else []
     for task in planned[:5]:
         task_type = task.get("task_type", "unknown")
         result: dict[str, Any] = {"task_type": task_type, "status": "skipped", "output": {}}
         try:
             import importlib
+
             mod = importlib.import_module(f"agents.pursuit.tasks.{task_type}")
             from models import AgentInput
-            out = mod.run(AgentInput(task_id=str(uuid.uuid4()),
-                project_id=state["project_id"],
-                instruction=f"Process: {task_type}", context=task.get("item", {})))
-            result = {"task_type": task_type, "status": out.status,
-                      "output": out.result, "cost_usd": out.cost_usd}
+
+            out = mod.run(
+                AgentInput(
+                    task_id=str(uuid.uuid4()),
+                    project_id=state["project_id"],
+                    instruction=f"Process: {task_type}",
+                    context=task.get("item", {}),
+                )
+            )
+            result = {
+                "task_type": task_type,
+                "status": out.status,
+                "output": out.result,
+                "cost_usd": out.cost_usd,
+            }
             state["cost_usd"] = state.get("cost_usd", 0.0) + out.cost_usd
         except (ModuleNotFoundError, AttributeError):
             result["status"] = "skipped"
@@ -158,9 +194,13 @@ def _dispatch(state: AgentWorkingMemory) -> AgentWorkingMemory:
 def _collect(state: AgentWorkingMemory) -> AgentWorkingMemory:
     results = state.get("sub_task_results", [])
     escalated = [r for r in results if r.get("status") == "escalated"]
-    state["messages"].append({"role": "system",
-        "content": f"Cycle: {len(results)} tasks, {len(escalated)} escalated.",
-        "escalated": escalated})
+    state["messages"].append(
+        {
+            "role": "system",
+            "content": f"Cycle: {len(results)} tasks, {len(escalated)} escalated.",
+            "escalated": escalated,
+        }
+    )
     return state
 
 
@@ -175,10 +215,15 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
     pid = state["project_id"]
     results = state.get("sub_task_results", [])
     rows_to_write = [
-        {"timestamp": utcnow_iso(), "agent_id": _AGENT_ID,
-         "task_type": r.get("task_type", ""), "status": r.get("status", ""),
-         "summary": str(r.get("output", ""))[:500]}
-        for r in results if r.get("status") == "success"
+        {
+            "timestamp": utcnow_iso(),
+            "agent_id": _AGENT_ID,
+            "task_type": r.get("task_type", ""),
+            "status": r.get("status", ""),
+            "summary": str(r.get("output", ""))[:500],
+        }
+        for r in results
+        if r.get("status") == "success"
     ]
     if rows_to_write:
         try:
@@ -186,36 +231,64 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
         except Exception:
             pass
     try:
-        publish(_OUTBOUND_TOPIC, A2AMessage(
-            source_agent=_AGENT_ID, target_agent="nexus-prime",
-            project_id=pid, task_id=state.get("task_id", str(uuid.uuid4())),
-            message_type=MessageType.STATUS_UPDATE, priority=1,
-            payload={"status": "WORKING", "cost_usd": state.get("cost_usd", 0.0)},
-        ), pid)
+        publish(
+            _OUTBOUND_TOPIC,
+            A2AMessage(
+                source_agent=_AGENT_ID,
+                target_agent="nexus-prime",
+                project_id=pid,
+                task_id=state.get("task_id", str(uuid.uuid4())),
+                message_type=MessageType.STATUS_UPDATE,
+                priority=1,
+                payload={"status": "WORKING", "cost_usd": state.get("cost_usd", 0.0)},
+            ),
+            pid,
+        )
     except Exception:
         pass
-    _write_heartbeat(_AGENT_ID, pid, "IDLE",
-                     state.get("current_objective", "Cycle complete"),
-                     len(state.get("parked_proposals", [])), "", _SHEET_TAB)
+    _write_heartbeat(
+        _AGENT_ID,
+        pid,
+        "IDLE",
+        state.get("current_objective", "Cycle complete"),
+        len(state.get("parked_proposals", [])),
+        "",
+        _SHEET_TAB,
+    )
     return state
 
 
 def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
     from tools.pubsub import publish
+
     pid = state["project_id"]
     proposal_id = str(uuid.uuid4())
     state["parked_proposals"].append(proposal_id)
     try:
-        publish(_OUTBOUND_TOPIC, A2AMessage(
-            source_agent=_AGENT_ID, target_agent="nexus-prime",
-            project_id=pid, task_id=state.get("task_id", proposal_id),
-            message_type=MessageType.TASK_HANDOFF, priority=3,
-            payload={"proposal_id": proposal_id},
-        ), pid)
+        publish(
+            _OUTBOUND_TOPIC,
+            A2AMessage(
+                source_agent=_AGENT_ID,
+                target_agent="nexus-prime",
+                project_id=pid,
+                task_id=state.get("task_id", proposal_id),
+                message_type=MessageType.TASK_HANDOFF,
+                priority=3,
+                payload={"proposal_id": proposal_id},
+            ),
+            pid,
+        )
     except Exception:
         pass
-    _write_heartbeat(_AGENT_ID, pid, "PARKED", f"Parked {proposal_id}",
-                     len(state["parked_proposals"]), "", _SHEET_TAB)
+    _write_heartbeat(
+        _AGENT_ID,
+        pid,
+        "PARKED",
+        f"Parked {proposal_id}",
+        len(state["parked_proposals"]),
+        "",
+        _SHEET_TAB,
+    )
     return state
 
 
@@ -229,23 +302,39 @@ def _resume(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
 def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
     from tools.pubsub import publish
+
     pid = state["project_id"]
     last_error = (state.get("error_history") or ["Unknown error"])[-1]
     try:
-        publish(_OUTBOUND_TOPIC, A2AMessage(
-            source_agent=_AGENT_ID, target_agent="nexus-prime",
-            project_id=pid, task_id=state.get("task_id", str(uuid.uuid4())),
-            message_type=MessageType.ESCALATION, priority=3,
-            payload={"description": last_error, "error_fingerprint": last_error[:64]},
-        ), pid)
+        publish(
+            _OUTBOUND_TOPIC,
+            A2AMessage(
+                source_agent=_AGENT_ID,
+                target_agent="nexus-prime",
+                project_id=pid,
+                task_id=state.get("task_id", str(uuid.uuid4())),
+                message_type=MessageType.ESCALATION,
+                priority=3,
+                payload={"description": last_error, "error_fingerprint": last_error[:64]},
+            ),
+            pid,
+        )
     except Exception:
         pass
-    _write_heartbeat(_AGENT_ID, pid, "ESCALATED", last_error[:100],
-                     len(state.get("parked_proposals", [])), last_error[:200], _SHEET_TAB)
+    _write_heartbeat(
+        _AGENT_ID,
+        pid,
+        "ESCALATED",
+        last_error[:100],
+        len(state.get("parked_proposals", [])),
+        last_error[:200],
+        _SHEET_TAB,
+    )
     return state
 
 
 # ── Graph assembly ────────────────────────────────────────────────────────────
+
 
 def _write_playbook(state: AgentWorkingMemory) -> AgentWorkingMemory:
     """
@@ -276,35 +365,50 @@ def _write_playbook(state: AgentWorkingMemory) -> AgentWorkingMemory:
             f"## Agents Involved\n- {_AGENT_ID}\n\n"
             "## Milestones\n"
             + "\n".join(
-                f"- {r.get('task_type', '?')}: {r.get('status', '?')}"
-                for r in results[:10]
+                f"- {r.get('task_type', '?')}: {r.get('status', '?')}" for r in results[:10]
             )
             + "\n\n## Constraints\n_None recorded._\n\n## Open Questions\n_None._\n"
         )
         _drive_write_playbook(doc, body, pid)
-        state["messages"].append({
-            "role": "system",
-            "content": f"Playbook written: {doc.title}",
-        })
+        state["messages"].append(
+            {
+                "role": "system",
+                "content": f"Playbook written: {doc.title}",
+            }
+        )
     except Exception as exc:
-        _log_cloud(_AGENT_ID, pid, "task", state.get("task_id", ""),
-                   f"write_playbook failed: {exc}", "WARNING")
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", ""),
+            f"write_playbook failed: {exc}",
+            "WARNING",
+        )
     return state
 
 
 def build_pursuit_graph() -> Any:
     graph: StateGraph = StateGraph(AgentWorkingMemory)
-    for name, fn in [("boot", _boot), ("plan", _plan), ("dispatch", _dispatch),
-                     ("collect", _collect), ("report", _report),
-                     ("write_playbook", _write_playbook), ("park", _park),
-                     ("resume", _resume), ("escalate", _escalate)]:
+    for name, fn in [
+        ("boot", _boot),
+        ("plan", _plan),
+        ("dispatch", _dispatch),
+        ("collect", _collect),
+        ("report", _report),
+        ("write_playbook", _write_playbook),
+        ("park", _park),
+        ("resume", _resume),
+        ("escalate", _escalate),
+    ]:
         graph.add_node(name, fn)
     graph.set_entry_point("boot")
     graph.add_edge("boot", "plan")
     graph.add_edge("plan", "dispatch")
     graph.add_edge("dispatch", "collect")
-    graph.add_conditional_edges("collect", _should_escalate,
-                                {"escalate": "escalate", "report": "report"})
+    graph.add_conditional_edges(
+        "collect", _should_escalate, {"escalate": "escalate", "report": "report"}
+    )
     graph.add_edge("report", "write_playbook")
     graph.add_edge("write_playbook", END)
     graph.add_edge("park", END)
@@ -317,12 +421,14 @@ def build_pursuit_graph() -> Any:
 
 try:
     from google.adk.agents import Agent as _BaseAgent
+
     _HAS_ADK = True
 except ImportError:
     _HAS_ADK = False
 
 
 if _HAS_ADK:
+
     class PursuitAgent(_BaseAgent):  # type: ignore[misc]
         name: str = _AGENT_ID
         description: str = "Sales orchestrator — lead scoring, follow-up, quotes, pipeline."
@@ -332,6 +438,7 @@ if _HAS_ADK:
 
         def __init__(self, **data: Any) -> None:
             from config import get_settings
+
             data["model"] = get_settings().models.LOCAL_MODEL
             data["instruction"] = _load_identity_file(_AGENT_ID)
             super().__init__(**data)
@@ -339,39 +446,58 @@ if _HAS_ADK:
 
         async def run(self, agent_input: Any) -> Any:
             from models import AgentOutput
+
             initial = _initial_state(agent_input)
             try:
                 final = await self._graph.ainvoke(
-                    initial, config={"configurable": {"thread_id": initial["task_id"]}})
+                    initial, config={"configurable": {"thread_id": initial["task_id"]}}
+                )
                 status = "failed" if final.get("hard_stop_triggered") else "success"
             except Exception as exc:
                 _log_cloud(_AGENT_ID, "", "task", initial["task_id"], str(exc), "ERROR")
                 status = "failed"
                 final = initial
             return AgentOutput(
-                task_id=final["task_id"], project_id=final["project_id"],
-                agent_id=_AGENT_ID, status=status, result={},
+                task_id=final["task_id"],
+                project_id=final["project_id"],
+                agent_id=_AGENT_ID,
+                status=status,
+                result={},
                 cost_usd=final.get("cost_usd", 0.0),
             )
 
 else:
+
     class PursuitAgent:  # type: ignore[no-redef]
         name = _AGENT_ID
+
         def __init__(self, **_: Any) -> None:
             self._graph = build_pursuit_graph()
 
 
 def _initial_state(agent_input: Any) -> AgentWorkingMemory:
     from models import AgentInput
+
     pid = agent_input.project_id if isinstance(agent_input, AgentInput) else ""
     tid = agent_input.task_id if isinstance(agent_input, AgentInput) else str(uuid.uuid4())
     return {  # type: ignore[return-value]
-        "task_id": tid, "project_id": pid, "current_objective": "Starting",
-        "sub_task_results": [], "parked_proposals": [], "error_history": [],
-        "memory_context": {}, "episodic_cache": {}, "observation_buffer": [],
-        "cost_usd": 0.0, "iteration_count": 0, "step_count": 0, "tokens_used": 0,
-        "incoming_message": None, "messages": [],
-        "hard_stop_triggered": False, "evolution_triggered": False,
+        "task_id": tid,
+        "project_id": pid,
+        "current_objective": "Starting",
+        "sub_task_results": [],
+        "parked_proposals": [],
+        "error_history": [],
+        "memory_context": {},
+        "episodic_cache": {},
+        "observation_buffer": [],
+        "cost_usd": 0.0,
+        "iteration_count": 0,
+        "step_count": 0,
+        "tokens_used": 0,
+        "incoming_message": None,
+        "messages": [],
+        "hard_stop_triggered": False,
+        "evolution_triggered": False,
         "_started_at": time.time(),
     }
 

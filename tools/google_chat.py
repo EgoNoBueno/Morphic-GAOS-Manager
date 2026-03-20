@@ -16,14 +16,13 @@ Authentication:
 
 Spec: GAOS-Manager-Spec.md §2.5 (Phase 2.5 — Conversation Layer)
 """
+
 from __future__ import annotations
 
 import html
-import json
 import logging
 from typing import Any
 
-import httpx
 from google.auth.transport.requests import Request as AuthRequest
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -72,9 +71,7 @@ def _get_chat_service() -> Any:
     key_path: str = getattr(getattr(settings, "chat", None), "service_account_key", "") or ""
 
     if key_path:
-        creds = service_account.Credentials.from_service_account_file(
-            key_path, scopes=_CHAT_SCOPES
-        )
+        creds = service_account.Credentials.from_service_account_file(key_path, scopes=_CHAT_SCOPES)
     else:
         import google.auth
 
@@ -110,10 +107,7 @@ def send_message(space_name: str, text: str) -> dict:
     service = _get_chat_service()
     try:
         result = (
-            service.spaces()
-            .messages()
-            .create(parent=space_name, body={"text": text})
-            .execute()
+            service.spaces().messages().create(parent=space_name, body={"text": text}).execute()
         )
         log.info("Chat message sent to %s: messageId=%s", space_name, result.get("name"))
         return result
@@ -145,12 +139,7 @@ def send_card(space_name: str, card: dict) -> dict:
     body = {"cardsV2": [{"cardId": card.get("cardId", "card-1"), "card": card}]}
     service = _get_chat_service()
     try:
-        result = (
-            service.spaces()
-            .messages()
-            .create(parent=space_name, body=body)
-            .execute()
-        )
+        result = service.spaces().messages().create(parent=space_name, body=body).execute()
         log.info("Chat card sent to %s: messageId=%s", space_name, result.get("name"))
         return result
     except HttpError as exc:
@@ -215,7 +204,11 @@ def send_approval_card(
 
     # System convention: 1 = lowest severity, 5 = highest (opposite of ITIL P1-critical).
     priority_label = {
-        1: "P1 Low", 2: "P2 Info", 3: "P3 Alert", 4: "P4 Approval", 5: "P5 Critical"
+        1: "P1 Low",
+        2: "P2 Info",
+        3: "P3 Alert",
+        4: "P4 Approval",
+        5: "P5 Critical",
     }.get(priority, f"P{priority}")
     cost_text = f"${cost_usd:.4f}" if cost_usd > 0 else "No cost"
 
@@ -239,12 +232,14 @@ def send_approval_card(
 
     # ── Section 2: Strategic Architect Reasoning (conditional) ───────────────
     if reasoning_summary:
-        sections.append({
-            "header": "🧠 Strategic Architect Reasoning",
-            "widgets": [
-                {"textParagraph": {"text": html.escape(reasoning_summary)}},
-            ],
-        })
+        sections.append(
+            {
+                "header": "🧠 Strategic Architect Reasoning",
+                "widgets": [
+                    {"textParagraph": {"text": html.escape(reasoning_summary)}},
+                ],
+            }
+        )
 
     # ── Section 3: Proposed Action + Decision Buttons ────────────────────────
     buttons: list[dict] = []
@@ -340,9 +335,7 @@ def send_skill_import_card(
 
     buttons: list[dict] = []
     if pypi_url:
-        buttons.append(
-            {"text": "View on PyPI", "onClick": {"openLink": {"url": pypi_url}}}
-        )
+        buttons.append({"text": "View on PyPI", "onClick": {"openLink": {"url": pypi_url}}})
     buttons += [
         {
             "text": "✅ Install",
@@ -453,17 +446,19 @@ def parse_chat_event(body: dict) -> dict:
                 #   the Chat media.download API to fetch the raw file bytes.
                 media_resource_name: str = att_ref.get("resourceName", "")
                 if download_uri or media_resource_name:
-                    attachments.append({
-                        "content_type": att.get("contentType", "application/octet-stream"),
-                        "content_name": att.get("contentName", ""),
-                        # attachment_message_name: the Chat message-side resource name
-                        #   for this attachment (e.g. "spaces/.../messages/.../attachments/...").
-                        "attachment_message_name": att.get("name", ""),
-                        # media_resource_name: the attachmentDataRef token used to
-                        #   download the file via the Chat media API.
-                        "media_resource_name": media_resource_name,
-                        "download_uri": download_uri,
-                    })
+                    attachments.append(
+                        {
+                            "content_type": att.get("contentType", "application/octet-stream"),
+                            "content_name": att.get("contentName", ""),
+                            # attachment_message_name: the Chat message-side resource name
+                            #   for this attachment (e.g. "spaces/.../messages/.../attachments/...").
+                            "attachment_message_name": att.get("name", ""),
+                            # media_resource_name: the attachmentDataRef token used to
+                            #   download the file via the Chat media API.
+                            "media_resource_name": media_resource_name,
+                            "download_uri": download_uri,
+                        }
+                    )
 
         return {
             "event_type": event_type,

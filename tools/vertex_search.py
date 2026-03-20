@@ -10,6 +10,7 @@ Usage:
 
 Spec: GAOS-Tools-Spec.md §15 · GAOS-Memory-Spec.md §3 (Layer 5b)
 """
+
 from __future__ import annotations
 
 import logging
@@ -50,6 +51,7 @@ def _extract_result(result: Any) -> dict[str, Any]:
     if doc.derived_struct_data:
         try:
             from google.protobuf.json_format import MessageToDict  # deferred
+
             data = MessageToDict(doc.derived_struct_data)
         except Exception:
             pass
@@ -106,6 +108,7 @@ def search_knowledge(
 
     try:
         from google.cloud import discoveryengine_v1 as discoveryengine  # deferred
+
         client = discoveryengine.SearchServiceClient()
         request = discoveryengine.SearchRequest(
             serving_config=serving_cfg,

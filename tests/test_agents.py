@@ -12,21 +12,25 @@ S2  import requests in agent-generated code is blocked.
 S3  Code using only allowlisted imports passes Gate 2.
 S4  SHA-256 hash detects post-submission code tampering.
 """
+
 from __future__ import annotations
 
 import ast
 import asyncio
 import hashlib
 import re
-import sys
+from datetime import UTC
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+
+if TYPE_CHECKING:
+    from agents.nexus_prime.orchestrator import NexusPrimeWorkingMemory
 
 import pytest
 
 from agents import validate_code_safety
-from models import AgentInput, AgentOutput, MessageType
-
+from models import AgentInput, AgentOutput, AgentWorkingMemory, MessageType
 
 # ── Settings fixture ───────────────────────────────────────────────────────
 
@@ -92,36 +96,30 @@ class TestU1AgentIO:
         assert inp.context == {}
 
     def test_agent_output_success_status_is_valid(self):
-        out = AgentOutput(
-            task_id="t1", project_id="acme", agent_id="beacon", status="success"
-        )
+        out = AgentOutput(task_id="t1", project_id="acme", agent_id="beacon", status="success")
         assert out.status == "success"
 
     def test_agent_output_escalated_status_is_valid(self):
-        out = AgentOutput(
-            task_id="t1", project_id="acme", agent_id="beacon", status="escalated"
-        )
+        out = AgentOutput(task_id="t1", project_id="acme", agent_id="beacon", status="escalated")
         assert out.status == "escalated"
 
     def test_agent_output_failed_status_is_valid(self):
-        out = AgentOutput(
-            task_id="t1", project_id="acme", agent_id="beacon", status="failed"
-        )
+        out = AgentOutput(task_id="t1", project_id="acme", agent_id="beacon", status="failed")
         assert out.status == "failed"
 
     def test_agent_output_invalid_status_raises_validation_error(self):
-        with pytest.raises(Exception):  # pydantic.ValidationError
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
             AgentOutput(
                 task_id="t1",
                 project_id="acme",
                 agent_id="beacon",
-                status="unknown_status",
+                status="unknown_status",  # type: ignore[arg-type]
             )
 
     def test_agent_output_no_extra_untyped_fields_needed(self):
-        out = AgentOutput(
-            task_id="t1", project_id="acme", agent_id="beacon", status="success"
-        )
+        out = AgentOutput(task_id="t1", project_id="acme", agent_id="beacon", status="success")
         # result is a typed dict, cost_usd is float — no raw Any at top level
         assert isinstance(out.result, dict)
         assert isinstance(out.cost_usd, float)
@@ -174,15 +172,15 @@ class TestU3NoLiteralModelVersions:
         tree = ast.parse(source, filename=str(orch_path))
         violations: list[str] = []
         for node in ast.walk(tree):
-            if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                if _VERSION_RE.search(node.value):
-                    violations.append(
-                        f"  line {node.lineno}: {node.value!r}"
-                    )
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and _VERSION_RE.search(node.value)
+            ):
+                violations.append(f"  line {node.lineno}: {node.value!r}")
         assert not violations, (
             f"{orch_path.name} contains hardcoded model version strings "
-            f"(use settings.models.* alias instead):\n"
-            + "\n".join(violations)
+            f"(use settings.models.* alias instead):\n" + "\n".join(violations)
         )
 
 
@@ -190,33 +188,36 @@ class TestU3NoLiteralModelVersions:
 
 
 class TestU4MissingSecretCausesExit:
-    def _boot_state(self, project_id: str = "test-project") -> dict:
+    def _boot_state(self, project_id: str = "test-project") -> AgentWorkingMemory:
         import time
 
-        return {
-            "project_id": project_id,
-            "task_id": "t-boot",
-            "current_objective": "Booting",
-            "sub_task_results": [],
-            "parked_proposals": [],
-            "error_history": [],
-            "memory_context": {},
-            "episodic_cache": {},
-            "observation_buffer": [],
-            "cost_usd": 0.0,
-            "iteration_count": 0,
-            "step_count": 0,
-            "tokens_used": 0,
-            "incoming_message": None,
-            "messages": [],
-            "hard_stop_triggered": False,
-            "evolution_triggered": False,
-            "_started_at": time.time(),
-        }
+        return cast(
+            AgentWorkingMemory,
+            {
+                "project_id": project_id,
+                "task_id": "t-boot",
+                "current_objective": "Booting",
+                "sub_task_results": [],
+                "parked_proposals": [],
+                "error_history": [],
+                "memory_context": {},
+                "episodic_cache": {},
+                "observation_buffer": [],
+                "cost_usd": 0.0,
+                "iteration_count": 0,
+                "step_count": 0,
+                "tokens_used": 0,
+                "incoming_message": None,
+                "messages": [],
+                "hard_stop_triggered": False,
+                "evolution_triggered": False,
+                "_started_at": time.time(),
+            },
+        )
 
     def test_steward_boot_exits_with_code_1_when_api_key_missing(self):
-        from tools.secrets import SecretNotFoundError
         from agents.steward import orchestrator as steward
+        from tools.secrets import SecretNotFoundError
 
         state = self._boot_state()
         with patch("tools.secrets.get_secret", side_effect=SecretNotFoundError("GEMINI_API_KEY")):
@@ -230,8 +231,8 @@ class TestU4MissingSecretCausesExit:
         assert exc_info.value.code == 1
 
     def test_beacon_boot_exits_with_code_1_when_api_key_missing(self):
-        from tools.secrets import SecretNotFoundError
         from agents.beacon import orchestrator as beacon
+        from tools.secrets import SecretNotFoundError
 
         state = self._boot_state()
         with patch("tools.secrets.get_secret", side_effect=SecretNotFoundError("GEMINI_API_KEY")):
@@ -267,10 +268,14 @@ class TestU5UnknownProjectIdFails:
         """
         from models import AgentInput
 
-        agent_cls = getattr(orchestrator_module, next(
-            n for n in dir(orchestrator_module)
-            if n.endswith("Agent") and hasattr(getattr(orchestrator_module, n), "run")
-        ))
+        agent_cls = getattr(
+            orchestrator_module,
+            next(
+                n
+                for n in dir(orchestrator_module)
+                if n.endswith("Agent") and hasattr(getattr(orchestrator_module, n), "run")
+            ),
+        )
         inp = AgentInput(**inp_kw)
         state = initial_state_fn(inp)
         state["hard_stop_triggered"] = True
@@ -301,9 +306,7 @@ class TestU5UnknownProjectIdFails:
     def test_steward_returns_failed_when_graph_raises_exception(self):
         from agents.steward import orchestrator as steward_mod
 
-        if not hasattr(steward_mod, "StewardAgent") or not hasattr(
-            steward_mod.StewardAgent, "run"
-        ):
+        if not hasattr(steward_mod, "StewardAgent") or not hasattr(steward_mod.StewardAgent, "run"):
             pytest.skip("StewardAgent.run not available (ADK not installed)")
 
         inp = AgentInput(task_id="exc-task", project_id="bad", instruction="test")
@@ -315,7 +318,7 @@ class TestU5UnknownProjectIdFails:
         fake_self._graph = mock_graph
 
         with patch("agents.steward.orchestrator._log_cloud"):
-            result = asyncio.run(steward_mod.StewardAgent.run(fake_self, inp))
+            result = asyncio.run(steward_mod.StewardAgent.run(fake_self, inp))  # type: ignore[attr-defined]
 
         assert result.status == "failed"
 
@@ -392,18 +395,12 @@ class TestS3AllowlistedImportsPasses:
         assert result["passed"] is True
 
     def test_google_cloud_imports_pass(self):
-        code = (
-            "from google.cloud import bigquery\n"
-            "client = bigquery.Client()\n"
-        )
+        code = "from google.cloud import bigquery\nclient = bigquery.Client()\n"
         result = validate_code_safety(code)
         assert result["passed"] is True
 
     def test_pydantic_and_langgraph_pass(self):
-        code = (
-            "from pydantic import BaseModel\n"
-            "from langgraph.graph import StateGraph\n"
-        )
+        code = "from pydantic import BaseModel\nfrom langgraph.graph import StateGraph\n"
         result = validate_code_safety(code)
         assert result["passed"] is True
 
@@ -434,9 +431,7 @@ class TestS4HashMismatch:
         h_original = hashlib.sha256(original.encode()).hexdigest()
         h_tampered = hashlib.sha256(tampered.encode()).hexdigest()
 
-        assert h_original != h_tampered, (
-            "SHA-256 must distinguish original from tampered code"
-        )
+        assert h_original != h_tampered, "SHA-256 must distinguish original from tampered code"
 
     def test_identical_code_produces_identical_hash(self):
         code = "x = 1\nprint(x)\n"
@@ -499,6 +494,7 @@ class TestOllamaRouting:
     def test_ollama_timeout_falls_back_to_gemini(self):
         """On TimeoutException from Ollama, must fall back to LOCAL_MODEL_FALLBACK."""
         import httpx as _httpx
+
         from agents import _call_model
 
         mock_gemini_resp = MagicMock()
@@ -518,6 +514,7 @@ class TestOllamaRouting:
     def test_ollama_connect_error_falls_back(self):
         """On ConnectError (Ollama not running), must fall back gracefully."""
         import httpx as _httpx
+
         from agents import _call_model
 
         mock_gemini_resp = MagicMock()
@@ -562,7 +559,9 @@ class TestOllamaRouting:
 
         with patch("httpx.post", return_value=mock_resp) as mock_post:
             with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
-                with patch("tools.web_search.web_search", return_value="snippet: some result") as mock_ws:
+                with patch(
+                    "tools.web_search.web_search", return_value="snippet: some result"
+                ) as mock_ws:
                     _call_model("what is steel price", model="ollama/llama3.1", web_access=True)
 
         mock_ws.assert_called_once_with("what is steel price")
@@ -664,6 +663,7 @@ class TestGeminiAIStudio:
     def test_resource_exhausted_429_logged_and_reraised(self):
         """ResourceExhausted (free-tier 429) must be logged as WARNING then re-raised."""
         from google.api_core.exceptions import ResourceExhausted
+
         from agents import _call_model
 
         with patch("google.genai.Client") as mock_client_cls:
@@ -689,11 +689,13 @@ class TestOllamaFallbackCounter:
     def setup_method(self):
         """Reset the module-level counter before each test."""
         from agents import reset_ollama_fallback_count
+
         reset_ollama_fallback_count()
 
     def test_counter_increments_on_timeout(self):
         """get_ollama_fallback_count() must increase by 1 on each TimeoutException."""
         import httpx as _httpx
+
         from agents import _call_model, get_ollama_fallback_count
 
         mock_gemini_resp = MagicMock()
@@ -713,6 +715,7 @@ class TestOllamaFallbackCounter:
     def test_counter_increments_on_connect_error(self):
         """ConnectError (Ollama not running) must also increment the counter."""
         import httpx as _httpx
+
         from agents import _call_model, get_ollama_fallback_count
 
         mock_gemini_resp = MagicMock()
@@ -732,6 +735,7 @@ class TestOllamaFallbackCounter:
     def test_counter_accumulates_across_calls(self):
         """Counter must add up across multiple fallback events."""
         import httpx as _httpx
+
         from agents import _call_model, get_ollama_fallback_count
 
         mock_gemini_resp = MagicMock()
@@ -752,6 +756,7 @@ class TestOllamaFallbackCounter:
     def test_reset_restores_counter_to_zero(self):
         """reset_ollama_fallback_count() must set the counter back to zero."""
         import httpx as _httpx
+
         from agents import _call_model, get_ollama_fallback_count, reset_ollama_fallback_count
 
         mock_gemini_resp = MagicMock()
@@ -787,6 +792,7 @@ class TestOllamaFallbackCounter:
     def test_warning_logged_on_fallback(self):
         """A logger.warning must be emitted with exc type, host, and model on fallback."""
         import httpx as _httpx
+
         from agents import _call_model
 
         mock_gemini_resp = MagicMock()
@@ -878,6 +884,7 @@ class TestWebSearch:
 
     def test_returns_empty_string_on_timeout(self):
         import httpx as _httpx
+
         from tools.web_search import web_search
 
         with patch("httpx.get", side_effect=_httpx.TimeoutException("timed out")):
@@ -887,6 +894,7 @@ class TestWebSearch:
 
     def test_returns_empty_string_on_connect_error(self):
         import httpx as _httpx
+
         from tools.web_search import web_search
 
         with patch("httpx.get", side_effect=_httpx.ConnectError("refused")):
@@ -907,7 +915,12 @@ class TestWebSearch:
         from tools.web_search import web_search
 
         topics = [{"Text": f"Topic {i}"} for i in range(20)]
-        ddg_payload = {"AbstractText": "", "AbstractSource": "", "Answer": "", "RelatedTopics": topics}
+        ddg_payload = {
+            "AbstractText": "",
+            "AbstractSource": "",
+            "Answer": "",
+            "RelatedTopics": topics,
+        }
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = ddg_payload
@@ -932,23 +945,47 @@ class TestArchiveJob:
     # ── helpers ────────────────────────────────────────────────────────────────
 
     def _make_aged_log(self, days_old: int = 60) -> dict:
-        from datetime import datetime, timezone, timedelta
-        ts = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
-        return {"timestamp": ts, "agent_id": "beacon", "level": "INFO", "message": "test", "project_id": "test-project"}
+        from datetime import datetime, timedelta
+
+        ts = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
+        return {
+            "timestamp": ts,
+            "agent_id": "beacon",
+            "level": "INFO",
+            "message": "test",
+            "project_id": "test-project",
+        }
 
     def _make_fresh_log(self) -> dict:
-        from datetime import datetime, timezone
-        return {"timestamp": datetime.now(timezone.utc).isoformat(), "agent_id": "beacon", "level": "INFO", "message": "fresh", "project_id": "test-project"}
+        from datetime import datetime
+
+        return {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "agent_id": "beacon",
+            "level": "INFO",
+            "message": "fresh",
+            "project_id": "test-project",
+        }
 
     def _make_aged_approval(self, days_old: int = 100) -> dict:
-        from datetime import datetime, timezone, timedelta
-        ts = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
+        from datetime import datetime, timedelta
+
+        ts = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
         return {
-            "ID": "proposal-001", "Agent ID": "ledger", "Issue": "test issue",
-            "Trigger Reason": "test", "Stopping Constraint": "", "Iterations Run": "1",
-            "Total Cost USD": "0.05", "Proposed Code": "print('hi')", "Status": "Approved",
-            "Timestamp": ts, "Approved By": "owner@example.com", "Approver Tier": "5",
-            "code_sha256": "abc123", "Priority": "3",
+            "ID": "proposal-001",
+            "Agent ID": "ledger",
+            "Issue": "test issue",
+            "Trigger Reason": "test",
+            "Stopping Constraint": "",
+            "Iterations Run": "1",
+            "Total Cost USD": "0.05",
+            "Proposed Code": "print('hi')",
+            "Status": "Approved",
+            "Timestamp": ts,
+            "Approved By": "owner@example.com",
+            "Approver Tier": "5",
+            "code_sha256": "abc123",
+            "Priority": "3",
         }
 
     # ── archive job core tests ─────────────────────────────────────────────────
@@ -1020,11 +1057,14 @@ class TestArchiveJob:
         with (
             patch("agents.nexus_prime.orchestrator._log_cloud"),
             patch("tools.google_sheets.get_all_records", return_value=[]),
-            patch("tools.google_sheets.get_all_records_with_row_numbers", side_effect=[
-                [],                # Logs
-                [],                # Error Logs
-                approval_numbered, # Agent_Approvals
-            ]),
+            patch(
+                "tools.google_sheets.get_all_records_with_row_numbers",
+                side_effect=[
+                    [],  # Logs
+                    [],  # Error Logs
+                    approval_numbered,  # Agent_Approvals
+                ],
+            ),
             patch("tools.google_sheets.delete_rows") as mock_delete,
             patch("tools.google_sheets.append_row"),
             patch("tools.bigquery.insert_rows") as mock_bq,
@@ -1032,10 +1072,7 @@ class TestArchiveJob:
             result = asyncio.run(handle_archive("test-project"))
 
         # Pending approval must NOT be archived
-        approval_bq_calls = [
-            c for c in mock_bq.call_args_list
-            if "approval_history" in c[0][0]
-        ]
+        approval_bq_calls = [c for c in mock_bq.call_args_list if "approval_history" in c[0][0]]
         assert len(approval_bq_calls) == 1
         assert approval_bq_calls[0][0][1][0]["status"] == "Approved"
 
@@ -1055,9 +1092,10 @@ class TestArchiveJob:
         with (
             patch("agents.nexus_prime.orchestrator._log_cloud"),
             patch("tools.google_sheets.get_all_records", return_value=[]),
-            patch("tools.google_sheets.get_all_records_with_row_numbers", side_effect=[
-                [], [], [(2, old_pending)]
-            ]),
+            patch(
+                "tools.google_sheets.get_all_records_with_row_numbers",
+                side_effect=[[], [], [(2, old_pending)]],
+            ),
             patch("tools.google_sheets.delete_rows") as mock_delete,
             patch("tools.google_sheets.append_row"),
             patch("tools.bigquery.insert_rows"),
@@ -1092,8 +1130,15 @@ class TestArchiveJob:
         from agents.nexus_prime.orchestrator import handle_archive
 
         # Simulate 26,000 rows remaining in Logs after archive
-        big_table = [{"timestamp": "2020-01-01T00:00:00+00:00", "agent_id": "x",
-                      "level": "INFO", "message": "", "project_id": "test-project"}] * 26_000
+        big_table = [
+            {
+                "timestamp": "2020-01-01T00:00:00+00:00",
+                "agent_id": "x",
+                "level": "INFO",
+                "message": "",
+                "project_id": "test-project",
+            }
+        ] * 26_000
 
         with (
             patch("agents.nexus_prime.orchestrator._log_cloud"),
@@ -1109,6 +1154,7 @@ class TestArchiveJob:
         # At least one ALERT should have been published
         assert mock_publish.called
         from models import MessageType
+
         published_msgs = [c[0][1] for c in mock_publish.call_args_list]
         alert_msgs = [m for m in published_msgs if m.message_type == MessageType.ALERT]
         assert len(alert_msgs) >= 1
@@ -1137,8 +1183,9 @@ class TestArchiveJob:
 
     def test_archive_endpoint_returns_200_for_nexus_prime(self, monkeypatch):
         """POST /archive returns 200 when AGENT_NAME=nexus-prime."""
-        import main as app_module
         from httpx import ASGITransport, AsyncClient
+
+        import main as app_module
 
         monkeypatch.setenv("AGENT_NAME", "nexus-prime")
         monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
@@ -1148,6 +1195,7 @@ class TestArchiveJob:
 
         with patch("agents.nexus_prime.orchestrator.handle_archive", _fake_handle_archive):
             with patch.object(app_module, "_AGENT_NAME", "nexus-prime"):
+
                 async def _run():
                     async with AsyncClient(
                         transport=ASGITransport(app=app_module.app), base_url="http://test"
@@ -1156,6 +1204,7 @@ class TestArchiveJob:
                             "/archive",
                             headers={"Authorization": "Bearer test-token"},
                         )
+
                 resp = asyncio.run(_run())
 
         assert resp.status_code == 200
@@ -1164,10 +1213,12 @@ class TestArchiveJob:
 
     def test_archive_endpoint_returns_404_for_non_nexus_agents(self, monkeypatch):
         """POST /archive returns 404 when AGENT_NAME is not nexus-prime."""
-        import main as app_module
         from httpx import ASGITransport, AsyncClient
 
+        import main as app_module
+
         with patch.object(app_module, "_AGENT_NAME", "ledger"):
+
             async def _run():
                 async with AsyncClient(
                     transport=ASGITransport(app=app_module.app), base_url="http://test"
@@ -1176,21 +1227,25 @@ class TestArchiveJob:
                         "/archive",
                         headers={"Authorization": "Bearer test-token"},
                     )
+
             resp = asyncio.run(_run())
 
         assert resp.status_code == 404
 
     def test_archive_endpoint_returns_401_without_auth_header(self):
         """POST /archive without Authorization header returns 401."""
-        import main as app_module
         from httpx import ASGITransport, AsyncClient
 
+        import main as app_module
+
         with patch.object(app_module, "_AGENT_NAME", "nexus-prime"):
+
             async def _run():
                 async with AsyncClient(
                     transport=ASGITransport(app=app_module.app), base_url="http://test"
                 ) as client:
                     return await client.post("/archive")
+
             resp = asyncio.run(_run())
 
         assert resp.status_code == 401
@@ -1217,8 +1272,9 @@ class TestNexusPrimeThinkNode:
       - _route_from_think() sub-router reads state correctly
     """
 
-    def _make_state(self, message_type: MessageType, priority: int = 3) -> dict:
+    def _make_state(self, message_type: MessageType, priority: int = 3) -> NexusPrimeWorkingMemory:
         """Build a minimal NexusPrimeWorkingMemory-shaped dict for think()."""
+        from agents.nexus_prime.orchestrator import NexusPrimeWorkingMemory
         from models import A2AMessage
 
         msg = A2AMessage(
@@ -1230,15 +1286,18 @@ class TestNexusPrimeThinkNode:
             priority=priority,
             payload={"description": "something failed"},
         )
-        return {
-            "project_id": "proj-test",
-            "task_id": "task-abc",
-            "incoming_message": msg,
-            "cost_usd": 0.0,
-            "tokens_used": 0,
-            "_next_node": "record",
-            "monologue_frame": None,
-        }
+        return cast(
+            NexusPrimeWorkingMemory,
+            {
+                "project_id": "proj-test",
+                "task_id": "task-abc",
+                "incoming_message": msg,
+                "cost_usd": 0.0,
+                "tokens_used": 0,
+                "_next_node": "record",
+                "monologue_frame": None,
+            },
+        )
 
     def _mock_resp(self, response_mode: str = "Direct") -> MagicMock:
         """Return a mock ModelResponse with clean parsed JSON data."""
@@ -1247,7 +1306,9 @@ class TestNexusPrimeThinkNode:
         resp.data = {
             "response_mode": response_mode,
             "knowledge_gap_detected": response_mode == "Research",
-            "knowledge_gap_description": "Missing error history" if response_mode == "Research" else "",
+            "knowledge_gap_description": "Missing error history"
+            if response_mode == "Research"
+            else "",
             "partial_result_available": False,
             "reasoning_summary": "Test reasoning summary.",
         }
@@ -1271,7 +1332,7 @@ class TestNexusPrimeThinkNode:
                 with patch("tools.bigquery.insert_row"):
                     result = think(state)
 
-        assert result["_next_node"] == "diagnose"
+        assert result.get("_next_node") == "diagnose"
 
     def test_evolution_request_routes_to_diagnose(self):
         """EVOLUTION_REQUEST message type → _next_node must be 'diagnose'."""
@@ -1284,7 +1345,7 @@ class TestNexusPrimeThinkNode:
                 with patch("tools.bigquery.insert_row"):
                     result = think(state)
 
-        assert result["_next_node"] == "diagnose"
+        assert result.get("_next_node") == "diagnose"
 
     def test_knowledge_candidate_routes_to_knowledge_review(self):
         """KNOWLEDGE_CANDIDATE → _next_node must be 'knowledge_review'."""
@@ -1297,7 +1358,7 @@ class TestNexusPrimeThinkNode:
                 with patch("tools.bigquery.insert_row"):
                     result = think(state)
 
-        assert result["_next_node"] == "knowledge_review"
+        assert result.get("_next_node") == "knowledge_review"
 
     def test_tactical_mode_forced_on_priority_4(self):
         """Priority >= 4 must set response_mode='Tactical' regardless of model output."""
@@ -1306,12 +1367,16 @@ class TestNexusPrimeThinkNode:
 
         state = self._make_state(MessageType.ESCALATION, priority=4)
         # Model returns "Direct"; Tactical override must win
-        with patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp("Direct")):
+        with patch(
+            "agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp("Direct")
+        ):
             with patch("agents.nexus_prime.orchestrator._load_context_trio", return_value="trio"):
                 with patch("tools.bigquery.insert_row"):
                     result = think(state)
 
-        assert result["monologue_frame"]["response_mode"] == "Tactical"
+        mf = result.get("monologue_frame")
+        assert mf is not None
+        assert mf["response_mode"] == "Tactical"
 
     def test_tactical_mode_forced_on_priority_5(self):
         """Priority 5 (critical) must also force Tactical mode."""
@@ -1319,12 +1384,16 @@ class TestNexusPrimeThinkNode:
         from models import MessageType
 
         state = self._make_state(MessageType.ESCALATION, priority=5)
-        with patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp("Direct")):
+        with patch(
+            "agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp("Direct")
+        ):
             with patch("agents.nexus_prime.orchestrator._load_context_trio", return_value="trio"):
                 with patch("tools.bigquery.insert_row"):
                     result = think(state)
 
-        assert result["monologue_frame"]["response_mode"] == "Tactical"
+        mf = result.get("monologue_frame")
+        assert mf is not None
+        assert mf["response_mode"] == "Tactical"
 
     def test_research_mode_stored_from_model_output(self):
         """When priority < 4, model-returned 'Research' mode is stored correctly."""
@@ -1332,13 +1401,15 @@ class TestNexusPrimeThinkNode:
         from models import MessageType
 
         state = self._make_state(MessageType.ESCALATION, priority=2)
-        with patch("agents.nexus_prime.orchestrator._call_model",
-                   return_value=self._mock_resp("Research")):
+        with patch(
+            "agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp("Research")
+        ):
             with patch("agents.nexus_prime.orchestrator._load_context_trio", return_value="trio"):
                 with patch("tools.bigquery.insert_row"):
                     result = think(state)
 
-        frame = result["monologue_frame"]
+        frame = result.get("monologue_frame")
+        assert frame is not None
         assert frame["response_mode"] == "Research"
         assert frame["knowledge_gap_detected"] is True
         assert frame["task_id"] == "task-abc"
@@ -1368,10 +1439,13 @@ class TestNexusPrimeThinkNode:
         from models import MessageType
 
         state = self._make_state(MessageType.ESCALATION)
-        with patch("agents.nexus_prime.orchestrator._call_model",
-                   return_value=self._mock_resp()) as mock_cm:
-            with patch("agents.nexus_prime.orchestrator._load_context_trio",
-                       return_value="CONTEXT_TRIO_CONTENT"):
+        with patch(
+            "agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()
+        ) as mock_cm:
+            with patch(
+                "agents.nexus_prime.orchestrator._load_context_trio",
+                return_value="CONTEXT_TRIO_CONTENT",
+            ):
                 with patch("tools.bigquery.insert_row"):
                     think(state)
 
@@ -1385,8 +1459,10 @@ class TestNexusPrimeThinkNode:
         from models import MessageType
 
         state = self._make_state(MessageType.ESCALATION)
-        with patch("agents.nexus_prime.orchestrator._call_model",
-                   side_effect=RuntimeError("quota exceeded")):
+        with patch(
+            "agents.nexus_prime.orchestrator._call_model",
+            side_effect=RuntimeError("quota exceeded"),
+        ):
             with patch("agents.nexus_prime.orchestrator._load_context_trio", return_value="trio"):
                 with patch("tools.bigquery.insert_row") as mock_bq:
                     result = think(state)
@@ -1394,7 +1470,7 @@ class TestNexusPrimeThinkNode:
         # Node returns state without crashing
         assert result is not None
         # _next_node was set to "diagnose" before the model call
-        assert result["_next_node"] == "diagnose"
+        assert result.get("_next_node") == "diagnose"
         # BQ was never reached
         mock_bq.assert_not_called()
 
@@ -1410,21 +1486,25 @@ class TestNexusPrimeThinkNode:
                     result = think(state)
 
         # monologue_frame was set before BQ attempt
-        assert result["monologue_frame"] is not None
-        assert result["monologue_frame"]["response_mode"] == "Direct"
+        mf = result.get("monologue_frame")
+        assert mf is not None
+        assert mf["response_mode"] == "Direct"
 
     def test_route_from_think_returns_stored_next_node(self):
         """_route_from_think() must return whatever is in state['_next_node']."""
         from agents.nexus_prime.orchestrator import _route_from_think
 
-        state = {"_next_node": "knowledge_review", "project_id": "proj", "task_id": "t1"}
+        state = cast(
+            "NexusPrimeWorkingMemory",
+            {"_next_node": "knowledge_review", "project_id": "proj", "task_id": "t1"},
+        )
         assert _route_from_think(state) == "knowledge_review"
 
     def test_route_from_think_defaults_to_record_when_absent(self):
         """_route_from_think() must return 'record' if _next_node is missing from state."""
         from agents.nexus_prime.orchestrator import _route_from_think
 
-        state = {"project_id": "proj", "task_id": "t1"}
+        state = cast("NexusPrimeWorkingMemory", {"project_id": "proj", "task_id": "t1"})
         assert _route_from_think(state) == "record"
 
 
@@ -1446,6 +1526,7 @@ class TestMultimodalVisionPath:
     @pytest.fixture(autouse=True)
     def _settings(self, tmp_path):
         import config
+
         cfg = tmp_path / "settings.yaml"
         cfg.write_text(
             "gcp:\n  project_id: test-proj\n  region: us-central1\n"
@@ -1480,7 +1561,7 @@ class TestMultimodalVisionPath:
             patch("tools.secrets.get_secret", return_value="fake-key"),
             patch("google.genai.Client", return_value=mock_client),
         ):
-            result = _call_model(
+            _call_model(
                 prompt="Describe this image.",
                 model="gemini-deep",
                 image_bytes=img,
@@ -1554,7 +1635,6 @@ class TestMultimodalVisionPath:
     # M4
     def test_call_model_warning_logged_for_ollama_with_image(self):
         """Ollama model + image_bytes → warning logged, image stripped, call proceeds."""
-        import logging
         from agents import _call_model
 
         img = b"photo"
@@ -1569,7 +1649,7 @@ class TestMultimodalVisionPath:
             mock_post.return_value = mock_resp
 
             with patch("agents.logger") as mock_log:
-                result = _call_model(
+                _call_model(
                     prompt="describe",
                     model="ollama/llama3",
                     image_bytes=img,
@@ -1582,8 +1662,7 @@ class TestMultimodalVisionPath:
     # M5
     def test_call_model_multimodal_returns_model_response(self):
         """End-to-end: _call_model with image_bytes returns a valid ModelResponse."""
-        from agents import _call_model
-        from agents import ModelResponse
+        from agents import ModelResponse, _call_model
 
         mock_client = self._mock_genai("A detailed vision description of the workflow.")
 
@@ -1654,8 +1733,7 @@ class TestCodeQuality:
                     violations.append(f"{path}:{node.lineno}")
 
         assert not violations, (
-            f"Rule 18 violation — print() found in production code:\n"
-            + "\n".join(violations)
+            "Rule 18 violation — print() found in production code:\n" + "\n".join(violations)
         )
 
     def test_no_bare_except_clauses(self):
@@ -1669,15 +1747,10 @@ class TestCodeQuality:
             except SyntaxError:
                 continue
             for node in ast.walk(tree):
-                if isinstance(node, ast.ExceptHandler):
-                    # Bare except: (type is None)
-                    if node.type is None:
-                        violations.append(
-                            f"{path}:{node.lineno} — bare except:"
-                        )
-        assert not violations, (
-            f"Rule 19 violation — bare except clause found:\n"
-            + "\n".join(violations)
+                if isinstance(node, ast.ExceptHandler) and node.type is None:  # bare except:
+                    violations.append(f"{path}:{node.lineno} — bare except:")
+        assert not violations, "Rule 19 violation — bare except clause found:\n" + "\n".join(
+            violations
         )
 
     def test_public_functions_have_return_annotations(self):
@@ -1691,7 +1764,7 @@ class TestCodeQuality:
             except SyntaxError:
                 continue
             for node in ast.walk(tree):
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                     # Skip private/dunder helpers
                     if node.name.startswith("_"):
                         continue
@@ -1699,6 +1772,6 @@ class TestCodeQuality:
                         violations.append(f"{path}:{node.lineno} — {node.name}()")
 
         assert not violations, (
-            f"Rule 16 violation — public function missing return type annotation:\n"
+            "Rule 16 violation — public function missing return type annotation:\n"
             + "\n".join(violations)
         )

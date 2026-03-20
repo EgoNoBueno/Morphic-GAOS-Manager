@@ -1,12 +1,13 @@
 """tests/test_google_docs.py — Unit tests for tools/google_docs.py"""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
 from googleapiclient.errors import HttpError
 
 from tools.google_docs import (
-    DocumentNotFoundError,
     DocsApiError,
+    DocumentNotFoundError,
     _extract_text,
     append_content,
     create_document,
@@ -34,17 +35,23 @@ projects:
     drive_folder_id: folder-abc
 """
 
-_YAML_WITH_DOCS = _BASE_YAML + """\
+_YAML_WITH_DOCS = (
+    _BASE_YAML
+    + """\
 docs:
   service_account_key: ""
   blueprints_folder_id: blueprints-folder-xyz
 """
+)
 
-_YAML_WITH_SA_KEY = _BASE_YAML + """\
+_YAML_WITH_SA_KEY = (
+    _BASE_YAML
+    + """\
 docs:
   service_account_key: /fake/path/key.json
   blueprints_folder_id: ""
 """
+)
 
 
 @pytest.fixture()
@@ -52,6 +59,7 @@ def settings_with_docs(tmp_path):
     cfg = tmp_path / "settings.yaml"
     cfg.write_text(_YAML_WITH_DOCS)
     import config
+
     config._reset_for_testing()
     config.load_settings(cfg)
     yield
@@ -63,6 +71,7 @@ def settings_base(tmp_path):
     cfg = tmp_path / "settings.yaml"
     cfg.write_text(_BASE_YAML)
     import config
+
     config._reset_for_testing()
     config.load_settings(cfg)
     yield
@@ -74,6 +83,7 @@ def settings_with_sa_key(tmp_path):
     cfg = tmp_path / "settings.yaml"
     cfg.write_text(_YAML_WITH_SA_KEY)
     import config
+
     config._reset_for_testing()
     config.load_settings(cfg)
     yield
@@ -103,9 +113,7 @@ def _mock_docs_svc(doc_id: str = "doc-abc", title: str = "Blueprint") -> MagicMo
         "body": {
             "content": [
                 {
-                    "paragraph": {
-                        "elements": [{"textRun": {"content": "Hello world\n"}}]
-                    },
+                    "paragraph": {"elements": [{"textRun": {"content": "Hello world\n"}}]},
                     "endIndex": 12,
                 },
                 {"endIndex": 13},
@@ -163,11 +171,7 @@ class TestExtractText:
             "body": {
                 "content": [
                     {"sectionBreak": {}},
-                    {
-                        "paragraph": {
-                            "elements": [{"textRun": {"content": "Line\n"}}]
-                        }
-                    },
+                    {"paragraph": {"elements": [{"textRun": {"content": "Line\n"}}]}},
                 ]
             }
         }
@@ -406,7 +410,8 @@ class TestCredentials:
         ):
             mock_sa.return_value = MagicMock()
             mock_build.return_value = MagicMock()
-            from tools.google_docs import _get_docs_service, _DOCS_SCOPES
+            from tools.google_docs import _DOCS_SCOPES, _get_docs_service
+
             _get_docs_service()
         mock_sa.assert_called_once_with("/fake/path/key.json", scopes=_DOCS_SCOPES)
 
@@ -416,6 +421,7 @@ class TestCredentials:
             patch("tools.google_docs.build") as mock_build,
         ):
             from tools.google_docs import _get_docs_service
+
             mock_adc.return_value = (MagicMock(), None)
             mock_build.return_value = MagicMock()
             _get_docs_service()

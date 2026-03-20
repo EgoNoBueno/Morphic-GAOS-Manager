@@ -2,6 +2,7 @@
 Create 13 placeholder seed knowledge files in the Drive Knowledge/ folder.
 Safe to re-run — skips files that already exist.
 """
+
 import io
 
 import google.auth
@@ -12,19 +13,67 @@ from google.auth.transport.requests import Request
 
 SEED_FILES = [
     # (subfolder, filename, short content)
-    ("policies", "expense_approval_policy.md", "# Expense Approval Policy\n\nPlaceholder — to be completed.\n"),
-    ("policies", "vendor_payment_terms.md", "# Vendor Payment Terms\n\nPlaceholder — to be completed.\n"),
-    ("policies", "data_retention_policy.md", "# Data Retention Policy\n\nPlaceholder — to be completed.\n"),
-    ("policies", "communications_policy.md", "# Communications Policy\n\nPlaceholder — to be completed.\n"),
+    (
+        "policies",
+        "expense_approval_policy.md",
+        "# Expense Approval Policy\n\nPlaceholder — to be completed.\n",
+    ),
+    (
+        "policies",
+        "vendor_payment_terms.md",
+        "# Vendor Payment Terms\n\nPlaceholder — to be completed.\n",
+    ),
+    (
+        "policies",
+        "data_retention_policy.md",
+        "# Data Retention Policy\n\nPlaceholder — to be completed.\n",
+    ),
+    (
+        "policies",
+        "communications_policy.md",
+        "# Communications Policy\n\nPlaceholder — to be completed.\n",
+    ),
     ("policies", "research_policy.md", "# Research Policy\n\nPlaceholder — to be completed.\n"),
-    ("procedures", "invoice_matching.md", "# Invoice Matching Procedure\n\nPlaceholder — to be completed.\n"),
-    ("procedures", "lead_scoring_criteria.md", "# Lead Scoring Criteria\n\nPlaceholder — to be completed.\n"),
-    ("procedures", "inventory_reorder_trigger.md", "# Inventory Reorder Trigger\n\nPlaceholder — to be completed.\n"),
-    ("procedures", "document_filing.md", "# Document Filing Procedure\n\nPlaceholder — to be completed.\n"),
-    ("procedures", "competitive_intelligence.md", "# Competitive Intelligence Methodology\n\nPlaceholder — to be completed.\n"),
-    ("workflows", "ap_reconciliation.md", "# AP Reconciliation Workflow\n\nPlaceholder — to be completed.\n"),
-    ("workflows", "order_fulfillment.md", "# Order Fulfillment Workflow\n\nPlaceholder — to be completed.\n"),
-    ("workflows", "weekly_reporting.md", "# Weekly Reporting Workflow\n\nPlaceholder — to be completed.\n"),
+    (
+        "procedures",
+        "invoice_matching.md",
+        "# Invoice Matching Procedure\n\nPlaceholder — to be completed.\n",
+    ),
+    (
+        "procedures",
+        "lead_scoring_criteria.md",
+        "# Lead Scoring Criteria\n\nPlaceholder — to be completed.\n",
+    ),
+    (
+        "procedures",
+        "inventory_reorder_trigger.md",
+        "# Inventory Reorder Trigger\n\nPlaceholder — to be completed.\n",
+    ),
+    (
+        "procedures",
+        "document_filing.md",
+        "# Document Filing Procedure\n\nPlaceholder — to be completed.\n",
+    ),
+    (
+        "procedures",
+        "competitive_intelligence.md",
+        "# Competitive Intelligence Methodology\n\nPlaceholder — to be completed.\n",
+    ),
+    (
+        "workflows",
+        "ap_reconciliation.md",
+        "# AP Reconciliation Workflow\n\nPlaceholder — to be completed.\n",
+    ),
+    (
+        "workflows",
+        "order_fulfillment.md",
+        "# Order Fulfillment Workflow\n\nPlaceholder — to be completed.\n",
+    ),
+    (
+        "workflows",
+        "weekly_reporting.md",
+        "# Weekly Reporting Workflow\n\nPlaceholder — to be completed.\n",
+    ),
 ]
 
 

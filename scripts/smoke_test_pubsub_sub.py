@@ -13,13 +13,14 @@ Steps:
 
 Exit code 0 = pass, 1 = fail.
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from google.api_core.exceptions import AlreadyExists, NotFound
 from google.cloud import pubsub_v1
@@ -57,7 +58,7 @@ def publish_test_message(publisher: pubsub_v1.PublisherClient, topic_path: str) 
         "proposal_id": proposal_id,
         "new_status": "Approved",
         "approved_by": "smoke-test@local",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
     data = json.dumps(payload).encode("utf-8")
     future = publisher.publish(topic_path, data=data)
@@ -66,8 +67,11 @@ def publish_test_message(publisher: pubsub_v1.PublisherClient, topic_path: str) 
     return proposal_id
 
 
-def pull_message(subscriber: pubsub_v1.SubscriberClient, sub_path: str, expected_proposal_id: str) -> bool:
+def pull_message(
+    subscriber: pubsub_v1.SubscriberClient, sub_path: str, expected_proposal_id: str
+) -> bool:
     import time
+
     deadline = time.monotonic() + 15  # 15-second window
     while time.monotonic() < deadline:
         response = subscriber.pull(
@@ -93,15 +97,13 @@ def pull_message(subscriber: pubsub_v1.SubscriberClient, sub_path: str, expected
         print(f"  new_status  : {new_status}")
         print()
 
-        subscriber.acknowledge(
-            request={"subscription": sub_path, "ack_ids": [msg.ack_id]}
-        )
+        subscriber.acknowledge(request={"subscription": sub_path, "ack_ids": [msg.ack_id]})
 
         if proposal_id != expected_proposal_id:
             print(f"  [FAIL] proposal_id mismatch: expected {expected_proposal_id}")
             return False
         if new_status != "Approved":
-            print(f"  [FAIL] new_status mismatch: expected 'Approved'")
+            print("  [FAIL] new_status mismatch: expected 'Approved'")
             return False
 
         return True
@@ -112,8 +114,9 @@ def pull_message(subscriber: pubsub_v1.SubscriberClient, sub_path: str, expected
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Pub/Sub local subscriber smoke test")
-    parser.add_argument("--project", default="morphic-gaos-prod",
-                        help="GCP project ID (default: morphic-gaos-prod)")
+    parser.add_argument(
+        "--project", default="morphic-gaos-prod", help="GCP project ID (default: morphic-gaos-prod)"
+    )
     args = parser.parse_args()
     project_id = args.project
 

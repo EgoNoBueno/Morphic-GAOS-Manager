@@ -5,10 +5,11 @@ scripts/nightly_knowledge_promotion.py.
 Covers all three sweeps and the helper functions.  All GCP calls
 (Sheets, BigQuery, Memory Bank) are patched at the SDK boundary.
 """
+
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, call, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 
@@ -56,9 +57,9 @@ def load_test_settings(tmp_path):
 
 # ── Row builder helpers ────────────────────────────────────────────────────
 
-_OLD_TS = (datetime.now(timezone.utc) - timedelta(days=20)).isoformat()
-_FRESH_TS = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-_NOW_TS = datetime.now(timezone.utc).isoformat()
+_OLD_TS = (datetime.now(UTC) - timedelta(days=20)).isoformat()
+_FRESH_TS = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+_NOW_TS = datetime.now(UTC).isoformat()
 
 PROJECT = "morphic-gaos-prod"
 
@@ -146,7 +147,7 @@ class TestHelpers:
         ts = "2024-01-15T10:30:00"
         result = _parse_dt(ts)
         assert result is not None
-        assert result.tzinfo == timezone.utc
+        assert result.tzinfo == UTC
 
     def test_parse_dt_empty_string_returns_none(self):
         assert _parse_dt("") is None
@@ -163,9 +164,7 @@ class TestRunExpirySweep:
         rows = [_buffered_row(knowledge_id="kid-old", last_seen_at=_OLD_TS)]
 
         with (
-            patch(
-                "scripts.nightly_knowledge_promotion.update_row"
-            ) as mock_update,
+            patch("scripts.nightly_knowledge_promotion.update_row") as mock_update,
             patch("tools.bigquery.insert_row") as mock_bq,
         ):
             expired = run_expiry_sweep(rows, PROJECT)
@@ -194,9 +193,7 @@ class TestRunExpirySweep:
 
     def test_skips_non_buffered_rows(self):
         rows = [
-            _buffered_row(
-                knowledge_id="kid-proposed", status="Proposed", last_seen_at=_OLD_TS
-            ),
+            _buffered_row(knowledge_id="kid-proposed", status="Proposed", last_seen_at=_OLD_TS),
             _approved_row(knowledge_id="kid-approved"),
         ]
 
@@ -431,9 +428,7 @@ class TestRunPromotionSweep:
         rows = [_approved_row(knowledge_id="kid-done", promoted_memory_id="mem-already")]
 
         with (
-            patch(
-                "scripts.nightly_knowledge_promotion.write_approved_memory"
-            ) as mock_write,
+            patch("scripts.nightly_knowledge_promotion.write_approved_memory") as mock_write,
             patch("scripts.nightly_knowledge_promotion.update_row") as mock_update,
         ):
             promoted = run_promotion_sweep(rows, PROJECT)
@@ -449,9 +444,7 @@ class TestRunPromotionSweep:
         ]
 
         with (
-            patch(
-                "scripts.nightly_knowledge_promotion.write_approved_memory"
-            ) as mock_write,
+            patch("scripts.nightly_knowledge_promotion.write_approved_memory") as mock_write,
             patch("scripts.nightly_knowledge_promotion.update_row") as mock_update,
         ):
             promoted = run_promotion_sweep(rows, PROJECT)
@@ -494,9 +487,7 @@ class TestRunPromotionSweep:
         rows = [_approved_row(knowledge_id="kid-drypro")]
 
         with (
-            patch(
-                "scripts.nightly_knowledge_promotion.write_approved_memory"
-            ) as mock_write,
+            patch("scripts.nightly_knowledge_promotion.write_approved_memory") as mock_write,
             patch("scripts.nightly_knowledge_promotion.update_row") as mock_update,
         ):
             promoted = run_promotion_sweep(rows, PROJECT, dry_run=True)

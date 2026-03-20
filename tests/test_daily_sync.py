@@ -19,11 +19,12 @@ TestDailySyncEndpoint (4 tests):
   S4   POST /daily-sync response body includes overnight_logs, overnight_errors,
        pending_approvals from handle_daily_sync result.
 """
+
 from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -49,23 +50,27 @@ projects:
     drive_folder_id: folder-abc
 """
 
-SETTINGS_YAML_WITH_CHAT = SETTINGS_YAML_NO_CHAT + """\
+SETTINGS_YAML_WITH_CHAT = (
+    SETTINGS_YAML_NO_CHAT
+    + """\
 chat:
   owner_space: spaces/OWNER_SPACE_XYZ
 """
+)
 
 _AUTH_HEADER = {"Authorization": "Bearer fake-token"}
 
 # Timestamps relative to actual now — avoids needing to freeze/mock datetime
-_NOW = datetime.now(timezone.utc)
-_RECENT = (_NOW - timedelta(hours=2)).isoformat()   # within 24 h window
-_OLD    = (_NOW - timedelta(hours=36)).isoformat()  # outside 24 h window
+_NOW = datetime.now(UTC)
+_RECENT = (_NOW - timedelta(hours=2)).isoformat()  # within 24 h window
+_OLD = (_NOW - timedelta(hours=36)).isoformat()  # outside 24 h window
 
 
 def _make_settings(tmp_path, yaml_text: str):
     cfg = tmp_path / "settings.yaml"
     cfg.write_text(yaml_text)
     import config
+
     config._reset_for_testing()
     config.load_settings(cfg)
     return cfg
@@ -75,6 +80,7 @@ def _make_settings(tmp_path, yaml_text: str):
 def reset_settings():
     yield
     import config
+
     config._reset_for_testing()
 
 
@@ -84,14 +90,15 @@ def reset_settings():
 class TestHandleDailySync:
     """Tests for agents.nexus_prime.orchestrator.handle_daily_sync()."""
 
-    def _run(self, tmp_path, yaml_text=SETTINGS_YAML_WITH_CHAT,
-             logs=None, errors=None, approvals=None):
+    def _run(
+        self, tmp_path, yaml_text=SETTINGS_YAML_WITH_CHAT, logs=None, errors=None, approvals=None
+    ):
         """Call handle_daily_sync() with mocked Sheet reads and send_card."""
         _make_settings(tmp_path, yaml_text)
 
-        logs_rows      = logs      if logs      is not None else []
-        error_rows     = errors    if errors    is not None else []
-        approval_rows  = approvals if approvals is not None else []
+        logs_rows = logs if logs is not None else []
+        error_rows = errors if errors is not None else []
+        approval_rows = approvals if approvals is not None else []
 
         def _fake_get_all_records(tab, project_id):
             if tab == "Logs":
@@ -108,6 +115,7 @@ class TestHandleDailySync:
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             from agents.nexus_prime.orchestrator import handle_daily_sync
+
             result = asyncio.run(handle_daily_sync("test-project"))
         return result, mock_send
 
@@ -116,7 +124,7 @@ class TestHandleDailySync:
         logs = [
             {"timestamp": _RECENT, "agent_id": "beacon"},
             {"timestamp": _RECENT, "agent_id": "ledger"},
-            {"timestamp": _OLD,    "agent_id": "scout"},
+            {"timestamp": _OLD, "agent_id": "scout"},
         ]
         result, _ = self._run(tmp_path, logs=logs)
         assert result["overnight_logs"] == 2
@@ -125,7 +133,7 @@ class TestHandleDailySync:
     def test_counts_only_recent_errors(self, tmp_path):
         errors = [
             {"timestamp": _RECENT, "agent_id": "foreman"},
-            {"timestamp": _OLD,    "agent_id": "steward"},
+            {"timestamp": _OLD, "agent_id": "steward"},
         ]
         result, _ = self._run(tmp_path, errors=errors)
         assert result["overnight_errors"] == 1
@@ -186,14 +194,20 @@ class TestHandleDailySync:
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             from agents.nexus_prime.orchestrator import handle_daily_sync
+
             result = asyncio.run(handle_daily_sync("test-project"))
         assert result["overnight_logs"] == 0
 
     # D9
     def test_returns_expected_keys(self, tmp_path):
         result, _ = self._run(tmp_path)
-        for key in ("overnight_logs", "overnight_errors", "pending_approvals",
-                    "space_name", "task_id"):
+        for key in (
+            "overnight_logs",
+            "overnight_errors",
+            "pending_approvals",
+            "space_name",
+            "task_id",
+        ):
             assert key in result
 
 
@@ -206,6 +220,7 @@ class TestDailySyncEndpoint:
     def _reloaded_client(self, mock_daily_sync, agent_name: str = "nexus-prime"):
         """Reload main, then patch handle_daily_sync on the live orchestrator module."""
         import importlib
+
         import main as main_mod
 
         with patch.dict(

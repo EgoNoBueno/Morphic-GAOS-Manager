@@ -11,6 +11,7 @@ What this script does:
 Run from repo root (venv active):
   python scripts/smoke_test_4.py
 """
+
 from __future__ import annotations
 
 import datetime
@@ -29,13 +30,13 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 # Columns (1-indexed) — matches setup_workspace.py HEADERS
 # A=ID, B=Agent, C=Issue, D=Trigger, E=Stopping, F=Iterations, G=Cost,
 # H=Code, I=Status, J=Timestamp, K=Approved By, L=Approver Tier, M=SHA, N=Priority
-COL_STATUS = 9   # I — filled by user in UI
-COL_TS     = 10  # J — Timestamp (set by trigger)
-COL_BY     = 11  # K — Approved By (set by trigger)
-COL_TIER   = 12  # L — Approver Tier (set by trigger)
+COL_STATUS = 9  # I — filled by user in UI
+COL_TS = 10  # J — Timestamp (set by trigger)
+COL_BY = 11  # K — Approved By (set by trigger)
+COL_TIER = 12  # L — Approver Tier (set by trigger)
 
-POLL_INTERVAL = 3   # seconds between checks
-POLL_TIMEOUT  = 60  # seconds total wait
+POLL_INTERVAL = 3  # seconds between checks
+POLL_TIMEOUT = 60  # seconds total wait
 
 
 def load_workbook_id() -> str:
@@ -54,26 +55,26 @@ def append_test_row(sheet: gspread.Worksheet) -> tuple[int, str]:
     test_id = f"SMOKE4-{datetime.datetime.now().strftime('%H%M%S')}"
     # 14 columns: A–N; col I (index 8) = 'Pending'
     row_data = [
-        test_id,                              # A: ID
-        "smoke-test",                         # B: Agent ID
-        "Smoke test — safe to delete",        # C: Issue
-        "SMOKE_TEST",                         # D: Trigger Reason
-        "",                                   # E: Stopping Constraint
-        "",                                   # F: Iterations
-        "",                                   # G: Cost USD
-        "",                                   # H: Proposed Code
-        "Pending",                            # I: Status (user will change to Approved)
-        "",                                   # J: Timestamp
-        "",                                   # K: Approved By
-        "",                                   # L: Approver Tier
-        "",                                   # M: code_sha256
-        "1",                                  # N: Priority (1 = any tier can approve)
+        test_id,  # A: ID
+        "smoke-test",  # B: Agent ID
+        "Smoke test — safe to delete",  # C: Issue
+        "SMOKE_TEST",  # D: Trigger Reason
+        "",  # E: Stopping Constraint
+        "",  # F: Iterations
+        "",  # G: Cost USD
+        "",  # H: Proposed Code
+        "Pending",  # I: Status (user will change to Approved)
+        "",  # J: Timestamp
+        "",  # K: Approved By
+        "",  # L: Approver Tier
+        "",  # M: code_sha256
+        "1",  # N: Priority (1 = any tier can approve)
     ]
     sheet.append_row(row_data, value_input_option="USER_ENTERED")
     # Find the row we just added by searching for the unique test_id.
     # Retry a few times to handle transient Sheets API propagation delays.
     cell = None
-    for attempt in range(5):
+    for _attempt in range(5):
         cell = sheet.find(test_id, in_column=1)
         if cell is not None:
             break
@@ -98,9 +99,9 @@ def poll_for_stamp(sheet: gspread.Worksheet, row: int) -> bool:
     deadline = time.time() + POLL_TIMEOUT
     while time.time() < deadline:
         values = sheet.row_values(row)
-        approved_by = values[COL_BY - 1]   if len(values) >= COL_BY   else ""
-        tier        = values[COL_TIER - 1] if len(values) >= COL_TIER else ""
-        timestamp   = values[COL_TS - 1]   if len(values) >= COL_TS   else ""
+        approved_by = values[COL_BY - 1] if len(values) >= COL_BY else ""
+        tier = values[COL_TIER - 1] if len(values) >= COL_TIER else ""
+        timestamp = values[COL_TS - 1] if len(values) >= COL_TS else ""
         if approved_by or tier:
             print(f"\n  J (Timestamp):     {timestamp or '(empty)'}")
             print(f"  K (Approved By):   {approved_by or '(empty)'}")
@@ -131,9 +132,9 @@ def check_logs(wb: gspread.Spreadsheet, test_id: str) -> bool:
 def main() -> None:
     print("\n=== Smoke Test 4: onEdit approval trigger ===\n")
 
-    wid   = load_workbook_id()
-    gc    = get_client()
-    wb    = gc.open_by_key(wid)
+    wid = load_workbook_id()
+    gc = get_client()
+    wb = gc.open_by_key(wid)
     sheet = wb.worksheet("Agent_Approvals")
 
     # ── Step 1: append a fresh test row ──────────────────────────────────────
