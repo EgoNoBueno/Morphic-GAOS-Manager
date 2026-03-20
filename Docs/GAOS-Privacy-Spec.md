@@ -304,8 +304,8 @@ A middle path: keep `LOCAL_MODEL` for logging, formatting, and summarization (as
 models:
   LOCAL_MODEL:  ollama/llama3.1:8b      # Free, local — logging, formatting
   FAST_MODEL:   ollama/llama3.1:8b      # Free, local — routing, moderate tasks
-  DEEP_MODEL:   gemini-2.0-flash        # Cloud — Approval Gate proposals only
-  LOCAL_MODEL_FALLBACK: gemini-2.0-flash
+  DEEP_MODEL:   gemini-2.5-flash        # Cloud — Approval Gate proposals only
+  LOCAL_MODEL_FALLBACK: gemini-2.5-flash
 ```
 
 This topology reduces cloud LLM exposure to a small, well-defined category of tasks (complex reasoning for approval proposals) where the business context passed to Gemini is typically already at an abstracted, non-sensitive level (error fingerprints, code diffs, proposal summaries).
