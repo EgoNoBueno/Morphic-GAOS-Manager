@@ -3,6 +3,31 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-03-21T14:00-03:00 — Phase 4 §20 bootstrap: GCS bucket, WIF, IAM, GitHub Secrets
+
+**What was done:** Executed §20 bootstrap sequence — created all missing GCP bootstrap resources and set GitHub Secrets. All 5 §19 4a items now checked except `production` GitHub Environment (UI-only).
+
+### Resources created / confirmed
+- `gs://morphic-gaos-tfstate` — created with versioning enabled
+- `deployer-sa@morphic-gaos-prod.iam.gserviceaccount.com` — already existed; all IAM bindings applied: `run.admin` (project), `artifactregistry.writer` (AR repo scoped), `storage.objectAdmin` (tfstate bucket), `iam.serviceAccountUser` on all 7 agent SAs
+- WIF pool `github-actions` — already existed; OIDC provider `github-oidc` created (was missing)
+- WIF `roles/iam.workloadIdentityUser` binding applied to `deployer-sa` for `EgoNoBueno/Morphic-GAOS-Manager` repository attribute
+- GitHub Secrets: `WIF_PROVIDER` + `WIF_SERVICE_ACCOUNT` — set via `gh secret set`
+- Artifact Registry `cloud-run-source-deploy` — already existed (306MB)
+
+### Files changed
+- `Docs/GAOS-Deploy-Spec.md` — §19 4a: 5 of 6 items checked
+- `WORKLOG.md` — this entry
+
+### What's next
+1. Create `production` GitHub Environment (GitHub UI → Settings → Environments → add required reviewer)
+2. Push to master → CI/CD triggers → approve the pipeline gate → all 7 services deploy
+3. Update Pub/Sub push subscriptions to new Cloud Run URLs (§5.2)
+4. Set `VERTEX_AGENT_ENDPOINT` in Apps Script Script Properties
+5. Run Chat-path E2E validation (§19 4d)
+
+---
+
 ## 2026-03-20T15:00-03:00 — IaC hardening: TF outputs + CLOUD_RUN_URL auto-wiring + WIF secret
 
 **What was done:** Closed three gaps in the IaC pipeline before the Phase 4 bootstrap can be executed.

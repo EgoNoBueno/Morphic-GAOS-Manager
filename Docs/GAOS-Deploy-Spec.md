@@ -1194,11 +1194,11 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 
 ### 4a — Infrastructure Bootstrap
 
-- [ ] GCS state bucket created: `gsutil mb -p $PROJECT -l us-central1 gs://morphic-gaos-tfstate/`
-- [ ] Artifact Registry repo created: `gcloud artifacts repositories create cloud-run-source-deploy --repository-format=docker --location=us-central1 --project=$PROJECT`
-- [ ] `deployer-sa` service account created and all IAM bindings applied (see §9.3 step 2)
-- [ ] Workload Identity Federation pool + OIDC provider created; `attribute.repository` condition verified to only allow `EgoNoBueno/Morphic-GAOS-Manager`
-- [ ] `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` GitHub Secrets set in repository settings
+- [x] GCS state bucket created: `gs://morphic-gaos-tfstate` — created 2026-03-21, versioning enabled
+- [x] Artifact Registry repo created: `cloud-run-source-deploy` — already existed (306MB)
+- [x] `deployer-sa` service account created and all IAM bindings applied: `roles/run.admin` (project), `roles/artifactregistry.writer` (AR repo), `roles/storage.objectAdmin` (tfstate bucket), `roles/iam.serviceAccountUser` on all 7 agent SAs
+- [x] Workload Identity Federation pool `github-actions` + OIDC provider `github-oidc` created; `attribute.repository` condition locks to `EgoNoBueno/Morphic-GAOS-Manager` only; `roles/iam.workloadIdentityUser` binding applied to `deployer-sa`
+- [x] `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` GitHub Secrets set — verified via `gh secret list`
 - [ ] `production` GitHub Environment created with at least one required reviewer
 
 ### 4b — CI/CD Pipeline Validation
