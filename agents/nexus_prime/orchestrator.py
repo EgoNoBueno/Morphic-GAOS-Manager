@@ -1495,14 +1495,43 @@ async def handle_daily_sync(project_id: str) -> dict[str, Any]:
         ],
     }
 
+    # ── Build Sheet URL for clickable links ──────────────────────────────────
+    workbook_id: str = getattr(settings.sheet, "workbook_id", "") or ""
+    sheet_base_url = (
+        f"https://docs.google.com/spreadsheets/d/{workbook_id}/edit" if workbook_id else ""
+    )
+
     pending_text = (
         f"🔔 <b>{len(pending)}</b> proposal(s) awaiting your approval"
         if pending
         else "✅ No pending approvals"
     )
+    actions_widgets: list[dict] = [{"textParagraph": {"text": pending_text}}]
+    if sheet_base_url:
+        actions_buttons: list[dict] = [
+            {
+                "text": "Open Agent Approvals",
+                "onClick": {"openLink": {"url": f"{sheet_base_url}#gid=0"}},
+            }
+        ]
+        if overnight_errors:
+            actions_buttons.append(
+                {
+                    "text": "View Error Logs",
+                    "onClick": {"openLink": {"url": f"{sheet_base_url}#gid=1"}},
+                }
+            )
+        actions_buttons.append(
+            {
+                "text": "View All Logs",
+                "onClick": {"openLink": {"url": sheet_base_url}},
+            }
+        )
+        actions_widgets.append({"buttonList": {"buttons": actions_buttons}})
+
     actions_section: dict = {
         "header": "Pending Actions",
-        "widgets": [{"textParagraph": {"text": pending_text}}],
+        "widgets": actions_widgets,
     }
 
     card: dict = {
