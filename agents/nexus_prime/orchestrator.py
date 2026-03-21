@@ -1408,10 +1408,17 @@ async def handle_daily_sync(project_id: str) -> dict[str, Any]:
     task_id = str(uuid.uuid4())
 
     def _parse_ts(ts_str: str) -> datetime:
+        """Parse timestamp; handles ISO and Google Sheets M/D/YYYY H:MM:SS format."""
+        if not ts_str:
+            return datetime(1970, 1, 1, tzinfo=UTC)
         try:
             dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
             return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
         except (ValueError, AttributeError):
+            pass
+        try:
+            return datetime.strptime(ts_str.strip(), "%m/%d/%Y %H:%M:%S").replace(tzinfo=UTC)
+        except ValueError:
             return datetime(1970, 1, 1, tzinfo=UTC)
 
     # ── 1. Overnight Logs ────────────────────────────────────────────────────
