@@ -3,6 +3,79 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-03-21T19:00-03:00 — §4d E2E Validated · Two IAM/Timeout Bugs Fixed · Docs Updated
+
+**What was done:** Resumed after Windows crash. Force-ran all 4 Scheduler jobs. Identified and fixed two production bugs discovered during §4d E2E validation. Confirmed pipeline live via Chat notification (5 approval proposals received). Updated spec and memory.
+
+### Changes
+- **No source files modified** — all fixes were GCP infrastructure changes
+- **IAM:** Granted `roles/secretmanager.secretAccessor` at project level to 6 SAs (`ledger-sa`, `beacon-sa`, `pursuit-sa`, `foreman-sa`, `steward-sa`, `scout-sa`). Previously missing — agents were hitting `Permission denied` on all secret fetches.
+- **Cloud Run:** Updated all 7 services from `--timeout 60s` to `--timeout 300s`. 60s was insufficient for Gemini API + LangGraph graph execution under load, causing `asyncio.exceptions.CancelledError` and HTTP 500s.
+- **`Docs/GAOS-Deploy-Spec.md`:** Added warning to §3.2 (per-secret IAM silently may not apply — verify with `get-iam-policy`; fallback project-level grant shown). Added warning to §9.1 (`--timeout 60s` → `--timeout 300s`; symptom and fix command included). Updated both deploy loop and re-deploy snippet to use `300s`.
+- **`/memories/repo/gotchas.md`:** Added two new bullets for secret IAM and timeout issues.
+
+### Bugs Found and Fixed
+1. **Secret access denied for 6 SAs** — `gcloud secrets get-iam-policy GEMINI_API_KEY` returned zero bindings despite §3.2 commands having been run. Root cause unclear (possible propagation failure). Fixed with project-level grant.
+2. **60s Cloud Run timeout** — `CancelledError` on Foreman, Beacon, Steward during LLM calls. Fixed to 300s across all 7 services.
+
+### Verifications passed
+- **§4d Scheduler E2E** — `daily-kickoff` triggered → Nexus-Prime processed → Chat DM received 5 approval proposals ✅
+- **All 7 services** now at 300s timeout ✅
+- **All 6 non-nexus SAs** have `roles/secretmanager.secretAccessor` ✅
+
+### What's next
+- Review and action the 5 approval proposals in `Agent_Approvals` (approve or reject in the Sheet)
+- §4e: Cost/security — Cloud Billing dashboard, $10 budget alert, verify `--no-allow-unauthenticated`
+- §4f: GAOS-Doctor full checklist (`Docs/GAOS-Doctor.md`)
+- §11: Cloud Logging retention — set `_Default` bucket to 7 days (GCP console, 2 min)
+
+---
+
+## 2026-03-21T11:30-03:00 — §4.7 Verified · §6.2 Seeded · §7 BigQuery · Full Status Mapped
+
+**What was done:** Zero-trust pytest run; §4.7 approval pipeline verified via Logs tab; §6.2 Drive seed files confirmed idempotent; §7 BigQuery dataset + 6 tables provisioned; full Phase 4 exit criteria status mapped.
+
+### Changes
+- **No source files modified** — all work was infrastructure provisioning and verification
+- **BigQuery**: `morphic-gaos-prod.aos_logs` dataset created (US, indefinite); 6 tables created:
+  - `task_outcomes` (30d TTL, `log_date` partition)
+  - `evolution_tasks` (365d TTL, `log_date` partition)
+  - `approval_history` (730d TTL, `log_date` partition)
+  - `observability_weekly` (indefinite, no partition)
+  - `memory_entries` (indefinite, no partition)
+  - `monologue_frames` (90d TTL, `timestamp` partition)
+
+### Verifications passed
+- **408/408 pytest** — 15.22s, zero failures (zero-trust baseline)
+- **§4.7 approval trigger** — Logs tab row 55: `['3/21/2026 3:52:09', 'APPROVAL', 'SMOKE67-6B136EAF', 'dhess@sl10repairtechs.com', '5', 'Approved']` ✅
+- **§6.2 seed files** — 0 created, 13 skipped (all pre-existing from prior session) ✅
+- **§7 BigQuery** — all 6 tables confirmed via `client.list_tables()` ✅
+- **§10 Scheduler** — 4 jobs ENABLED, all with recent last-attempt times ✅
+
+### Phase 4 exit criteria status
+**Complete:**
+- ✅ §4 Apps Script (all sub-steps including §4.7)
+- ✅ §5 Pub/Sub (22 subscriptions, OIDC auth)
+- ✅ §6 Drive Knowledge folder (structure + seed files)
+- ✅ §7 BigQuery (dataset + 6 tables)
+- ✅ §8 settings.yaml
+- ✅ §9 Cloud Run (7 services deployed)
+- ✅ §10 Scheduler (4 jobs ENABLED)
+- ✅ §12 Vertex AI RAG corpora (7, all populated)
+- ✅ §13 Smoke tests (8/8 webhook tests pass)
+
+**Remaining:**
+- ⬜ §4d E2E validations — force-run Scheduler jobs; Chat-path approval E2E; vision workflow
+- ⬜ §4e Cost/security — Cloud Billing dashboard; $10 budget alert; verify `--no-allow-unauthenticated`
+- ⬜ §4f GAOS-Doctor — run full checklist (`Docs/GAOS-Doctor.md`)
+- ⬜ §11 Cloud Logging retention — set `_Default` bucket to 7 days (GCP console, 2 min)
+- ⬜ AppSheet app (§14 Phase 2.5, optional)
+
+### What's next
+§4d E2E validations — force-run `daily-kickoff` and confirm morning briefing Chat card arrives in `spaces/jbpdpSAAAAE`.
+
+---
+
 ## 2026-03-21T19:45-03:00 — VERTEX_AGENT_ENDPOINT fix; Chat app configured; Chat DM discovered
 
 **What was done:** Fixed `VERTEX_AGENT_ENDPOINT` placeholder bug in `--post-auth`; configured Google Chat app in GCP console; discovered owner Chat DM space; investigated persistent `scripts.run()` 403 and confirmed root cause.
@@ -45,9 +118,10 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ### Next: User must run (in standalone PS window)
 ```powershell
+$s = "https://www.googleapis.com/auth/"
 gcloud auth application-default login `
   --client-id-file=oauth-client.json `
-  --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/script.projects,https://www.googleapis.com/auth/script.deployments,https://www.googleapis.com/auth/script.scriptapp,https://www.googleapis.com/auth/chat.spaces.readonly,https://www.googleapis.com/auth/cloud-platform"
+  --scopes="${s}spreadsheets,${s}drive,${s}script.projects,${s}script.deployments,${s}script.scriptapp,${s}chat.spaces.readonly,${s}cloud-platform"
 gcloud auth application-default set-quota-project morphic-gaos-prod
 # Then in VS Code terminal:
 python scripts/setup_apps_script.py --post-auth

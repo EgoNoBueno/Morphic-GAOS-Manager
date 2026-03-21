@@ -433,7 +433,7 @@ def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     proposals from Agent_Approvals, and validates credentials.
     """
     from config import get_settings
-    from tools.google_sheets import get_all_records
+    from tools.google_sheets import get_all_records, init_sheets_client
     from tools.pubsub import ensure_topic_exists
 
     state["_started_at"] = time.time()
@@ -461,6 +461,18 @@ def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     settings = get_settings()
     pid = state.get("project_id", settings.GCP_PROJECT_ID)
     state["project_id"] = pid
+
+    try:
+        init_sheets_client(pid)
+    except Exception as _sheets_init_exc:
+        _log_cloud(
+            "nexus-prime",
+            pid,
+            "task",
+            state.get("task_id", "boot"),
+            f"boot: init_sheets_client failed — {_sheets_init_exc}",
+            "ERROR",
+        )
 
     # Ensure all Pub/Sub topics exist (idempotent)
     for topic in settings.pubsub.all_topics:
@@ -1087,6 +1099,7 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
         append_row,
         get_all_records,
         get_all_records_with_row_numbers,
+        init_sheets_client,
     )
     from tools.google_sheets import (
         delete_rows as sheets_delete_rows,
@@ -1094,6 +1107,7 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
     from tools.pubsub import publish
 
     settings = get_settings()
+    init_sheets_client(project_id)
     now = datetime.now(UTC)
     cutoff_30 = now - timedelta(days=30)
     cutoff_90 = now - timedelta(days=90)
@@ -1371,9 +1385,10 @@ async def handle_daily_sync(project_id: str) -> dict[str, Any]:
 
     from config import get_settings
     from tools.google_chat import send_card
-    from tools.google_sheets import get_all_records
+    from tools.google_sheets import get_all_records, init_sheets_client
 
     settings = get_settings()
+    init_sheets_client(project_id)
     now = datetime.now(UTC)
     cutoff = now - timedelta(hours=24)
     task_id = str(uuid.uuid4())
@@ -1883,9 +1898,11 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
     """
     from config import get_settings
     from tools.google_docs import list_comments
+    from tools.google_sheets import get_all_records, init_sheets_client
     from tools.pubsub import publish
 
     get_settings()  # validate config is loadable
+    init_sheets_client(project_id)
     task_id = str(uuid.uuid4())
     published = 0
     errors = 0
@@ -1893,8 +1910,6 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
     # Retrieve active blueprints from the Project_Incubator tab
     incubator_rows: list[dict] = []
     try:
-        from tools.google_sheets import get_all_records
-
         incubator_rows = get_all_records("Project_Incubator", project_id)
     except Exception as exc:
         _log_cloud(
@@ -2402,6 +2417,62 @@ else:
 
         def __init__(self, **_: Any) -> None:
             self._graph = build_nexus_prime_graph()
+
+        async def run(self, agent_input: Any) -> Any:
+            from models import AgentOutput
+
+            initial_state: NexusPrimeWorkingMemory = {  # type: ignore[assignment]
+                "task_id": str(uuid.uuid4()),
+                "project_id": "",
+                "current_objective": "Processing incoming event",
+                "sub_task_results": [],
+                "parked_proposals": [],
+                "error_history": [],
+                "memory_context": {},
+                "episodic_cache": {},
+                "observation_buffer": [],
+                "cost_usd": 0.0,
+                "iteration_count": 0,
+                "step_count": 0,
+                "tokens_used": 0,
+                "incoming_message": None,
+                "messages": [],
+                "hard_stop_triggered": False,
+                "evolution_triggered": False,
+                "active_broadcasts": [],
+                "conflict_queue": [],
+                "safety_check_passed": False,
+                "system_state_summary": {},
+                "last_ttl_sweep_at": None,
+                "pending_project_row": None,
+                "new_project_id": None,
+                "candidate_code": None,
+                "candidate_agent_id": None,
+                "candidate_sha256": None,
+                "_started_at": time.time(),
+                "active_blueprints": {},
+                "blueprint_constraints": [],
+                "_next_node": "record",
+                "monologue_frame": None,
+            }
+            try:
+                final_state = await self._graph.ainvoke(
+                    {**initial_state, "_raw_incoming": agent_input},
+                    config={"configurable": {"thread_id": initial_state["task_id"]}},
+                )
+                status = "failed" if final_state.get("hard_stop_triggered") else "success"
+            except Exception as exc:
+                _log_cloud("nexus-prime", "", "task", initial_state["task_id"], str(exc), "ERROR")
+                status = "failed"
+                final_state = initial_state
+            return AgentOutput(
+                task_id=final_state.get("task_id", initial_state["task_id"]),
+                project_id=final_state.get("project_id", ""),
+                agent_id="nexus-prime",
+                status=status,
+                result={},
+                cost_usd=final_state.get("cost_usd", 0.0),
+            )
 
 
 # Module-level compiled graph (used directly in Cloud Run handler if not via ADK)

@@ -94,6 +94,21 @@ def _get_agent() -> Any:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
+def _get_project_id() -> str:
+    """Return GCP project ID from env var, falling back to settings.yaml.
+
+    ``GCP_PROJECT_ID`` is the canonical source; settings.yaml is the fallback
+    for local dev and for Cloud Run instances where the env var is not set.
+    """
+    pid = os.environ.get("GCP_PROJECT_ID", "")
+    if not pid:
+        from config import get_settings
+
+        pid = get_settings().GCP_PROJECT_ID
+    return pid
+
+
 # Google Chat signs push requests with this service account.
 _CHAT_ISSUER: str = "chat@system.gserviceaccount.com"
 _CHAT_CERTS_URL: str = (
@@ -293,7 +308,7 @@ async def ttl_sweep(request: Request) -> JSONResponse:
     synthetic_msg = A2AMessage(
         source_agent="cloud-scheduler",
         target_agent="nexus-prime",
-        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        project_id=_get_project_id(),
         task_id=str(uuid.uuid4()),
         message_type=MessageType.TTL_SWEEP,
         priority=1,
@@ -345,7 +360,7 @@ async def sync(request: Request) -> JSONResponse:
     synthetic_msg = A2AMessage(
         source_agent="apps-script",
         target_agent="nexus-prime",
-        project_id=body.get("project_id", os.environ.get("GCP_PROJECT_ID", "")),
+        project_id=body.get("project_id") or _get_project_id(),
         task_id=body.get("proposal_id", str(uuid.uuid4())),
         message_type=MessageType.APPROVAL_RESULT,
         priority=2,
@@ -393,7 +408,7 @@ async def archive(request: Request) -> JSONResponse:
 
     from agents.nexus_prime.orchestrator import handle_archive
 
-    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    project_id = _get_project_id()
     try:
         result = await handle_archive(project_id)
         log.info(
@@ -427,7 +442,7 @@ async def daily_sync(request: Request) -> JSONResponse:
 
     from agents.nexus_prime.orchestrator import handle_daily_sync
 
-    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    project_id = _get_project_id()
     try:
         result = await handle_daily_sync(project_id)
         log.info(
@@ -616,7 +631,7 @@ async def chat(request: Request) -> JSONResponse:
         # Unknown CARD_CLICKED action or unsupported event — ACK silently
         return JSONResponse(content={"status": "ok"})
 
-    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    project_id = _get_project_id()
     synthetic_msg = A2AMessage(
         source_agent="google-chat",
         target_agent="nexus-prime",
@@ -685,7 +700,7 @@ async def vision(request: Request) -> JSONResponse:
 
     from models import A2AMessage, MessageType
 
-    project_id = body.get("project_id") or os.environ.get("GCP_PROJECT_ID", "")
+    project_id = body.get("project_id") or _get_project_id()
     synthetic_msg = A2AMessage(
         source_agent=body.get("submitted_by", "owner"),
         target_agent="nexus-prime",
@@ -745,7 +760,7 @@ async def poll_comments(request: Request) -> JSONResponse:
 
     from agents.nexus_prime.orchestrator import handle_poll_comments
 
-    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    project_id = _get_project_id()
     try:
         result = await handle_poll_comments(project_id)
         log.info(

@@ -351,6 +351,23 @@ done
 
 **Verification:** `gcloud secrets list --project=$PROJECT` — 6 secrets listed (WEBHOOK_URL added by setup_apps_script.py Phase 1).
 
+> ⚠️ **Warning — per-secret IAM bindings may silently fail to propagate:** After running §3.2, verify each critical secret's bindings were actually written before deploying:
+> ```powershell
+> gcloud secrets get-iam-policy GEMINI_API_KEY --project=morphic-gaos-prod
+> ```
+> If the output shows `ROLE  MEMBERS` with no rows, the binding was never applied (possible IAM propagation race or a silent CLI failure). Symptom in Cloud Run logs: `Permission 'secretmanager.versions.access' denied for resource '…/GEMINI_API_KEY/versions/latest'` and a 500 response.
+>
+> **Fix:** Grant `roles/secretmanager.secretAccessor` at the project level as a fallback:
+> ```powershell
+> $PROJECT = "morphic-gaos-prod"
+> foreach ($agent in @("ledger","beacon","pursuit","foreman","steward","scout")) {
+>     gcloud projects add-iam-policy-binding $PROJECT `
+>       --member="serviceAccount:${agent}-sa@${PROJECT}.iam.gserviceaccount.com" `
+>       --role="roles/secretmanager.secretAccessor" --condition=None
+> }
+> ```
+> (nexus-prime-sa already has access via `roles/editor`.) This is less granular than per-secret bindings but guarantees all agents can access all secrets.
+
 ---
 
 ## 4. Google Sheets Workbook
@@ -674,9 +691,10 @@ python scripts/_seed_knowledge_files.py
 > ⚠️ **Warning — ADC Drive scope:** Standard `gcloud auth application-default login` only grants `cloud-platform` scope. The Drive API requires explicit OAuth scopes. Refresh ADC with:
 > ```powershell
 > # Run in a standalone PowerShell window (not VS Code terminal — browser redirect fails there)
+> $s = "https://www.googleapis.com/auth/"
 > gcloud auth application-default login `
 >   --client-id-file=oauth-client.json `
->   --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/script.projects,https://www.googleapis.com/auth/script.deployments,https://www.googleapis.com/auth/script.scriptapp,https://www.googleapis.com/auth/chat.spaces.readonly,https://www.googleapis.com/auth/cloud-platform"
+>   --scopes="${s}spreadsheets,${s}drive,${s}script.projects,${s}script.deployments,${s}script.scriptapp,${s}chat.spaces.readonly,${s}cloud-platform"
 > ```
 >
 > ⚠️ **Warning — script.scriptapp and chat.spaces.readonly required:** The `setup_apps_script.py --post-auth` command calls `scripts.run()` (requires `script.scriptapp`) and discovers the owner DM space (requires `chat.spaces.readonly`). Both must be in the `--scopes` list above. If you used the old scope set (without these), re-auth with the command above before running `--post-auth`.
@@ -1060,7 +1078,7 @@ for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
     --service-account ${agent}-sa@${PROJECT}.iam.gserviceaccount.com \
     --memory 512Mi \
     --cpu 1 \
-    --timeout 60s \
+    --timeout 300s \
     --concurrency 1 \
     --min-instances 0 \
     --max-instances 5 \
@@ -1070,6 +1088,13 @@ done
 ```
 
 > **Note:** Secrets (`GEMINI_API_KEY`, etc.) are **not** injected as environment variables. Each agent fetches secrets at boot via the Secret Manager API using its service account identity. `--set-secrets` is not needed.
+
+> ⚠️ **Warning — 60s timeout causes `CancelledError` on LLM calls:** The original spec used `--timeout 60s`. Gemini API calls can take 30–120s under load, and LangGraph graph execution that chains multiple tool calls can exceed 60s easily. Symptoms: `asyncio.exceptions.CancelledError` in Cloud Logging, HTTP 500 from the `/pubsub` endpoint, and agents silently failing to complete tasks even though Pub/Sub delivery succeeded. **Use `--timeout 300s`** (shown above). If you need to update already-deployed services:
+> ```powershell
+> foreach ($agent in @("nexus-prime","ledger","beacon","pursuit","foreman","steward","scout")) {
+>     gcloud run services update $agent --region=us-central1 --project=morphic-gaos-prod --timeout=300
+> }
+> ```
 
 Each service exposes nine endpoints:
 
@@ -1095,7 +1120,7 @@ All POST endpoints require a `Bearer` token in the `Authorization` header. Cloud
 > foreach ($agent in @("nexus-prime","ledger","beacon","pursuit","foreman","steward","scout")) {
 >   gcloud run deploy $agent --image $IMAGE --region us-central1 --project $PROJECT `
 >     --service-account "${agent}-sa@${PROJECT}.iam.gserviceaccount.com" `
->     --memory 512Mi --cpu 1 --timeout 60s --concurrency 1 `
+>     --memory 512Mi --cpu 1 --timeout 300s --concurrency 1 `
 >     --min-instances 0 --max-instances 5 --no-allow-unauthenticated `
 >     --set-env-vars AGENT_NAME=$agent --quiet
 > }

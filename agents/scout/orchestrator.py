@@ -752,6 +752,28 @@ else:
         def __init__(self, **_: Any) -> None:
             self._graph = build_scout_graph()
 
+        async def run(self, agent_input: Any) -> Any:
+            from models import AgentOutput
+
+            initial = _initial_state(agent_input)
+            try:
+                final = await self._graph.ainvoke(
+                    initial, config={"configurable": {"thread_id": initial["task_id"]}}
+                )
+                status = "failed" if final.get("hard_stop_triggered") else "success"
+            except Exception as exc:
+                _log_cloud(self.name, "", "task", initial["task_id"], str(exc), "ERROR")
+                status = "failed"
+                final = initial
+            return AgentOutput(
+                task_id=final["task_id"],
+                project_id=final["project_id"],
+                agent_id=self.name,
+                status=status,
+                result={},
+                cost_usd=final.get("cost_usd", 0.0),
+            )
+
 
 def _initial_state(agent_input: Any) -> AgentWorkingMemory:
     from models import AgentInput
