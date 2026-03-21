@@ -3,7 +3,37 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
-## 2026-03-21T19:00-03:00 — §4d E2E Validated · Two IAM/Timeout Bugs Fixed · Docs Updated
+## 2026-03-21T15:20-03:00 — Comprehensive Docs Audit Complete · commit 452de2b
+
+**What was done:** Picked up from previous session (commit `44a80ba`). Audited all 18 files in `Docs/` plus `README.md` and `Docs/agents/` for stale facts. Found and fixed every discrepancy.
+
+### Changes
+
+**GAOS-Tools-Spec.md** — **Critical structural bug fixed:** A 323-line duplicate block (§12 web_search, §15–§17 vertex_search/google_docs/google_search with wrong section numbers) had been inserted mid-way through the §11 google_chat section, splitting Chat's Error Types from Settings Required/Usage Rule. Used PowerShell line-level splice (removed lines 926–1248) to restore clean §1–§18 structure. No duplicate sections remain.
+
+**GAOS-Deploy-Spec.md** — Added `— the GCP project that owns \`oauth-client.json\`; see §0.4` parenthetical after OAuth project number `490183704378` in §4.4 bound-script warning.
+
+**GAOS-Onboarding-Spec.md** — Added `>=1.0.0` version pin to `google-adk` in the bootstrap `uv pip install` command (matches `pyproject.toml`).
+
+**Morphic-GAOS-Manager-Summary.md** — Updated `396-test suite` → `408-test suite` in the file/directory reference table (line 463); the other two 396→408 fixes from the prior session were already applied.
+
+**Docs/agents/nexus-prime.md** — Removed `**[Phase 2.5]**` labels from three Objectives bullets (Vision Blueprint, ITERATE_PLAN, Chat approval callbacks) — these are now live production capabilities, not phase-gated items.
+
+**README.md** — Version pin, 9 endpoints, Phase 3/4 status, footer updated (applied earlier in session before summarization interrupted).
+
+**Verified clean (no changes needed):** GAOS-Agent-Spec.md, GAOS-Manager-Spec.md, GAOS-Nexus-Prime-Spec.md, GAOS-Memory-Spec.md, GAOS-Doctor.md, GAOS-Persona-Spec.md, GAOS-Privacy-Spec.md, GAOS-Skill-Compliance-Spec.md, GAOS-Project-Glossary.md, AI-Autocoding-Rules.md, about-me.md, brand-voice.md, working-preferences.md, Docs/agents/beacon.md, foreman.md, ledger.md, pursuit.md, scout.md, steward.md.
+
+### Tests
+No code changes — docs only. Test suite unchanged at 408 passing.
+
+### What's next
+- §4e/§4f cost and security verification
+- GAOS-Doctor.md checklist items (placeholder doc — may need expansion)
+- Phase 4 exit criteria: all checkboxes in Deploy-Spec §11
+
+---
+
+
 
 **What was done:** Resumed after Windows crash. Force-ran all 4 Scheduler jobs. Identified and fixed two production bugs discovered during §4d E2E validation. Confirmed pipeline live via Chat notification (5 approval proposals received). Updated spec and memory.
 
