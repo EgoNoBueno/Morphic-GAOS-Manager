@@ -145,7 +145,7 @@ A single deployment can manage multiple business units or client accounts. Each 
   Google Sheets · BigQuery · Vertex AI Memory Bank · Google Drive
 ```
 
-**Entry point:** A single `main.py` (FastAPI) is deployed to all 7 Cloud Run services. The `AGENT_NAME` environment variable selects which orchestrator handles requests. Services run with `workers=1` — LangGraph state is never shared across processes. Endpoints: `POST /pubsub`, `POST /ttl-sweep`, `POST /sync`, `GET /health`. All POST endpoints are deployed `--no-allow-unauthenticated`; OIDC token verification is defense-in-depth.
+**Entry point:** A single `main.py` (FastAPI) is deployed to all 7 Cloud Run services. The `AGENT_NAME` environment variable selects which orchestrator handles requests. Services run with `workers=1` — LangGraph state is never shared across processes. Endpoints: `GET /health` · `POST /pubsub` · `POST /ttl-sweep` · `POST /sync` · `POST /archive` · `POST /daily-sync` · `POST /chat` · `POST /vision` · `POST /poll-comments`. All POST endpoints are deployed `--no-allow-unauthenticated`; OIDC token verification is defense-in-depth.
 
 **Infrastructure:** Cloud Run (scale-to-zero) · Cloud Pub/Sub · Secret Manager · BigQuery · Vertex AI · Cloud Scheduler · Google Apps Script
 
@@ -172,7 +172,7 @@ git clone https://github.com/EgoNoBueno/Morphic-GAOS-Manager.git
 cd Morphic-GAOS-Manager
 uv venv
 uv pip install google-cloud-secret-manager google-cloud-pubsub gspread pydantic \
-               google-adk langgraph google-cloud-bigquery google-cloud-logging \
+               "google-adk>=1.0.0" langgraph google-cloud-bigquery google-cloud-logging \
                google-cloud-aiplatform "google-genai>=1.0.0"
 ```
 
@@ -357,8 +357,8 @@ At the start of every work session, agents read all three files as standing orde
 | **Phase 1** | All 7 orchestrators, `main.py` Cloud Run entry point, full tool layer, 408-test suite, all smoke tests passing | **Complete** |
 | **Phase 2** | Ollama observability loop, Knowledge Atlas (Memory Mirror) | **Complete** |
 | **Phase 2.5** | Google Chat integration, Vertex AI Search, Google Custom Search, Cloud Scheduler daily-kickoff and poll-comments jobs, Apps Script webhook + approval gate, skill-request flow | **Complete** |
-| **Phase 3** | `think` node (Strategic Architect), multimodal vision, `iterate_plan`, memory mirror, Chat Interactive Hub (JWT + approval cards + CARD_CLICKED routing), OpenTofu IaC + WIF CI/CD | **Code-complete** — Cloud Run bootstrap + Chat-path E2E validation pending |
-| **Phase 4** | Production bootstrap (OpenTofu deploy), Approval Gate Chat-path E2E live validation, exit criteria, cost verification | **Up next** |
+| **Phase 3** | `think` node (Strategic Architect), multimodal vision, `iterate_plan`, memory mirror, Chat Interactive Hub (JWT + approval cards + CARD_CLICKED routing), OpenTofu IaC + WIF CI/CD | **Complete** |
+| **Phase 4** | Production bootstrap (OpenTofu deploy), Approval Gate Chat-path E2E live validation, exit criteria, cost verification | **In progress** — Chat E2E validated (5 live approval proposals); cost/security verification and GAOS-Doctor checklist remaining |
 | **Phase 5** | CEO dashboard (Grafana + Cloud Run), optional Vertex Agent Engine | Future |
 
 <div align="center">
@@ -415,6 +415,6 @@ Infrastructure as Code powered by [OpenTofu](https://opentofu.org) — an open-s
 <div align="center">
 
 *Built entirely on Google's cloud ecosystem.*
-*Phases 1–3 code-complete. 408 tests green. Phase 4: production bootstrap in progress.*
+*Phases 1–3 complete. 408 tests green. Phase 4: E2E validated, final steps in progress.*
 
 </div>

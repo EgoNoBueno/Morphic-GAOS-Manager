@@ -460,7 +460,7 @@ After clicking Allow, the web app is live and `WEBHOOK_URL` is in Secret Manager
 > ⚠️ **Warning — bound-script Execution API 403:** The Apps Script project is created
 > with `parentId: spreadsheet_id` (bound to the Sheet). Bound scripts inherit the
 > spreadsheet's auto-assigned GCP project, which is different from the OAuth client
-> project (`490183704378`). The `scripts.run()` Execution API cannot cross that project
+> project (`490183704378` — the GCP project that owns `oauth-client.json`; see §0.4). The `scripts.run()` Execution API cannot cross that project
 > boundary with ADC credentials — it returns 403 permanently regardless of scopes,
 > editor consent, or re-auth. Do not spend time debugging this; the three Phase 2
 > tasks must always be completed manually in the Apps Script editor.

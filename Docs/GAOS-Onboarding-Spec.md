@@ -163,7 +163,7 @@ irm https://astral.sh/uv/install.ps1 | iex
 # Bootstrap Python environment
 uv venv
 uv pip install google-cloud-secret-manager google-cloud-pubsub gspread pydantic `
-               google-adk langgraph google-cloud-bigquery google-cloud-logging `
+               "google-adk>=1.0.0" langgraph google-cloud-bigquery google-cloud-logging `
                google-cloud-aiplatform "google-genai>=1.0.0"
 ```
 

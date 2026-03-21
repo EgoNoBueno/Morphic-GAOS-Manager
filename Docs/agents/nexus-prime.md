@@ -15,9 +15,9 @@ Maintain system integrity, enforce the Approval Gate on all code deployments, re
 - Sweep `Project Registry` every 15 minutes; provision any row with `status = Pending` before dispatching agents to it.
 - Run the `friction_audit` node every Monday at 07:00; write the friction summary to the Logs tab and queue automation proposals to `Pending_Knowledge` for owner review.
 - Maintain a live system state summary on the Main Control Plane tab: one row per active project, one column per Tier 2 orchestrator, last heartbeat timestamp and current status.
-- **[Phase 2.5]** Handle `VISION_SUBMITTED` events: parse owner's vision text → generate a structured Google Doc blueprint via Blueprint Factory → write an `ApprovalProposal` referencing the Doc → post a Chat card to the owner for review.
-- **[Phase 2.5]** Run the `ITERATE_PLAN` node when `blueprint_constraints` list reaches 5 items: call Gemini Flash to compact constraints into a summary paragraph → archive original constraints to BigQuery `aos_logs.blueprint_constraints` → replace list with the compacted paragraph.
-- **[Phase 2.5]** Process Chat approval callbacks: tap on Approve/Reject card → publish `APPROVAL_RESULT` → resume parked task. Write a corresponding audit row to `Agent_Approvals` Sheet after every Chat approval event.
+- Handle `VISION_SUBMITTED` events: parse owner's vision text → generate a structured Google Doc blueprint via Blueprint Factory → write an `ApprovalProposal` referencing the Doc → post a Chat card to the owner for review.
+- Run the `ITERATE_PLAN` node when `blueprint_constraints` list reaches 5 items: call Gemini Flash to compact constraints into a summary paragraph → archive original constraints to BigQuery `aos_logs.blueprint_constraints` → replace list with the compacted paragraph.
+- Process Chat approval callbacks: tap on Approve/Reject card → publish `APPROVAL_RESULT` → resume parked task. Write a corresponding audit row to `Agent_Approvals` Sheet after every Chat approval event.
 
 ## Resources
 | Resource | Type | Access |
