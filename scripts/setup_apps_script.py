@@ -370,6 +370,30 @@ def phase2() -> None:
 
     webhook_url = settings.get("apps_script", {}).get("webhook_url", "")
 
+    # Derive VERTEX_AGENT_ENDPOINT from the live nexus-prime Cloud Run URL
+    cr_result = subprocess.run(
+        [
+            "gcloud",
+            "run",
+            "services",
+            "describe",
+            "nexus-prime",
+            "--region",
+            "us-central1",
+            "--project",
+            PROJECT,
+            "--format=value(status.url)",
+        ],
+        capture_output=True,
+        text=True,
+        shell=_SHELL,
+    )
+    if cr_result.returncode == 0 and cr_result.stdout.strip():
+        nexus_prime_url = cr_result.stdout.strip().rstrip("/")
+    else:
+        nexus_prime_url = "https://nexus-prime-7bu22bxlda-uc.a.run.app"
+    vertex_endpoint = f"{nexus_prime_url}/sync"
+
     creds = get_credentials()
     script_service = build("script", "v1", credentials=creds)
 
@@ -377,7 +401,7 @@ def phase2() -> None:
     print("Setting Script Properties via Apps Script API...")
     props = {
         "WEBHOOK_HMAC_SECRET": hmac_secret,
-        "VERTEX_AGENT_ENDPOINT": "https://placeholder.invalid/sync",  # update after Cloud Run deploy §9
+        "VERTEX_AGENT_ENDPOINT": vertex_endpoint,
         "WEBHOOK_URL": webhook_url,
         "GCP_PROJECT": PROJECT,
     }
