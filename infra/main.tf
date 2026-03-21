@@ -55,6 +55,39 @@ locals {
   ])
 }
 
+# Import blocks — bring pre-existing Cloud Run services into TF state.
+# Required because services were deployed manually before the IaC pipeline existed.
+# These are idempotent on first apply; OpenTofu skips them once state is populated.
+# Safe to leave in place: subsequent plans will show 0 changes for already-managed resources.
+import {
+  to = google_cloud_run_v2_service.agent["nexus-prime"]
+  id = "projects/morphic-gaos-prod/locations/us-central1/services/nexus-prime"
+}
+import {
+  to = google_cloud_run_v2_service.agent["ledger"]
+  id = "projects/morphic-gaos-prod/locations/us-central1/services/ledger"
+}
+import {
+  to = google_cloud_run_v2_service.agent["beacon"]
+  id = "projects/morphic-gaos-prod/locations/us-central1/services/beacon"
+}
+import {
+  to = google_cloud_run_v2_service.agent["pursuit"]
+  id = "projects/morphic-gaos-prod/locations/us-central1/services/pursuit"
+}
+import {
+  to = google_cloud_run_v2_service.agent["foreman"]
+  id = "projects/morphic-gaos-prod/locations/us-central1/services/foreman"
+}
+import {
+  to = google_cloud_run_v2_service.agent["steward"]
+  id = "projects/morphic-gaos-prod/locations/us-central1/services/steward"
+}
+import {
+  to = google_cloud_run_v2_service.agent["scout"]
+  id = "projects/morphic-gaos-prod/locations/us-central1/services/scout"
+}
+
 resource "google_cloud_run_v2_service" "agent" {
   for_each = local.agents
 
