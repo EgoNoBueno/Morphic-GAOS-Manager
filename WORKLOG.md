@@ -3,6 +3,34 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-03-21T16:30-03:00 — Phase 4 CI/CD pipeline live: all 7 services deployed + health-checked
+
+**What was done:** Approved the `production` GitHub Environment gate for pipeline run `23376208619`. OpenTofu Apply completed — 7 imported, 0 added, 7 changed, 0 destroyed. `Wire CLOUD_RUN_URL on nexus-prime` step ran automatically and confirmed `CLOUD_RUN_URL=https://nexus-prime-7bu22bxlda-uc.a.run.app`. All 7 services health-checked HTTP 200.
+
+### Outcome
+- All 7 Cloud Run services: status `Ready`, image updated to commit SHA from run `23376208619`
+- Import blocks in `infra/main.tf` resolved the 409 conflicts from the prior failed run — services were imported into TF state then reconciled in-place
+- `CLOUD_RUN_URL` wired automatically via `tofu output -raw nexus_prime_url` → `gcloud run services update`
+- `GET /health` → `{"status":"ok"}` for all 7 (nexus-prime, ledger, beacon, pursuit, foreman, steward, scout)
+
+### Actual service URLs (Cloud Run hashed format)
+All URLs follow `https://<agent>-7bu22bxlda-uc.a.run.app` — updated throughout `GAOS-Deploy-Spec.md`.
+
+> ⚠️ **Cloud Run URL format gotcha:** The actual URLs use the hashed format `*-7bu22bxlda-uc.a.run.app`, NOT the project-number format `*-975461050387.us-central1.run.app` that was in the spec as a placeholder. `gcloud run services update` prints the old format in its output (display artifact), but `gcloud run services describe` returns only the hashed format. Trust `gcloud run services describe --format="value(status.url)"` as authoritative.
+
+### Files changed
+- `Docs/GAOS-Deploy-Spec.md` — §19 4b: all 5 items checked; all 20+ URL references updated to `7bu22bxlda-uc.a.run.app` format
+- `WORKLOG.md` — this entry
+
+### What's next
+1. Wire Pub/Sub push subscriptions to new Cloud Run URLs (§5.2) — blocks agent messaging
+2. Set `VERTEX_AGENT_ENDPOINT` in Apps Script Script Properties → `https://nexus-prime-7bu22bxlda-uc.a.run.app/sync`
+3. Set `chat.owner_space` in `settings.yaml`
+4. Run Chat-path E2E validation (§19 4d)
+5. Provision Cloud Scheduler jobs (§10.1–10.4)
+
+---
+
 ## 2026-03-21T14:00-03:00 — Phase 4 §20 bootstrap: GCS bucket, WIF, IAM, GitHub Secrets
 
 **What was done:** Executed §20 bootstrap sequence — created all missing GCP bootstrap resources and set GitHub Secrets. All 5 §19 4a items now checked except `production` GitHub Environment (UI-only).

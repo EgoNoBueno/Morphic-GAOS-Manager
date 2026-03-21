@@ -444,7 +444,7 @@ After clicking Allow, the web app is live and `WEBHOOK_URL` is in Secret Manager
 |-----|-------|
 | `WEBHOOK_HMAC_SECRET` | Value of `gcloud secrets versions access latest --secret=WEBHOOK_HMAC_SECRET --project=morphic-gaos-prod` |
 | `WEBHOOK_URL` | Value of `gcloud secrets versions access latest --secret=WEBHOOK_URL --project=morphic-gaos-prod` |
-| `VERTEX_AGENT_ENDPOINT` | `https://nexus-prime-975461050387.us-central1.run.app/sync` |
+| `VERTEX_AGENT_ENDPOINT` | `https://nexus-prime-7bu22bxlda-uc.a.run.app/sync` |
 | `GCP_PROJECT` | `morphic-gaos-prod` |
 
 > ⚠️ **Key names are case-sensitive and must use underscores, not hyphens.**
@@ -566,13 +566,13 @@ BASE="projects/${PROJECT}/topics"
 PUSH_SA="pubsub-push-sa@${PROJECT}.iam.gserviceaccount.com"
 
 declare -A URLS=(
-  [nexus-prime]="https://nexus-prime-975461050387.us-central1.run.app"
-  [ledger]="https://ledger-975461050387.us-central1.run.app"
-  [beacon]="https://beacon-975461050387.us-central1.run.app"
-  [pursuit]="https://pursuit-975461050387.us-central1.run.app"
-  [foreman]="https://foreman-975461050387.us-central1.run.app"
-  [steward]="https://steward-975461050387.us-central1.run.app"
-  [scout]="https://scout-975461050387.us-central1.run.app"
+  [nexus-prime]="https://nexus-prime-7bu22bxlda-uc.a.run.app"
+  [ledger]="https://ledger-7bu22bxlda-uc.a.run.app"
+  [beacon]="https://beacon-7bu22bxlda-uc.a.run.app"
+  [pursuit]="https://pursuit-7bu22bxlda-uc.a.run.app"
+  [foreman]="https://foreman-7bu22bxlda-uc.a.run.app"
+  [steward]="https://steward-7bu22bxlda-uc.a.run.app"
+  [scout]="https://scout-7bu22bxlda-uc.a.run.app"
 )
 
 # Nexus-Prime subscribes to all orchestrator topics
@@ -1107,13 +1107,13 @@ Actual URLs for this deployment:
 
 | Service | URL |
 |---------|-----|
-| nexus-prime | `https://nexus-prime-975461050387.us-central1.run.app` |
-| ledger | `https://ledger-975461050387.us-central1.run.app` |
-| beacon | `https://beacon-975461050387.us-central1.run.app` |
-| pursuit | `https://pursuit-975461050387.us-central1.run.app` |
-| foreman | `https://foreman-975461050387.us-central1.run.app` |
-| steward | `https://steward-975461050387.us-central1.run.app` |
-| scout | `https://scout-975461050387.us-central1.run.app` |
+| nexus-prime | `https://nexus-prime-7bu22bxlda-uc.a.run.app` |
+| ledger | `https://ledger-7bu22bxlda-uc.a.run.app` |
+| beacon | `https://beacon-7bu22bxlda-uc.a.run.app` |
+| pursuit | `https://pursuit-7bu22bxlda-uc.a.run.app` |
+| foreman | `https://foreman-7bu22bxlda-uc.a.run.app` |
+| steward | `https://steward-7bu22bxlda-uc.a.run.app` |
+| scout | `https://scout-7bu22bxlda-uc.a.run.app` |
 
 **Now create Pub/Sub subscriptions (§5.2)** — they require Cloud Run URLs and must be created after this step.
 
@@ -1121,7 +1121,7 @@ Actual URLs for this deployment:
 
 Set this Script Property in the Apps Script editor (Project Settings → Script Properties):
 - Key: `VERTEX_AGENT_ENDPOINT`
-- Value: `https://nexus-prime-975461050387.us-central1.run.app/sync`
+- Value: `https://nexus-prime-7bu22bxlda-uc.a.run.app/sync`
 
 This was completed as part of §4.4 Step 1 if that section was followed. If not already set, add it now.
 
@@ -1129,7 +1129,7 @@ This was completed as part of §4.4 Step 1 if that section was followed. If not 
 ```powershell
 # --include-email is required when calling identity-token with ADC user credentials
 foreach ($agent in @('nexus-prime','ledger','beacon','pursuit','foreman','steward','scout')) {
-  $url = "https://${agent}-975461050387.us-central1.run.app/health"
+  $url = "https://${agent}-7bu22bxlda-uc.a.run.app/health"
   $token = & "C:\Program Files (x86)\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd" auth print-identity-token --include-email
   $resp = Invoke-RestMethod -Uri $url -Headers @{Authorization="Bearer $token"}
   Write-Host "${agent}: $($resp.status)"
@@ -1203,11 +1203,11 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 
 ### 4b — CI/CD Pipeline Validation
 
-- [ ] First push to `master` triggers the `build` job successfully (Docker image pushed to AR)
-- [ ] `plan` job runs `tofu plan -out=tfplan` with zero errors; artifact uploaded
-- [ ] `apply` job gated behind `production` environment approval; after approval, all 7 Cloud Run services deploy at the correct revision
-- [ ] `gcloud run services list --region=us-central1 --project=$PROJECT` shows all 7 services with state `ACTIVE`
-- [ ] `GET /health` returns HTTP 200 for all 7 services
+- [x] First push to `master` triggers the `build` job successfully (Docker image pushed to AR) — run `23376208619`, 2026-03-21
+- [x] `plan` job runs `tofu plan -out=tfplan` with zero errors; artifact uploaded — plan completed in 17s
+- [x] `apply` job gated behind `production` environment approval; after approval, all 7 Cloud Run services deploy at the correct revision — 7 imported, 0 added, 7 changed, 0 destroyed
+- [x] `gcloud run services list --region=us-central1 --project=$PROJECT` shows all 7 services with state `Ready` — verified 2026-03-21
+- [x] `GET /health` returns HTTP 200 for all 7 services — verified 2026-03-21 with OIDC token
 
 ### 4c — Production Wiring
 
@@ -1389,7 +1389,7 @@ gcloud run services add-iam-policy-binding nexus-prime \
 Scans `Agent_Approvals` tab for proposals older than their TTL and re-notifies or auto-rejects them.
 
 ```bash
-NP_URL="https://nexus-prime-975461050387.us-central1.run.app"
+NP_URL="https://nexus-prime-7bu22bxlda-uc.a.run.app"
 gcloud scheduler jobs create http ttl-sweep \
   --location=us-central1 \
   --schedule="0 * * * *" \
@@ -1403,7 +1403,7 @@ gcloud scheduler jobs create http ttl-sweep \
 Summarizes and moves aged Sheet rows to BigQuery.
 
 ```bash
-NP_URL="https://nexus-prime-975461050387.us-central1.run.app"
+NP_URL="https://nexus-prime-7bu22bxlda-uc.a.run.app"
 gcloud scheduler jobs create http nightly-archive \
   --location=us-central1 \
   --schedule="0 2 * * *" \
@@ -1421,7 +1421,7 @@ Triggers Nexus-Prime's morning briefing. Nexus-Prime queries overnight Logs, Err
 **Prerequisite:** Set `chat.owner_space` in `settings.yaml` to the owner's DM space resource name (e.g. `spaces/AAAAXXXXXXX`). Find this value in any inbound `/chat` event payload under `event.space.name`, or in the Google Chat API console.
 
 ```bash
-NP_URL="https://nexus-prime-975461050387.us-central1.run.app"
+NP_URL="https://nexus-prime-7bu22bxlda-uc.a.run.app"
 gcloud scheduler jobs create http daily-kickoff \
   --location=us-central1 \
   --schedule="0 6 * * *" \
@@ -1435,7 +1435,7 @@ gcloud scheduler jobs create http daily-kickoff \
 Polls open Blueprint Google Docs for new owner comments so Nexus-Prime can process `COMMENT_RECEIVED` constraint updates without waiting for a manual trigger.
 
 ```bash
-NP_URL="https://nexus-prime-975461050387.us-central1.run.app"
+NP_URL="https://nexus-prime-7bu22bxlda-uc.a.run.app"
 gcloud scheduler jobs create http doc-comment-poll \
   --location=us-central1 \
   --schedule="*/5 * * * *" \
