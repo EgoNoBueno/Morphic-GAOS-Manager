@@ -332,6 +332,8 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         next_node = "diagnose"
     elif msg_type == MessageType.KNOWLEDGE_CANDIDATE:
         next_node = "knowledge_review"
+    elif msg_type == MessageType.CHAT_MESSAGE:
+        next_node = "chat_respond"
     else:
         next_node = "record"
     state["_next_node"] = next_node  # type: ignore[typeddict-item]
@@ -527,13 +529,24 @@ def route(state: NexusPrimeWorkingMemory) -> str:
     if msg is None:
         return "record"
 
+    # APPROVAL_RESULT: inline sub-routing so LangGraph receives a node name directly.
+    # (Avoids adding _route_approval as a passthrough node.)
+    if msg.message_type == MessageType.APPROVAL_RESULT:
+        payload = msg.payload or {}
+        status = payload.get("status", "")
+        if status == "Approved":
+            return "promote"
+        if status == "Rejected":
+            return "record"
+        return "park_or_broadcast"
+
     routing_table = {
         MessageType.STATUS_UPDATE: "record",
         MessageType.TASK_COMPLETE: "record",
         MessageType.ESCALATION: "think",  # think → diagnose
         MessageType.EVOLUTION_REQUEST: "think",  # think → diagnose
-        MessageType.APPROVAL_RESULT: "_route_approval",
         MessageType.KNOWLEDGE_CANDIDATE: "think",  # think → knowledge_review
+        MessageType.CHAT_MESSAGE: "think",  # think → chat_respond
         MessageType.BROADCAST: "conflict_resolve",
         MessageType.NEW_PROJECT: "init_project",
         MessageType.VISION_SUBMITTED: "vision_blueprint",
@@ -542,17 +555,6 @@ def route(state: NexusPrimeWorkingMemory) -> str:
         MessageType.SKILL_REQUEST: "handle_skill_request",
     }
     return routing_table.get(msg.message_type, "record")
-
-
-def _route_approval(state: NexusPrimeWorkingMemory) -> str:
-    """Sub-router for APPROVAL_RESULT messages."""
-    result = state.get("incoming_message") or {}
-    status = getattr(result, "payload", {}).get("status", "") if hasattr(result, "payload") else ""
-    if status == "Approved":
-        return "promote"
-    if status == "Rejected":
-        return "record"
-    return "park_or_broadcast"
 
 
 def diagnose(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
@@ -2280,6 +2282,86 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
     return state
 
 
+def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    """
+    Conversational response node for CHAT_MESSAGE events.
+
+    Calls FAST_MODEL with the Strategic Architect context trio and the user's
+    chat message, then sends the reply back to the originating Chat space.
+    Routes here from think() when msg_type is CHAT_MESSAGE.
+
+    Spec: GAOS-Nexus-Prime-Spec.md §3.3 — chat_respond node
+    """
+    from config import get_settings
+    from tools.google_chat import send_message
+
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+
+    payload = msg.payload or {}
+    user_text: str = payload.get("text", "")
+    space_name: str = payload.get("space_name", "")
+    task_id = state.get("task_id", "")
+    project_id = state["project_id"]
+
+    if not user_text or not space_name:
+        return state
+
+    settings = get_settings()
+    context_trio = _load_context_trio()
+
+    # Include active project summary for grounding
+    system_state: dict = state.get("system_state_summary") or {}  # type: ignore[assignment]
+    system_ctx = ""
+    if system_state:
+        projects = ", ".join(system_state.keys())
+        system_ctx = f"\n\nActive GAOS projects: {projects}"
+
+    prompt = f"{user_text}{system_ctx}"
+
+    try:
+        resp = _call_model(
+            prompt,
+            model=settings.models.FAST_MODEL,
+            system_prompt=context_trio,
+        )
+        reply = resp.text.strip() or "I'm processing your request."
+        state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+        state["tokens_used"] = state.get("tokens_used", 0) + resp.tokens_used
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"chat_respond: model call failed — {exc}",
+            "WARNING",
+        )
+        reply = "I'm having trouble processing your request right now. Please try again."
+
+    try:
+        send_message(space_name, reply)
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"chat_respond: replied to {space_name} ({len(reply)} chars)",
+        )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"chat_respond: send_message failed — {exc}",
+            "WARNING",
+        )
+
+    return state
+
+
 # ── Graph assembly ────────────────────────────────────────────────────────────
 
 
@@ -2292,8 +2374,8 @@ def build_nexus_prime_graph() -> Any:
 
     graph.add_node("boot", boot)
     graph.add_node("monitor", monitor)
-    graph.add_node("route", route)
     graph.add_node("think", think)
+    graph.add_node("chat_respond", chat_respond)
     graph.add_node("diagnose", diagnose)
     graph.add_node("propose_gate", propose_gate)
     graph.add_node("knowledge_review", knowledge_review)
@@ -2309,10 +2391,11 @@ def build_nexus_prime_graph() -> Any:
 
     graph.set_entry_point("boot")
     graph.add_edge("boot", "monitor")
-    graph.add_edge("monitor", "route")
 
+    # monitor is the source of all conditional edges — route() is a pure routing
+    # function (returns str) and must NOT be registered as a node (nodes must return dict).
     graph.add_conditional_edges(
-        "route",
+        "monitor",
         route,
         {
             "think": "think",
@@ -2329,13 +2412,14 @@ def build_nexus_prime_graph() -> Any:
         },
     )
 
-    # think routes to diagnose or knowledge_review based on message type
+    # think routes to diagnose, knowledge_review, chat_respond, or record
     graph.add_conditional_edges(
         "think",
         _route_from_think,
         {
             "diagnose": "diagnose",
             "knowledge_review": "knowledge_review",
+            "chat_respond": "chat_respond",
             "record": "record",
         },
     )
@@ -2343,6 +2427,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_edge("diagnose", "propose_gate")
     graph.add_edge("propose_gate", "record")
     graph.add_edge("knowledge_review", "record")
+    graph.add_edge("chat_respond", "record")
     graph.add_edge("promote", "record")
     graph.add_edge("init_project", "notify_agents")
     graph.add_edge("notify_agents", "record")

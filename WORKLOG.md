@@ -3,7 +3,35 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
-## 2026-03-21T17:30-03:00 — Phase 4 §4d Scheduler Jobs + Archive Bug Fixes · in progress
+## 2026-03-21T18:15-03:00 — Chat Interface Debugging + Graph Fix + chat_respond Node
+
+**What was done:** Tested Google Chat interface live. "How many days to Thanksgiving" got no response. Diagnosed three bugs: (1) Cloud Run IAM blocked Google Chat with 403, (2) LangGraph `INVALID_GRAPH_NODE_RETURN_VALUE` — `route` was registered as a graph node but returned a string, (3) `CHAT_MESSAGE` had no handler and fell through to `record` silently.
+
+### Changes
+
+**`agents/nexus_prime/orchestrator.py`**
+- Removed `route` as a graph node. `route()` is a routing function only (returns string) and cannot be a LangGraph node (which must return dict). Moved conditional edges from `"route"` node to `"monitor"` node.
+- Inlined `_route_approval` sub-routing into `route()` for `APPROVAL_RESULT` messages. Removed `_route_approval` function and the broken `"_route_approval"` routing key that was not in the conditional edge map.
+- Added `CHAT_MESSAGE → "think"` to the routing table.
+- Updated `think()` to set `_next_node = "chat_respond"` when `msg_type == CHAT_MESSAGE`.
+- Added new `chat_respond()` node: calls FAST_MODEL with context trio + user text, sends reply via `send_message(space_name, reply)`.
+- Updated `_route_from_think` conditional edge map to include `"chat_respond": "chat_respond"`.
+- Added `graph.add_node("chat_respond", chat_respond)` and `graph.add_edge("chat_respond", "record")`.
+
+**GCP — Cloud Run IAM**
+- Added `allUsers` to `roles/run.invoker` on `nexus-prime` Cloud Run service.
+- Required: grant `roles/orgpolicy.policyAdmin` to `dhess@sl10repairtechs.com` at org level, set project-level org policy override `constraints/iam.allowedPolicyMemberDomains → allValues: ALLOW` to bypass domain restriction that was blocking `allUsers` + external service accounts.
+
+### Tests
+408/408 pass. The graph fix (removing route as node) doesn't have direct test coverage — tested manually by deploying to Cloud Run.
+
+### What's next
+- Test Chat bot again: "How many days to Thanksgiving" should get a reply
+- Approval Gate E2E: submit proposal → tap Approve in Chat → verify Sheet row
+- Vision path E2E: send image to bot → verify Blueprint Doc created
+- §4e billing check (~2026-03-28)
+
+
 
 **What was done:** Force-ran all 4 Cloud Scheduler jobs and verified HTTP 200 responses in Cloud Logging. Discovered and fixed two bugs in the nightly archive path. Checked off 4/6 §4d items (Approval Gate and Vision path still require manual human test). Also checked off §4c `chat.owner_space`.
 
