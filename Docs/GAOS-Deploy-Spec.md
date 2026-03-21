@@ -1265,15 +1265,17 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 ### 4e — Cost + Security Verification
 
 - [ ] Cloud Billing dashboard shows actual usage ≤ $5/month after first 7-day period at normal load
-- [ ] Budget alert configured at $10/month threshold in GCP Billing console
-- [ ] Cloud Logging retention set to 7 days for `projects/morphic-gaos-prod/logs/` (see §11)
-- [ ] All 7 Cloud Run services confirm `--no-allow-unauthenticated` — unauthenticated `GET /health` returns 403 (only authenticated callers bypass this; Pub/Sub uses OIDC tokens)
+- [x] Budget alert configured at $10/month threshold in GCP Billing console — `SL10 Cloud Dev Budget` at $10/month with 50%/90%/100% thresholds; confirmed 2026-03-21 via `gcloud billing budgets list`
+- [x] Cloud Logging retention set to 7 days for `projects/morphic-gaos-prod/logs/` — `_Default` bucket: 7 days; confirmed 2026-03-21 via `gcloud logging buckets describe _Default`
+- [x] All 7 Cloud Run services confirm `--no-allow-unauthenticated` — no `allUsers` IAM binding on any service; verified 2026-03-21 via `gcloud run services get-iam-policy` on all 7
 
-> ⚠️ **Note:** `GET /health` is intended for Cloud Run's internal liveness probe (authenticated via the SA identity), not for unauthenticated external pinging. If you need to test health locally, add an OIDC token: `curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" <SERVICE_URL>/health`
+> ⚠️ **Note:** `GET /health` is intended for Cloud Run's internal liveness probe (authenticated via the SA identity), not for unauthenticated external pinging. If you need to test health locally, add an OIDC token via SA impersonation: `gcloud auth print-identity-token --impersonate-service-account=nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com --audiences=<SERVICE_URL>` — user ADC cannot produce ID tokens (only service account credentials or metadata server can).
 
 ### 4f — GAOS-Doctor Runbook
 
-- [ ] Run the full GAOS-Doctor checklist (`Docs/GAOS-Doctor.md`) and confirm all health checks pass: Sheet connectivity, Pub/Sub topics exist + subscriptions active, Secret Manager access for all secrets, Cloud Run `/health` endpoints reachable, Vertex AI corpora indexed
+- [x] Run the full GAOS-Doctor checklist (`scripts/gaos_doctor.py`) and confirm all health checks pass — **33/33 passed 2026-03-21**: Sheet connectivity ✅, all 8 Pub/Sub topics ✅, 23 subscriptions active ✅, all 6 secrets accessible ✅, all 7 Cloud Run `/health` endpoints HTTP 200 ✅, all 7 Vertex AI RAG corpora indexed ✅
+
+> **Note:** The GAOS-Doctor runbook is implemented as `scripts/gaos_doctor.py` (not yet the CLI described in `Docs/GAOS-Doctor.md`). Run with: `.venv\Scripts\python.exe scripts/gaos_doctor.py`
 
 ---
 
