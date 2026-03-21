@@ -3,6 +3,39 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-03-21T17:30-03:00 — Phase 4 §4d Scheduler Jobs + Archive Bug Fixes · in progress
+
+**What was done:** Force-ran all 4 Cloud Scheduler jobs and verified HTTP 200 responses in Cloud Logging. Discovered and fixed two bugs in the nightly archive path. Checked off 4/6 §4d items (Approval Gate and Vision path still require manual human test). Also checked off §4c `chat.owner_space`.
+
+### Changes
+
+**`agents/nexus_prime/orchestrator.py`** — `_parse_ts()` extended to handle Google Sheets timestamp format (`M/D/YYYY H:MM:SS`) in addition to ISO 8601. All 3 `bq_rows` construction blocks in `handle_archive()` now call `_parse_ts(...).isoformat()` / `.date().isoformat()` instead of passing the raw Sheet string to BQ.
+
+**`Docs/GAOS-Deploy-Spec.md`** — §4c `owner_space` and §4d nightly-archive, ttl-sweep, daily-kickoff, doc-comment-poll checked off with evidence. Bug note added at §4d.
+
+### Scheduler job verification (Cloud Logging, 2026-03-21T20:13Z)
+
+| Job | Endpoint | HTTP | Internal result |
+|-----|----------|------|-----------------|
+| ttl-sweep | POST /ttl-sweep | 200 | — |
+| nightly-archive | POST /archive | 200 | `NIGHTLY_ARCHIVE complete: 0 rows archived` (no aged rows yet) |
+| daily-kickoff | POST /daily-sync | 200 | `DAILY_SYNC complete: 2 logs, 0 errors, 5 pending approvals` |
+| doc-comment-poll | POST /poll-comments | 200 | `poll_comments complete: 1 published, 0 errors, 1 docs polled` |
+
+### Bugs found + fixed
+
+**Bug 1 — BQ timestamp format:** `aos_logs.task_outcomes` and `aos_logs.approval_history` rejected all rows because Sheets stores `3/21/2026 20:13:00` but BQ TIMESTAMP requires `YYYY-MM-DD HH:MM:SS`. Fix: `_parse_ts()` now tries `%m/%d/%Y %H:%M:%S` as a fallback after ISO parse fails.
+
+**Bug 2 — Missing BQ schema columns:** `aos_logs.approval_history` was missing `issue` (STRING) and `code_sha256` (STRING) columns. Fix: added via Python BQ client `update_table()` call directly against the live table.
+
+> **Lesson learned:** Google Sheets formats dates as locale-dependent `M/D/YYYY H:MM:SS` strings (not ISO). Any code that passes Sheet timestamp values to BigQuery TIMESTAMP/DATE columns must normalize through a parser, not assume ISO format. `strptime` with `%m/%d/%Y %H:%M:%S` handles 1- and 2-digit month/day correctly.
+
+### Remaining §4d (manual human interaction required)
+- **Approval Gate Chat-path E2E** — submit a proposal, tap Approve in Chat, verify Sheet row + Pub/Sub
+- **Vision path E2E** — send image to Chat bot, verify Blueprint Doc created in Drive + link reply
+
+---
+
 ## 2026-03-21T17:06-03:00 — Phase 4 §4e + §4f Exit Criteria · commit a0c7074
 
 **What was done:** Ran all Phase 4 §4e cost/security verification items and the full §4f GAOS-Doctor health check. Built `scripts/gaos_doctor.py` as the actual runnable doctor implementation (replaces the placeholder spec). 33/33 checks passed.

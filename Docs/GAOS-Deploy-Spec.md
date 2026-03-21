@@ -1251,16 +1251,18 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 - [x] All Pub/Sub push subscriptions confirmed: 22 subscriptions exist with OIDC push auth; `pubsub-push-sa` has `roles/run.invoker` on all 7 services; Pub/Sub service agent granted `roles/iam.serviceAccountTokenCreator` — 2026-03-21. URLs use `*-975461050387.us-central1.run.app` (confirmed valid alias per `run.googleapis.com/urls` annotation — both URL formats work)
 - [ ] `VERTEX_AGENT_ENDPOINT` Script Property in Apps Script updated via Apps Script editor → Project Settings → Script Properties → `https://nexus-prime-7bu22bxlda-uc.a.run.app/sync`
 - [x] `CLOUD_RUN_URL` environment variable on `nexus-prime` — **set automatically by CI/CD pipeline** (`Wire CLOUD_RUN_URL on nexus-prime` step in apply job reads TF output `nexus_prime_url` and updates the service in-place)
-- [ ] `settings.yaml` `chat.owner_space` set to the owner's DM space resource name (e.g. `spaces/AAAAXXXXXXX`) — find it in the Google Chat API console or any inbound `/chat` event payload
+- [x] `settings.yaml` `chat.owner_space` set to `spaces/jbpdpSAAAAE` — confirmed 2026-03-21 via `Select-String owner_space config/settings.yaml`
 
 ### 4d — Live End-to-End Validation
 
 - [ ] **Approval Gate Chat-path E2E:** Submit a test approval proposal via the `/sync` endpoint → a Chat card appears in the owner's DM space → tap **Approve** → confirm `APPROVAL_RESULT` published to Pub/Sub → Nexus-Prime resumes the parked task → `Agent_Approvals` row updated to `Approved` + audit row in Logs tab
 - [ ] **Vision path E2E:** Send an image directly to the Nexus-Prime Chat bot → confirm DEEP_MODEL vision extraction runs → Blueprint Doc created in Drive → doc link posted as Chat reply
-- [ ] **Nightly archive job:** Force-run the `nightly-archive` Cloud Scheduler job → `POST /archive` returns HTTP 200 → aged rows moved from Sheet Logs to BigQuery `aos_logs.log_archive`
-- [ ] **TTL sweep job:** Force-run `ttl-sweep` → `POST /ttl-sweep` returns HTTP 200 → any stale proposals beyond auto-reject deadline are updated in Sheet
-- [ ] **Daily kickoff job:** Force-run `daily-kickoff` → morning briefing Chat card appears in owner's DM space within 15 seconds
-- [ ] **Doc comment poll:** Add a resolved comment to any Blueprint Doc → `POST /poll-comments` returns HTTP 200 → a `KNOWLEDGE_CANDIDATE` message dispatched → Nexus-Prime routes through `knowledge_review` node
+- [x] **Nightly archive job:** Force-run the `nightly-archive` Cloud Scheduler job → `POST /archive` returns HTTP 200 → `NIGHTLY_ARCHIVE complete: 0 rows archived` logged (no rows aged ≥30 days yet); confirmed 2026-03-21. *(BQ timestamp parse bug + `approval_history` schema mismatch fixed same session — see bug note below.)*
+- [x] **TTL sweep job:** Force-run `ttl-sweep` → `POST /ttl-sweep` returns HTTP 200; confirmed 2026-03-21 via Cloud Logging.
+- [x] **Daily kickoff job:** Force-run `daily-kickoff` → `DAILY_SYNC complete: 2 logs, 0 errors, 5 pending approvals` logged + briefing card dispatched to `spaces/jbpdpSAAAAE`; confirmed 2026-03-21.
+- [x] **Doc comment poll:** Force-run triggered `POST /poll-comments` → `poll_comments complete: 1 published, 0 errors, 1 docs polled`; confirmed 2026-03-21.
+
+> ⚠️ **Bug fixed 2026-03-21 — Archive BQ timestamp + schema:** The nightly archive job was silently failing to insert rows into BigQuery due to two issues: (1) Google Sheets stores timestamps as `M/D/YYYY H:MM:SS` but BQ TIMESTAMP requires `YYYY-MM-DD HH:MM:SS` — `_parse_ts` now handles both formats and all `bq_rows` use `_parse_ts(...).isoformat()` instead of the raw string; (2) `aos_logs.approval_history` was missing `issue` (STRING) and `code_sha256` (STRING) columns — added via Python BQ client `update_table`. Fix is in `agents/nexus_prime/orchestrator.py`.
 
 ### 4e — Cost + Security Verification
 

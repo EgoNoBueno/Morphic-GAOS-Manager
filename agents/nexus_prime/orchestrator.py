@@ -1116,12 +1116,26 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
     cost_usd = 0.0
 
     def _parse_ts(ts_str: str) -> datetime:
-        """Parse ISO timestamp; returns epoch on failure so malformed rows stay."""
+        """Parse timestamp string; handles ISO and Google Sheets M/D/YYYY H:MM:SS format.
+
+        Returns epoch on failure so unrecognised rows stay in the Sheet.
+        """
+        if not ts_str:
+            return datetime(1970, 1, 1, tzinfo=UTC)
+        # ISO format (preferred): "2026-03-21T20:13:00Z" or "2026-03-21 20:13:00"
         try:
             dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
             return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
         except (ValueError, AttributeError):
-            return datetime(1970, 1, 1, tzinfo=UTC)
+            pass
+        # Google Sheets default: "3/21/2026 20:13:00" or "3/21/2026 0:05:01"
+        # %m/%d/%Y handles both zero-padded and non-zero-padded values in strptime.
+        try:
+            dt = datetime.strptime(ts_str.strip(), "%m/%d/%Y %H:%M:%S")
+            return dt.replace(tzinfo=UTC)
+        except ValueError:
+            pass
+        return datetime(1970, 1, 1, tzinfo=UTC)
 
     # ── 1. Weekly observability summary (Mondays only) ────────────────────────
     if now.weekday() == 0:
@@ -1180,8 +1194,8 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
                     "error_fingerprint": "",
                     "cost_usd": 0.0,
                     "duration_seconds": 0.0,
-                    "timestamp": r.get("timestamp", ""),
-                    "log_date": r.get("timestamp", "")[:10],
+                    "timestamp": _parse_ts(r.get("timestamp", "")).isoformat(),
+                    "log_date": _parse_ts(r.get("timestamp", "")).date().isoformat(),
                 }
                 for _, r in aged_logs
             ]
@@ -1224,8 +1238,8 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
                     "iterations": 0,
                     "stopping_constraint": "archived",
                     "cost_usd": 0.0,
-                    "timestamp": r.get("timestamp", ""),
-                    "log_date": r.get("timestamp", "")[:10],
+                    "timestamp": _parse_ts(r.get("timestamp", "")).isoformat(),
+                    "log_date": _parse_ts(r.get("timestamp", "")).date().isoformat(),
                 }
                 for _, r in aged_errs
             ]
@@ -1278,8 +1292,8 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
                     "approver_tier": int(r.get("Approver Tier", 0) or 0),
                     "cost_usd": float(r.get("Total Cost USD", 0) or 0),
                     "code_sha256": r.get("code_sha256", ""),
-                    "timestamp": r.get("Timestamp", ""),
-                    "log_date": r.get("Timestamp", "")[:10],
+                    "timestamp": _parse_ts(r.get("Timestamp", "")).isoformat(),
+                    "log_date": _parse_ts(r.get("Timestamp", "")).date().isoformat(),
                 }
                 for _, r in aged_approvals
             ]
