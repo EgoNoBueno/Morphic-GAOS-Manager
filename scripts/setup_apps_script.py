@@ -63,11 +63,23 @@ SCRIPT_FILES = [
 SCOPES = [
     "https://www.googleapis.com/auth/" + "script.projects",
     "https://www.googleapis.com/auth/" + "script.deployments",
-    "https://www.googleapis.com/auth/" + "script.scriptapp",
+    "https://www.googleapis.com/auth/" + "script.scriptapp",  # required for scripts.run()
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/" + "drive",
     "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/chat.spaces.readonly",  # discover owner DM space
 ]
+
+# ADC re-auth command (run in a standalone terminal window — not VS Code):
+# gcloud auth application-default login \
+#   --client-id-file=oauth-client.json \
+#   --scopes="https://www.googleapis.com/auth/spreadsheets,\
+# https://www.googleapis.com/auth/drive,\
+# https://www.googleapis.com/auth/script.projects,\
+# https://www.googleapis.com/auth/script.deployments,\
+# https://www.googleapis.com/auth/script.scriptapp,\
+# https://www.googleapis.com/auth/chat.spaces.readonly,\
+# https://www.googleapis.com/auth/cloud-platform"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -425,11 +437,67 @@ def phase2() -> None:
         print(f"  ⚠  Could not run setupProtections remotely ({e}).")
         print("     Run manually: Apps Script editor → select setupProtections → Run")
 
+    # Discover Chat DM space and write to settings.yaml
+    print("Discovering Chat DM owner space...")
+    owner_space = discover_chat_dm_space(creds)
+    if owner_space:
+        with open(SETTINGS_PATH) as f:
+            settings_live = yaml.safe_load(f)
+        settings_live.setdefault("chat", {})["owner_space"] = owner_space
+        with open(SETTINGS_PATH, "w") as f:
+            yaml.dump(settings_live, f, default_flow_style=False, allow_unicode=True)
+        print(f"  chat.owner_space → {owner_space} ✅")
+    else:
+        print("  ⚠  No DM space found.")
+        print("     Start a DM with the Nexus-Prime bot in Google Chat, then re-run --post-auth.")
+
     print("\n✅ Phase 2 complete.")
     print("   Remaining manual step: add owner row to Authorized Approvers tab (§4.3).")
 
 
-# ── Push: re-upload .gs files only (no new deployment) ───────────────────────
+# ── Chat DM space discovery ────────────────────────────────────────────────────
+
+
+def discover_chat_dm_space(creds) -> str | None:
+    """Find the owner's DM space in Google Chat.
+
+    Lists spaces the authenticated user is a member of and returns the first
+    DIRECT_MESSAGE space resource name. Returns None if no DM space is found
+    (user hasn't started a DM with the bot yet).
+
+    Args:
+        creds: Google OAuth credentials with chat.spaces.readonly scope.
+
+    Returns:
+        Space resource name (e.g. 'spaces/AAAAXXXXXXX') or None.
+    """
+    try:
+        chat_service = build("chat", "v1", credentials=creds)
+        # Try filtered query first (not all Chat API versions support this filter)
+        try:
+            response = (
+                chat_service.spaces().list(pageSize=50, filter="spaceType=DIRECT_MESSAGE").execute()
+            )
+            spaces = response.get("spaces", [])
+            if spaces:
+                return spaces[0].get("name")
+        except HttpError:
+            pass
+        # Fallback: list all spaces, filter client-side
+        response_all = chat_service.spaces().list(pageSize=50).execute()
+        for space in response_all.get("spaces", []):
+            if space.get("spaceType") == "DIRECT_MESSAGE":
+                return space.get("name")
+        return None
+    except HttpError as exc:
+        print(f"  Chat API error ({exc.resp.status}): {exc}")
+        return None
+    except Exception as exc:
+        print(f"  Chat discovery error: {exc}")
+        return None
+
+
+# ── Push: re-upload .gs files only (no new deployment) ────────────────────────────────────────────────────
 
 
 def push() -> None:

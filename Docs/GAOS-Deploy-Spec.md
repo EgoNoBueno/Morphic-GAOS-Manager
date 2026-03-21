@@ -75,6 +75,7 @@ $env:GOOGLE_APPLICATION_CREDENTIALS   # should return nothing
 _G="https://www.googleapis.com"
 SCOPES="${_G}/auth/spreadsheets,${_G}/auth/drive"
 SCOPES="${SCOPES},${_G}/auth/script.projects,${_G}/auth/script.deployments"
+SCOPES="${SCOPES},${_G}/auth/script.scriptapp,${_G}/auth/chat.spaces.readonly"
 SCOPES="${SCOPES},${_G}/auth/cloud-platform"
 gcloud auth application-default login --client-id-file=oauth-client.json --scopes="$SCOPES"
 
@@ -666,8 +667,10 @@ python scripts/_seed_knowledge_files.py
 > # Run in a standalone PowerShell window (not VS Code terminal — browser redirect fails there)
 > gcloud auth application-default login `
 >   --client-id-file=oauth-client.json `
->   --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/script.projects,https://www.googleapis.com/auth/script.deployments,https://www.googleapis.com/auth/cloud-platform"
+>   --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/script.projects,https://www.googleapis.com/auth/script.deployments,https://www.googleapis.com/auth/script.scriptapp,https://www.googleapis.com/auth/chat.spaces.readonly,https://www.googleapis.com/auth/cloud-platform"
 > ```
+>
+> ⚠️ **Warning — script.scriptapp and chat.spaces.readonly required:** The `setup_apps_script.py --post-auth` command calls `scripts.run()` (requires `script.scriptapp`) and discovers the owner DM space (requires `chat.spaces.readonly`). Both must be in the `--scopes` list above. If you used the old scope set (without these), re-auth with the command above before running `--post-auth`.
 
 > ⚠️ **Warning — Drive API must be enabled in the OAuth client project:** `oauth-client.json` belongs to GCP project `490183704378` (the project that owns the OAuth 2.0 client). The Drive API must be enabled in **that** project, not just in `morphic-gaos-prod`. If you get a 403 `accessNotConfigured` error from the Drive API, run:
 > ```powershell

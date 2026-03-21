@@ -3,6 +3,33 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-03-21T17:30-03:00 — Automate --post-auth: Chat DM discovery, scriptapp scope, chat API
+
+**What was done:** Automated both E2E blockers (VERTEX_AGENT_ENDPOINT + chat.owner_space) inside `setup_apps_script.py --post-auth`. After one ADC re-auth, `--post-auth` sets all Script Properties AND discovers the Chat DM space.
+
+### Changes
+- `scripts/setup_apps_script.py`: Added `chat.spaces.readonly` and `script.scriptapp` to SCOPES; added `discover_chat_dm_space()` function; wired call into `phase2()` with settings.yaml write
+- `config/settings.yaml`: Added `chat:` section with empty `owner_space` field
+- `Docs/GAOS-Deploy-Spec.md`: Updated §0.4 ADC scope command to include `script.scriptapp` + `chat.spaces.readonly`; updated §6.2 ADC re-auth warning with new scopes and additional warning
+- Enabled `chat.googleapis.com` API in `morphic-gaos-prod`
+
+### Root causes found
+- `setup_apps_script.py --post-auth` was failing with `RefreshError` — ADC token expired; re-auth required in standalone PS window (browser redirect fails in VS Code terminal)
+- ADC created without `script.scriptapp` → `scripts.run()` returns 403; `chat.spaces.readonly` also missing → Chat API returns `ACCESS_TOKEN_SCOPE_INSUFFICIENT`
+- `chat` section was entirely absent from `settings.yaml`; `chat.googleapis.com` API was not enabled
+
+### Next: User must run (in standalone PS window)
+```powershell
+gcloud auth application-default login `
+  --client-id-file=oauth-client.json `
+  --scopes="https://www.googleapis.com/auth/spreadsheets,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/script.projects,https://www.googleapis.com/auth/script.deployments,https://www.googleapis.com/auth/script.scriptapp,https://www.googleapis.com/auth/chat.spaces.readonly,https://www.googleapis.com/auth/cloud-platform"
+gcloud auth application-default set-quota-project morphic-gaos-prod
+# Then in VS Code terminal:
+python scripts/setup_apps_script.py --post-auth
+```
+
+---
+
 ## 2026-03-21T17:00-03:00 — §4c Pub/Sub push auth verified; iam.serviceAccountTokenCreator applied
 
 **What was done:** Verified all 22 Pub/Sub push subscriptions are correctly configured. Applied missing `roles/iam.serviceAccountTokenCreator` to Pub/Sub service agent.
