@@ -3,6 +3,28 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-03-21T17:00-03:00 — §4c Pub/Sub push auth verified; iam.serviceAccountTokenCreator applied
+
+**What was done:** Verified all 22 Pub/Sub push subscriptions are correctly configured. Applied missing `roles/iam.serviceAccountTokenCreator` to Pub/Sub service agent.
+
+### Findings
+- All 22 subscriptions already existed with push endpoints to `*-975461050387.us-central1.run.app/pubsub`
+- Confirmed both URL formats (`*-975461050387.us-central1.run.app` AND `*-7bu22bxlda-uc.a.run.app`) are valid aliases per `run.googleapis.com/urls` annotation — no subscription updates needed
+- `pubsub-push-sa` has `roles/run.invoker` on all 7 Cloud Run services ✅
+- Pub/Sub service agent `service-975461050387@gcp-sa-pubsub.iam.gserviceaccount.com` was missing `roles/iam.serviceAccountTokenCreator` (only had `roles/pubsub.serviceAgent`) — applied now
+
+### Files changed
+- `Docs/GAOS-Deploy-Spec.md` — §19 4c: Pub/Sub subscription item checked; `VERTEX_AGENT_ENDPOINT` value updated to real URL
+- `WORKLOG.md` — this entry
+
+### What's next (remaining blockers for live E2E)
+1. Set `VERTEX_AGENT_ENDPOINT` in Apps Script Script Properties → `https://nexus-prime-7bu22bxlda-uc.a.run.app/sync`
+2. Set `chat.owner_space` in `settings.yaml` to your DM space resource name
+3. Run Chat-path E2E validation (§19 4d item 1)
+4. Provision Cloud Scheduler jobs (§10.1–10.4)
+
+---
+
 ## 2026-03-21T16:30-03:00 — Phase 4 CI/CD pipeline live: all 7 services deployed + health-checked
 
 **What was done:** Approved the `production` GitHub Environment gate for pipeline run `23376208619`. OpenTofu Apply completed — 7 imported, 0 added, 7 changed, 0 destroyed. `Wire CLOUD_RUN_URL on nexus-prime` step ran automatically and confirmed `CLOUD_RUN_URL=https://nexus-prime-7bu22bxlda-uc.a.run.app`. All 7 services health-checked HTTP 200.

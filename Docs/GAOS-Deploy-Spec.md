@@ -1211,8 +1211,8 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 
 ### 4c — Production Wiring
 
-- [ ] All Pub/Sub push subscriptions updated to point at the new Cloud Run URLs (§5.2 + §9.2)
-- [ ] `VERTEX_AGENT_ENDPOINT` Script Property in Apps Script updated via Apps Script editor → Project Settings → Script Properties
+- [x] All Pub/Sub push subscriptions confirmed: 22 subscriptions exist with OIDC push auth; `pubsub-push-sa` has `roles/run.invoker` on all 7 services; Pub/Sub service agent granted `roles/iam.serviceAccountTokenCreator` — 2026-03-21. URLs use `*-975461050387.us-central1.run.app` (confirmed valid alias per `run.googleapis.com/urls` annotation — both URL formats work)
+- [ ] `VERTEX_AGENT_ENDPOINT` Script Property in Apps Script updated via Apps Script editor → Project Settings → Script Properties → `https://nexus-prime-7bu22bxlda-uc.a.run.app/sync`
 - [x] `CLOUD_RUN_URL` environment variable on `nexus-prime` — **set automatically by CI/CD pipeline** (`Wire CLOUD_RUN_URL on nexus-prime` step in apply job reads TF output `nexus_prime_url` and updates the service in-place)
 - [ ] `settings.yaml` `chat.owner_space` set to the owner's DM space resource name (e.g. `spaces/AAAAXXXXXXX`) — find it in the Google Chat API console or any inbound `/chat` event payload
 
