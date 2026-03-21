@@ -3,6 +3,31 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-03-21T19:45-03:00 — VERTEX_AGENT_ENDPOINT fix; Chat app configured; Chat DM discovered
+
+**What was done:** Fixed `VERTEX_AGENT_ENDPOINT` placeholder bug in `--post-auth`; configured Google Chat app in GCP console; discovered owner Chat DM space; investigated persistent `scripts.run()` 403 and confirmed root cause.
+
+### Changes
+- `scripts/setup_apps_script.py` (commit `00cbba9`): Replaced hardcoded `"https://placeholder.invalid/sync"` with dynamic `gcloud run services describe nexus-prime` call; fallback to `https://nexus-prime-7bu22bxlda-uc.a.run.app` if gcloud fails
+- `config/settings.yaml`: `chat.owner_space` written automatically by `--post-auth` → `spaces/jbpdpSAAAAE` ✅
+
+### Root causes found
+- `VERTEX_AGENT_ENDPOINT` was hardcoded to `https://placeholder.invalid/sync` in `phase2()` — now derived dynamically from Cloud Run
+- Chat API 404 "Google Chat app not found": the API being enabled ≠ the Chat app being configured. Configured in GCP console → Configuration tab → all 4 URL fields → `https://nexus-prime-7bu22bxlda-uc.a.run.app/chat`
+- `scripts.run()` 403 persists despite editor consent: root cause is that the Apps Script project is **bound to the spreadsheet** (`parentId: spreadsheet_id` in `projects.create()`). Bound scripts use the spreadsheet's auto-assigned GCP project, which is different from the OAuth client project (`490183704378`). The Execution API cannot cross that project boundary with ADC credentials. **This is permanently manual** — `--post-auth` will always 403 for all 3 `scripts.run()` calls.
+
+### What remains (manual — Phase 2 final steps)
+1. Script Properties (Apps Script editor → ⚙ Project Settings → Script Properties):
+   - `VERTEX_AGENT_ENDPOINT` = `https://nexus-prime-7bu22bxlda-uc.a.run.app/sync`
+   - `WEBHOOK_URL` = `https://script.google.com/macros/s/AKfycbyObDuvcf57T3Tk1x85yDg8Q0Pdx7YPUzcHU6-T2WZUgZvRm-fkDdp_l2sI09VrWgPP/exec`
+   - `GCP_PROJECT` = `morphic-gaos-prod`
+   - `WEBHOOK_HMAC_SECRET` = value of `gcloud secrets versions access latest --secret=WEBHOOK_HMAC_SECRET --project=morphic-gaos-prod`
+2. onEdit trigger: Triggers → Add Trigger → `onChangeApproval` | From spreadsheet | **On edit**
+3. setupProtections: select in dropdown → Run (may already be done from consent click)
+4. Owner row in Authorized Approvers tab (§4.3)
+
+---
+
 ## 2026-03-21T17:30-03:00 — Automate --post-auth: Chat DM discovery, scriptapp scope, chat API
 
 **What was done:** Automated both E2E blockers (VERTEX_AGENT_ENDPOINT + chat.owner_space) inside `setup_apps_script.py --post-auth`. After one ADC re-auth, `--post-auth` sets all Script Properties AND discovers the Chat DM space.
