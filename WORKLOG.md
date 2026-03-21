@@ -3,7 +3,39 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
-## 2026-03-21T15:20-03:00 — Comprehensive Docs Audit Complete · commit 452de2b
+## 2026-03-21T17:06-03:00 — Phase 4 §4e + §4f Exit Criteria · commit a0c7074
+
+**What was done:** Ran all Phase 4 §4e cost/security verification items and the full §4f GAOS-Doctor health check. Built `scripts/gaos_doctor.py` as the actual runnable doctor implementation (replaces the placeholder spec). 33/33 checks passed.
+
+### Changes
+
+**`scripts/gaos_doctor.py`** — New: 5-section health check script (33 checks):
+1. Sheet connectivity — Project Registry readable (2 rows)
+2. Pub/Sub — all 8 topics + 23 subscriptions active + 3 spot-checks
+3. Secret Manager — all 6 secrets accessible (GEMINI_API_KEY, OLLAMA_HOST, WEBHOOK_HMAC_SECRET, WEBHOOK_URL, GOOGLE_SEARCH_API_KEY, GOOGLE_SEARCH_CX)
+4. Cloud Run /health — all 7 services HTTP 200
+5. Vertex AI RAG corpora — all 7 corpora exist + named
+
+> **Lesson learned:** For local dev, `gcloud auth print-identity-token --impersonate-service-account=nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com --audiences=<URL>` is required to call Cloud Run endpoints with `--no-allow-unauthenticated`. User ADC (OAuth refresh token) cannot produce OIDC ID tokens directly — only service account credentials or metadata server can. `nexus-prime-sa` has `roles/run.invoker` on all 7 services and is the right SA to use for the all-services health check.
+
+**`Docs/GAOS-Deploy-Spec.md §19`** — §4e/§4f items checked off:
+- 4e: budget alert ($10/month `SL10 Cloud Dev Budget`, thresholds 50%/90%/100%) ✅
+- 4e: Cloud Logging `_Default` bucket retention = 7 days ✅
+- 4e: all 7 Cloud Run services — no `allUsers` IAM binding ✅
+- 4f: GAOS-Doctor 33/33 passed ✅; updated runbook reference to `scripts/gaos_doctor.py`
+- 4e `/health` note: updated to show SA impersonation command
+
+**`Docs/GAOS-Doctor.md`** — Replaced placeholder spec with actual implementation docs: quick start, 33-check table, prerequisites, known limitations (ID token note), last run timestamp.
+
+### What remains for Phase 4 exit criteria
+- `[ ]` Cloud Billing ≤ $5/month — needs 7 days of production traffic data (check ~2026-03-28)
+- `[ ]` §4c: `VERTEX_AGENT_ENDPOINT` Apps Script property verified at correct URL
+- `[ ]` §4c: `chat.owner_space` in settings.yaml confirmed (currently set; needs live smoke test)
+- `[ ]` §4d: all 6 E2E validation items (Approval Gate Chat-path, Vision path, nightly archive, TTL sweep, daily kickoff, doc comment poll)
+
+---
+
+
 
 **What was done:** Picked up from previous session (commit `44a80ba`). Audited all 18 files in `Docs/` plus `README.md` and `Docs/agents/` for stale facts. Found and fixed every discrepancy.
 
