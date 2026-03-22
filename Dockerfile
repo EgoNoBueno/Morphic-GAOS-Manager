@@ -1,6 +1,9 @@
 FROM python:3.11-slim
 
-# Build timestamp: 2026-03-22T09:05:00Z (forces cache invalidation)
+# Cache invalidation: pass --build-arg CACHE_BUST=$(date +%s) to force rebuild
+ARG CACHE_BUST
+LABEL cache_bust=${CACHE_BUST}
+
 WORKDIR /app
 COPY . .
 

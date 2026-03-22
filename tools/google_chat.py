@@ -479,6 +479,34 @@ def parse_chat_event(body: dict) -> dict:
         raise ChatEventParseError(f"Unexpected error parsing Chat event: {exc}") from exc
 
 
+def _extract_attachments(message: dict) -> list[dict]:
+    """Extract attachments from a Chat message dict.
+
+    Args:
+        message: The message dict containing an optional 'attachment' list.
+
+    Returns:
+        List of attachment dicts with keys: content_type, content_name,
+        attachment_message_name, media_resource_name, download_uri.
+    """
+    attachments: list[dict] = []
+    for att in message.get("attachment", []):
+        att_ref: dict = att.get("attachmentDataRef", {})
+        download_uri: str = att_ref.get("downloadUri", "")
+        media_resource_name: str = att_ref.get("resourceName", "")
+        if download_uri or media_resource_name:
+            attachments.append(
+                {
+                    "content_type": att.get("contentType", "application/octet-stream"),
+                    "content_name": att.get("contentName", ""),
+                    "attachment_message_name": att.get("name", ""),
+                    "media_resource_name": media_resource_name,
+                    "download_uri": download_uri,
+                }
+            )
+    return attachments
+
+
 def _parse_addons_format(body: dict, common_event: dict) -> dict:
     """Parse Workspace Add-ons Chat event format."""
     chat_obj: dict = body.get("chat", {})
@@ -497,23 +525,7 @@ def _parse_addons_format(body: dict, common_event: dict) -> dict:
         sender_email = sender.get("email", "")
         action_name = ""
         parameters: dict[str, str] = {}
-
-        # Attachments
-        attachments: list[dict] = []
-        for att in message.get("attachment", []):
-            att_ref: dict = att.get("attachmentDataRef", {})
-            download_uri: str = att_ref.get("downloadUri", "")
-            media_resource_name: str = att_ref.get("resourceName", "")
-            if download_uri or media_resource_name:
-                attachments.append(
-                    {
-                        "content_type": att.get("contentType", "application/octet-stream"),
-                        "content_name": att.get("contentName", ""),
-                        "attachment_message_name": att.get("name", ""),
-                        "media_resource_name": media_resource_name,
-                        "download_uri": download_uri,
-                    }
-                )
+        attachments = _extract_attachments(message)
 
     elif "buttonClickedPayload" in chat_obj:
         event_type = "CARD_CLICKED"
@@ -606,22 +618,7 @@ def _parse_legacy_format(body: dict) -> dict:
                 parameters[key] = value
 
     # Extract image/file attachments — only present on MESSAGE events.
-    attachments: list[dict] = []
-    if event_type == "MESSAGE":
-        for att in message.get("attachment", []):
-            att_ref: dict = att.get("attachmentDataRef", {})
-            download_uri: str = att_ref.get("downloadUri", "")
-            media_resource_name: str = att_ref.get("resourceName", "")
-            if download_uri or media_resource_name:
-                attachments.append(
-                    {
-                        "content_type": att.get("contentType", "application/octet-stream"),
-                        "content_name": att.get("contentName", ""),
-                        "attachment_message_name": att.get("name", ""),
-                        "media_resource_name": media_resource_name,
-                        "download_uri": download_uri,
-                    }
-                )
+    attachments = _extract_attachments(message) if event_type == "MESSAGE" else []
 
     return {
         "event_type": event_type,

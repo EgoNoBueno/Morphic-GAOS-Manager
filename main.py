@@ -212,32 +212,35 @@ def _verify_chat_jwt(request: Request) -> None:
     chat_endpoint_url = f"{service_url}/chat"
 
     # Debug: decode JWT payload to log the actual audience claim (without signature verification)
-    try:
-        import base64
-        import json
+    # Only enabled when ENABLE_JWT_DEBUG=1 — exposes kid/iss/aud which should not be logged
+    # in production.
+    if os.environ.get("ENABLE_JWT_DEBUG") == "1":
+        try:
+            import base64
+            import json
 
-        # JWT format: header.payload.signature
-        parts = token.split(".")
-        if len(parts) >= 2:
-            # Decode header too for key ID
-            header_b64 = parts[0] + "=" * (-len(parts[0]) % 4)
-            header_json = base64.urlsafe_b64decode(header_b64)
-            jwt_header = json.loads(header_json)
-            jwt_kid = jwt_header.get("kid", "MISSING")
+            # JWT format: header.payload.signature
+            parts = token.split(".")
+            if len(parts) >= 2:
+                # Decode header too for key ID
+                header_b64 = parts[0] + "=" * (-len(parts[0]) % 4)
+                header_json = base64.urlsafe_b64decode(header_b64)
+                jwt_header = json.loads(header_json)
+                jwt_kid = jwt_header.get("kid", "MISSING")
 
-            # Add padding if needed
-            payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
-            payload_json = base64.urlsafe_b64decode(payload_b64)
-            jwt_claims = json.loads(payload_json)
-            jwt_aud = jwt_claims.get("aud", "MISSING")
-            jwt_iss = jwt_claims.get("iss", "MISSING")
-            log.info(
-                f"Chat JWT debug: kid={jwt_kid!r}, iss={jwt_iss!r}, "
-                f"expected_aud={chat_endpoint_url!r}, actual_aud={jwt_aud!r}, "
-                f"aud_match={jwt_aud == chat_endpoint_url}"
-            )
-    except Exception as decode_exc:
-        log.warning(f"Chat JWT debug: could not decode payload: {decode_exc}")
+                # Add padding if needed
+                payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+                payload_json = base64.urlsafe_b64decode(payload_b64)
+                jwt_claims = json.loads(payload_json)
+                jwt_aud = jwt_claims.get("aud", "MISSING")
+                jwt_iss = jwt_claims.get("iss", "MISSING")
+                log.debug(
+                    f"Chat JWT debug: kid={jwt_kid!r}, iss={jwt_iss!r}, "
+                    f"expected_aud={chat_endpoint_url!r}, actual_aud={jwt_aud!r}, "
+                    f"aud_match={jwt_aud == chat_endpoint_url}"
+                )
+        except Exception as decode_exc:
+            log.debug(f"Chat JWT debug: could not decode payload: {decode_exc}")
 
     try:
         from google.oauth2 import id_token as google_id_token
