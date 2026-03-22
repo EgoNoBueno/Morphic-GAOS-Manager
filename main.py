@@ -321,7 +321,7 @@ async def health() -> Response:
 
 
 @app.post("/pubsub")
-async def pubsub(request: Request) -> JSONResponse:
+async def pubsub(request: Request) -> Response:
     """
     Receive a Pub/Sub push delivery.
 
