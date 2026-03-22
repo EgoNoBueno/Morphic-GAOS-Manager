@@ -3,6 +3,50 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+---
+
+## 2026-03-21T21:08-03:00 — Chat quality improvements from GAOS-Chat-Dev-Reference.md
+
+### What was done
+Implemented 5 code changes and a test payload layer derived from the reference doc
+(§16 thread keys, §14 echo constraint, welcome message, canonical payloads):
+
+1. **`tools/google_chat.py`** — Added `send_threaded_reply(space_name, thread_key, text)`.
+   Calls the Chat API with `messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD` and
+   `thread.threadKey`. All bot replies now stay in the originating thread.
+
+2. **`agents/nexus_prime/orchestrator.py` — `chat_respond` node** — Replaced
+   `send_message(space_name, reply)` with `send_threaded_reply(space_name, thread_key, reply)`
+   where `thread_key = message_name or f"chat-{task_id}"`. Fixes the root cause of every
+   `chat_respond` reply creating a new top-level thread.
+
+3. **`main.py` — `ADDED_TO_SPACE` handler** — Replaced the silent no-op with a welcome
+   message via `send_message()`. Failure is caught and logged; the 200 ACK is always sent.
+   `REMOVED_FROM_SPACE` still returns 200 silently.
+
+4. **`Docs/agents/nexus-prime.md` — Don't section** — Added: "Never acknowledge, rephrase,
+   or echo the user's words back to them in a Chat reply."
+
+5. **`tests/payloads/`** — Created canonical mock JSON payloads:
+   - `chat_message.json`
+   - `added_to_space.json`
+   - `card_clicked_approve.json`
+   - `card_clicked_skill_approve.json`
+
+6. **`tests/test_google_chat.py`** — Added C15 (`send_threaded_reply` API call shape),
+   C16 (`send_threaded_reply` raises on empty thread_key), updated E5 (asserts
+   `send_message` IS called and `agent.run()` is NOT called), added E9 (loads
+   canonical payload file and asserts CHAT_MESSAGE routing).
+
+### Test result
+411 passed (up from 408) — all green.
+
+### What's next
+- Fix live Chat 401 (JWT audience mismatch: verify `CLOUD_RUN_URL` env var matches
+  Chat Console App URL exactly, no trailing slash — see `_verify_chat_jwt`).
+- Consider promoting `tests/payloads/` canonical files to integration smoke tests.
+
+
 ## 2026-03-21T18:15-03:00 — Chat Interface Debugging + Graph Fix + chat_respond Node
 
 **What was done:** Tested Google Chat interface live. "How many days to Thanksgiving" got no response. Diagnosed three bugs: (1) Cloud Run IAM blocked Google Chat with 403, (2) LangGraph `INVALID_GRAPH_NODE_RETURN_VALUE` — `route` was registered as a graph node but returned a string, (3) `CHAT_MESSAGE` had no handler and fell through to `record` silently.

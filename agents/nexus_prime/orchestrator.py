@@ -2293,7 +2293,7 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     Spec: GAOS-Nexus-Prime-Spec.md §3.3 — chat_respond node
     """
     from config import get_settings
-    from tools.google_chat import send_message
+    from tools.google_chat import send_threaded_reply
 
     msg = state.get("incoming_message")
     if msg is None:
@@ -2303,6 +2303,7 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     user_text: str = payload.get("text", "")
     space_name: str = payload.get("space_name", "")
     task_id = state.get("task_id", "")
+    message_name: str = payload.get("message_name", "")
     project_id = state["project_id"]
 
     if not user_text or not space_name:
@@ -2341,7 +2342,8 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         reply = "I'm having trouble processing your request right now. Please try again."
 
     try:
-        send_message(space_name, reply)
+        thread_key = message_name or f"chat-{task_id}"
+        send_threaded_reply(space_name, thread_key, reply)
         _log_cloud(
             "nexus-prime",
             project_id,
@@ -2355,7 +2357,7 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             project_id,
             "task",
             task_id,
-            f"chat_respond: send_message failed — {exc}",
+            f"chat_respond: send_threaded_reply failed — {exc}",
             "WARNING",
         )
 

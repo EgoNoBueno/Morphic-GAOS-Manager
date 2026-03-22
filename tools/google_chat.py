@@ -117,6 +117,59 @@ def send_message(space_name: str, text: str) -> dict:
         ) from exc
 
 
+def send_threaded_reply(space_name: str, thread_key: str, text: str) -> dict:
+    """Send a reply that stays inside a specific thread using a developer-chosen thread key.
+
+    Falls back to creating a new thread if no existing thread with the given key exists.
+    This is the preferred function for Chat responses — it keeps all messages in a single
+    conversation thread rather than creating a new top-level thread per reply.
+
+    Args:
+        space_name: The Chat space resource name (e.g. "spaces/XXXXXXXXX").
+        thread_key: A stable developer-chosen string identifying the thread.
+            Good values: the original ``message_name`` from the inbound Chat event,
+            or computed keys like ``f"approval-{proposal_id}"``.
+        text: Plain-text message body (≤ 4096 characters; truncated if longer).
+
+    Returns:
+        The Chat API Message resource dict returned by the API.
+
+    Raises:
+        ChatConfigError: If ``space_name`` or ``thread_key`` is empty.
+        ChatDeliveryError: If the Chat API returns an HTTP error.
+    """
+    if not space_name:
+        raise ChatConfigError("space_name must not be empty.")
+    if not thread_key:
+        raise ChatConfigError("thread_key must not be empty.")
+    if len(text) > 4096:
+        text = text[:4093] + "..."
+
+    service = _get_chat_service()
+    try:
+        result = (
+            service.spaces()
+            .messages()
+            .create(
+                parent=space_name,
+                messageReplyOption="REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD",
+                body={"text": text, "thread": {"threadKey": thread_key}},
+            )
+            .execute()
+        )
+        log.info(
+            "Chat threaded reply sent to %s thread=%s: messageId=%s",
+            space_name,
+            thread_key,
+            result.get("name"),
+        )
+        return result
+    except HttpError as exc:
+        raise ChatDeliveryError(
+            f"Chat API error {exc.status_code} sending threaded reply to {space_name}: {exc.reason}"
+        ) from exc
+
+
 def send_card(space_name: str, card: dict) -> dict:
     """
     Send a Card v2 message to a Chat space.

@@ -516,8 +516,21 @@ async def chat(request: Request) -> JSONResponse:
     event_type = event["event_type"]
     action_name = event.get("action_name", "")
 
-    # No-op ACK for bot lifecycle events
-    if event_type in ("ADDED_TO_SPACE", "REMOVED_FROM_SPACE"):
+    # Bot lifecycle events
+    if event_type == "ADDED_TO_SPACE":
+        try:
+            from tools.google_chat import send_message
+
+            send_message(
+                event["space_name"],
+                "Hi! I'm Nexus-Prime, your GAOS Strategic Architect. "
+                "Send me a message to get started, or type /help for available commands.",
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ADDED_TO_SPACE welcome message failed: %s", exc)
+        return JSONResponse(content={"status": "ok"})
+
+    if event_type == "REMOVED_FROM_SPACE":
         return JSONResponse(content={"status": "ok"})
 
     # Determine message type and payload
@@ -529,6 +542,7 @@ async def chat(request: Request) -> JSONResponse:
             "approved_by": event["sender_email"],
             "source": "google_chat",
             "space_name": event["space_name"],
+            "message_name": event["message_name"],
         }
     elif event_type == "CARD_CLICKED" and action_name in ("skill_approve", "skill_reject"):
         msg_type = MessageType.SKILL_REQUEST
@@ -539,6 +553,7 @@ async def chat(request: Request) -> JSONResponse:
             "approved_by": event["sender_email"],
             "source": "google_chat",
             "space_name": event["space_name"],
+            "message_name": event["message_name"],
         }
     elif event_type == "MESSAGE":
         attachments = event.get("attachments", [])
@@ -565,11 +580,13 @@ async def chat(request: Request) -> JSONResponse:
                 img_bytes = await _download_chat_attachment(download_uri)
             except Exception as exc:
                 log.error("Vision image download failed: %s", exc)
-                from tools.google_chat import send_message
+                from tools.google_chat import send_threaded_reply
 
                 try:
-                    send_message(
+                    _thread_key = event["message_name"] or f"vision-{download_uri[-12:]}"
+                    send_threaded_reply(
                         event["space_name"],
+                        _thread_key,
                         "\U0001f4f8 I received your image but couldn't download it. "
                         "Please try again or describe your vision in text.",
                     )
@@ -599,11 +616,13 @@ async def chat(request: Request) -> JSONResponse:
                 )
             except Exception as exc:
                 log.error("Vision extraction model call failed: %s", exc)
-                from tools.google_chat import send_message
+                from tools.google_chat import send_threaded_reply
 
                 try:
-                    send_message(
+                    _thread_key = event["message_name"] or f"vision-err-{submitted_at[:10]}"
+                    send_threaded_reply(
                         event["space_name"],
+                        _thread_key,
                         "\U0001f4f8 I couldn't process your image right now. "
                         "Please describe your vision in text and I'll generate the Blueprint.",
                     )

@@ -1,7 +1,7 @@
 """
 tests/test_google_chat.py — Unit tests for tools/google_chat.py and the POST /chat endpoint.
 
-TestGoogleChatTool (14 tests):
+TestGoogleChatTool (16 tests):
   C1   send_message raises ChatConfigError on empty space_name.
   C2   send_message truncates text longer than 4096 chars.
   C3   send_message calls Chat API with correct parent and body.
@@ -16,6 +16,8 @@ TestGoogleChatTool (14 tests):
   C12  parse_chat_event raises ChatEventParseError on missing 'type' field.
   C13  send_approval_card with reasoning_summary creates a dedicated reasoning section.
   C14  send_approval_card without reasoning_summary produces exactly two sections.
+  C15  send_threaded_reply calls API with messageReplyOption and thread key in body.
+  C16  send_threaded_reply raises ChatConfigError on empty thread_key.
 
 TestParseChatEvent (7 tests):
   P1   MESSAGE event returns correct event_type, text, sender_email.
@@ -26,15 +28,16 @@ TestParseChatEvent (7 tests):
   P6   Unknown CARD_CLICKED action still parses without exception.
   P7   MESSAGE with image attachment extracts download_uri and content_type.
 
-TestChatEndpoint (8 tests):
+TestChatEndpoint (9 tests):
   E1   POST /chat with MESSAGE body dispatches CHAT_MESSAGE to agent.run().
   E2   POST /chat with CARD_CLICKED approve dispatches APPROVAL_RESULT.
   E3   POST /chat with CARD_CLICKED reject dispatches APPROVAL_RESULT with status Rejected.
   E4   POST /chat with CARD_CLICKED skill_approve dispatches SKILL_REQUEST.
-  E5   POST /chat with ADDED_TO_SPACE returns 200 without calling agent.run().
+  E5   POST /chat with ADDED_TO_SPACE sends welcome message and returns 200 without agent.run().
   E6   POST /chat with unrecognised action returns 200 without calling agent.run().
   E7   POST /chat returns 404 when AGENT_NAME != nexus-prime.
   E8   POST /chat with image attachment dispatches VISION_SUBMITTED via vision extract.
+  E9   POST /chat with canonical payload file dispatches correct message type.
 """
 
 from __future__ import annotations
@@ -57,6 +60,7 @@ from tools.google_chat import (
     send_card,
     send_message,
     send_skill_import_card,
+    send_threaded_reply,
 )
 
 # ── Settings fixture ───────────────────────────────────────────────────────
@@ -295,6 +299,39 @@ class TestGoogleChatTool:
     def test_parse_chat_event_raises_on_missing_type(self):
         with pytest.raises(ChatEventParseError, match="type"):
             parse_chat_event({})
+
+    # C15
+    def test_send_threaded_reply_calls_api_with_thread_key(self):
+        captured: dict = {}
+        mock_msg = {"name": "spaces/TEST_SPACE_XYZ/messages/abc123"}
+
+        create_mock = MagicMock()
+        create_mock.execute.return_value = mock_msg
+        messages_mock = MagicMock()
+
+        def _create(**kwargs):
+            captured.update(kwargs)
+            return create_mock
+
+        messages_mock.create.side_effect = _create
+        spaces_mock = MagicMock()
+        spaces_mock.messages.return_value = messages_mock
+        svc = MagicMock()
+        svc.spaces.return_value = spaces_mock
+
+        with patch("tools.google_chat._get_chat_service", return_value=svc):
+            result = send_threaded_reply(_SPACE, "msg-key-001", "hello thread")
+
+        assert captured["parent"] == _SPACE
+        assert captured["messageReplyOption"] == "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
+        assert captured["body"]["thread"]["threadKey"] == "msg-key-001"
+        assert captured["body"]["text"] == "hello thread"
+        assert result["name"] == "spaces/TEST_SPACE_XYZ/messages/abc123"
+
+    # C16
+    def test_send_threaded_reply_raises_on_empty_thread_key(self):
+        with pytest.raises(ChatConfigError, match="thread_key"):
+            send_threaded_reply(_SPACE, "", "hello")
 
 
 # ── TestParseChatEvent ────────────────────────────────────────────────────
@@ -558,7 +595,7 @@ class TestChatEndpoint:
         assert msg["payload"]["status"] == "Approved"
 
     # E5
-    def test_added_to_space_returns_200_without_calling_agent(self):
+    def test_added_to_space_sends_welcome_and_returns_200_without_agent(self):
         mock_agent = MagicMock()
         mock_agent.run = AsyncMock()
 
@@ -570,14 +607,18 @@ class TestChatEndpoint:
         }
 
         client, main_mod, patcher, jwt_patcher = self._reloaded_client(mock_agent)
-        try:
-            resp = client.post("/chat", json=body, headers=self._HEADERS)
-        finally:
-            patcher.stop()
-            jwt_patcher.stop()
+        with patch("tools.google_chat.send_message") as mock_send:
+            try:
+                resp = client.post("/chat", json=body, headers=self._HEADERS)
+            finally:
+                patcher.stop()
+                jwt_patcher.stop()
 
         assert resp.status_code == 200
         mock_agent.run.assert_not_called()
+        mock_send.assert_called_once()
+        call_space = mock_send.call_args[0][0]
+        assert call_space == self._SPACE
 
     # E6
     def test_unrecognised_card_action_returns_200_without_calling_agent(self):
@@ -667,3 +708,26 @@ class TestChatEndpoint:
         assert "whiteboard" in msg["payload"]["vision_text"]
         assert msg["payload"]["vision_source"] == "image"
         assert msg["payload"]["submitted_by"] == "owner@example.com"
+
+    # E9
+    def test_canonical_payload_file_dispatches_chat_message(self):
+        """Load tests/payloads/chat_message.json and verify it routes to CHAT_MESSAGE."""
+        import pathlib
+
+        payload_path = pathlib.Path(__file__).parent / "payloads" / "chat_message.json"
+        body = json.loads(payload_path.read_text(encoding="utf-8"))
+
+        mock_agent = MagicMock()
+        mock_agent.run = AsyncMock(return_value=MagicMock(task_id="t9"))
+
+        client, main_mod, patcher, jwt_patcher = self._reloaded_client(mock_agent)
+        try:
+            resp = client.post("/chat", json=body, headers=self._HEADERS)
+        finally:
+            patcher.stop()
+            jwt_patcher.stop()
+
+        assert resp.status_code == 200
+        msg = _extract_envelope(mock_agent.run.call_args)
+        assert msg["message_type"] == "CHAT_MESSAGE"
+        assert "status" in msg["payload"]["text"]
