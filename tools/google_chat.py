@@ -433,13 +433,12 @@ def parse_chat_event(body: dict) -> dict:
     """
     Validate and normalise an inbound Google Chat push event.
 
-    Chat sends events with ``type`` set to one of:
-    - ``MESSAGE``            — user sent a text message
-    - ``CARD_CLICKED``       — user tapped a button on a card
-    - ``ADDED_TO_SPACE``     — bot was added to a space
-    - ``REMOVED_FROM_SPACE`` — bot was removed from a space
+    Supports TWO payload formats:
 
-    This function extracts the fields GAOS needs and returns a flat dict:
+    1. **Legacy Chat Bot API** — root fields: ``type``, ``space``, ``user``, ``message``
+    2. **Workspace Add-ons format** — ``commonEventObject``, ``chat.messagePayload``, etc.
+
+    This function detects the format and extracts the fields GAOS needs into a flat dict:
 
     .. code-block:: python
 
@@ -451,6 +450,7 @@ def parse_chat_event(body: dict) -> dict:
             "action_name":  str,          # button actionMethodName (CARD_CLICKED only)
             "parameters":   dict[str,str],# button parameters keyed by "key"
             "message_name": str,          # Chat message resource name
+            "attachments":  list[dict],   # attachment metadata (MESSAGE only)
         }
 
     Args:
@@ -463,67 +463,173 @@ def parse_chat_event(body: dict) -> dict:
         ChatEventParseError: body is missing required fields or has unexpected structure.
     """
     try:
-        event_type: str = body.get("type", "")
-        if not event_type:
-            raise ChatEventParseError("Missing 'type' field in Chat event body.")
+        # ── Detect format ────────────────────────────────────────────────────
+        # Workspace Add-ons format has commonEventObject with hostApp="CHAT"
+        common_event = body.get("commonEventObject", {})
+        is_addons_format = common_event.get("hostApp") == "CHAT"
 
-        space: dict = body.get("space", {})
-        space_name: str = space.get("name", "")
+        if is_addons_format:
+            return _parse_addons_format(body, common_event)
+        else:
+            return _parse_legacy_format(body)
 
-        sender: dict = body.get("user", {})
-        sender_email: str = sender.get("email", "")
-
-        message: dict = body.get("message", {})
-        text: str = message.get("text", "").strip()
-        message_name: str = message.get("name", "")
-
-        action_name = ""
-        parameters: dict[str, str] = {}
-
-        if event_type == "CARD_CLICKED":
-            action: dict = body.get("action", {})
-            action_name = action.get("actionMethodName", "")
-            for param in action.get("parameters", []):
-                key = param.get("key", "")
-                value = param.get("value", "")
-                if key:
-                    parameters[key] = value
-
-        # Extract image/file attachments — only present on MESSAGE events.
-        attachments: list[dict] = []
-        if event_type == "MESSAGE":
-            for att in message.get("attachment", []):
-                att_ref: dict = att.get("attachmentDataRef", {})
-                download_uri: str = att_ref.get("downloadUri", "")
-                # media_resource_name: opaque token from attachmentDataRef used with
-                #   the Chat media.download API to fetch the raw file bytes.
-                media_resource_name: str = att_ref.get("resourceName", "")
-                if download_uri or media_resource_name:
-                    attachments.append(
-                        {
-                            "content_type": att.get("contentType", "application/octet-stream"),
-                            "content_name": att.get("contentName", ""),
-                            # attachment_message_name: the Chat message-side resource name
-                            #   for this attachment (e.g. "spaces/.../messages/.../attachments/...").
-                            "attachment_message_name": att.get("name", ""),
-                            # media_resource_name: the attachmentDataRef token used to
-                            #   download the file via the Chat media API.
-                            "media_resource_name": media_resource_name,
-                            "download_uri": download_uri,
-                        }
-                    )
-
-        return {
-            "event_type": event_type,
-            "space_name": space_name,
-            "sender_email": sender_email,
-            "text": text,
-            "action_name": action_name,
-            "parameters": parameters,
-            "message_name": message_name,
-            "attachments": attachments,
-        }
     except ChatEventParseError:
         raise
     except Exception as exc:
         raise ChatEventParseError(f"Unexpected error parsing Chat event: {exc}") from exc
+
+
+def _parse_addons_format(body: dict, common_event: dict) -> dict:
+    """Parse Workspace Add-ons Chat event format."""
+    chat_obj: dict = body.get("chat", {})
+
+    # Determine event type from which payload is present
+    if "messagePayload" in chat_obj:
+        event_type = "MESSAGE"
+        payload = chat_obj["messagePayload"]
+        message: dict = payload.get("message", {})
+        text = message.get("text", "").strip()
+        message_name = message.get("name", "")
+        space: dict = payload.get("space", body.get("space", {}))
+        space_name = space.get("name", "")
+        # Sender from payload or body
+        sender: dict = payload.get("sender", body.get("user", {}))
+        sender_email = sender.get("email", "")
+        action_name = ""
+        parameters: dict[str, str] = {}
+
+        # Attachments
+        attachments: list[dict] = []
+        for att in message.get("attachment", []):
+            att_ref: dict = att.get("attachmentDataRef", {})
+            download_uri: str = att_ref.get("downloadUri", "")
+            media_resource_name: str = att_ref.get("resourceName", "")
+            if download_uri or media_resource_name:
+                attachments.append(
+                    {
+                        "content_type": att.get("contentType", "application/octet-stream"),
+                        "content_name": att.get("contentName", ""),
+                        "attachment_message_name": att.get("name", ""),
+                        "media_resource_name": media_resource_name,
+                        "download_uri": download_uri,
+                    }
+                )
+
+    elif "buttonClickedPayload" in chat_obj:
+        event_type = "CARD_CLICKED"
+        payload = chat_obj["buttonClickedPayload"]
+        message: dict = payload.get("message", {})
+        message_name = message.get("name", "")
+        space: dict = payload.get("space", body.get("space", {}))
+        space_name = space.get("name", "")
+        sender: dict = payload.get("sender", body.get("user", {}))
+        sender_email = sender.get("email", "")
+        text = ""
+
+        # Action from buttonClickedPayload
+        action_name = payload.get("action", {}).get("actionMethodName", "")
+        parameters = {}
+        for param in payload.get("action", {}).get("parameters", []):
+            key = param.get("key", "")
+            value = param.get("value", "")
+            if key:
+                parameters[key] = value
+        attachments = []
+
+    elif "addedToSpacePayload" in chat_obj:
+        event_type = "ADDED_TO_SPACE"
+        payload = chat_obj["addedToSpacePayload"]
+        space: dict = payload.get("space", body.get("space", {}))
+        space_name = space.get("name", "")
+        sender_email = ""
+        text = ""
+        message_name = ""
+        action_name = ""
+        parameters = {}
+        attachments = []
+
+    elif "removedFromSpacePayload" in chat_obj:
+        event_type = "REMOVED_FROM_SPACE"
+        payload = chat_obj["removedFromSpacePayload"]
+        space: dict = payload.get("space", body.get("space", {}))
+        space_name = space.get("name", "")
+        sender_email = ""
+        text = ""
+        message_name = ""
+        action_name = ""
+        parameters = {}
+        attachments = []
+
+    else:
+        # Unknown Add-ons event type — log keys for debugging
+        chat_keys = list(chat_obj.keys()) if chat_obj else []
+        raise ChatEventParseError(f"Unknown Workspace Add-ons Chat event. chat keys: {chat_keys}")
+
+    return {
+        "event_type": event_type,
+        "space_name": space_name,
+        "sender_email": sender_email,
+        "text": text,
+        "action_name": action_name,
+        "parameters": parameters,
+        "message_name": message_name,
+        "attachments": attachments,
+    }
+
+
+def _parse_legacy_format(body: dict) -> dict:
+    """Parse legacy Chat Bot API event format."""
+    event_type: str = body.get("type", "")
+    if not event_type:
+        raise ChatEventParseError("Missing 'type' field in Chat event body.")
+
+    space: dict = body.get("space", {})
+    space_name: str = space.get("name", "")
+
+    sender: dict = body.get("user", {})
+    sender_email: str = sender.get("email", "")
+
+    message: dict = body.get("message", {})
+    text: str = message.get("text", "").strip()
+    message_name: str = message.get("name", "")
+
+    action_name = ""
+    parameters: dict[str, str] = {}
+
+    if event_type == "CARD_CLICKED":
+        action: dict = body.get("action", {})
+        action_name = action.get("actionMethodName", "")
+        for param in action.get("parameters", []):
+            key = param.get("key", "")
+            value = param.get("value", "")
+            if key:
+                parameters[key] = value
+
+    # Extract image/file attachments — only present on MESSAGE events.
+    attachments: list[dict] = []
+    if event_type == "MESSAGE":
+        for att in message.get("attachment", []):
+            att_ref: dict = att.get("attachmentDataRef", {})
+            download_uri: str = att_ref.get("downloadUri", "")
+            media_resource_name: str = att_ref.get("resourceName", "")
+            if download_uri or media_resource_name:
+                attachments.append(
+                    {
+                        "content_type": att.get("contentType", "application/octet-stream"),
+                        "content_name": att.get("contentName", ""),
+                        "attachment_message_name": att.get("name", ""),
+                        "media_resource_name": media_resource_name,
+                        "download_uri": download_uri,
+                    }
+                )
+
+    return {
+        "event_type": event_type,
+        "space_name": space_name,
+        "sender_email": sender_email,
+        "text": text,
+        "action_name": action_name,
+        "parameters": parameters,
+        "message_name": message_name,
+        "attachments": attachments,
+    }

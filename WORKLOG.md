@@ -5,6 +5,106 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-21T22:17-03:00 — Bug 4: STATUS_UPDATE Heartbeat Self-Loop + Pub/Sub Storm
+
+### What was done
+Identified and fixed a fourth production bug: `record()` published a `STATUS_UPDATE`
+heartbeat to `agent.nexus-prime.events` on every message completion, including when
+processing a `STATUS_UPDATE`. The `nexus-prime.sub.events` push subscription re-delivers
+own heartbeats → infinite fan that flooded all 5 Cloud Run instances → 429s blocked
+`/chat` from getting any instance.
+
+### Root cause
+- `route()` maps `STATUS_UPDATE → "record"` (line 545, intentional — skip LLM)
+- `record()` unconditionally published `STATUS_UPDATE` to `agent.nexus-prime.events`
+- `nexus-prime.sub.events` is a push subscription on that topic → delivered back to `/pubsub`
+- Each delivery triggered another `record()` → another publish → infinite loop at ~25 req/sec
+
+### Fix
+Added guard in `record()` before the heartbeat `publish()` call:
+```python
+if not (msg and msg.message_type == MessageType.STATUS_UPDATE):
+    publish("agent.nexus-prime.events", heartbeat)
+```
+`heartbeat_text` is computed unconditionally (above the guard) so `_write_heartbeat()` still has it.
+
+### Compound effect
+The loop also caused `boot()` → `init_sheets_client()` to hit Sheets Read quota [429]
+(60 reads/min default). All instances hammering Sheets during rapid boot cycles
+exhausted the quota. This compounded with the earlier Bug 2 (HTTP 204 body →
+uvicorn crash → initial Pub/Sub retry seed) to create a self-sustaining storm even
+after Bug 2 was fixed.
+
+### Storm clearance
+- Seeked all 8 nexus-prime subscriptions to near-future timestamps (01:05Z, 01:20Z)
+  twice — once per `gcloud pubsub subscriptions seek --time=<ts>` batch
+- New revision `nexus-prime-00012-wc7` deployed, traffic switched
+- HTTP 429 rate: ~25/sec → 0 after fix
+
+### Files changed
+- `agents/nexus_prime/orchestrator.py` — guard in `record()` before `publish("agent.nexus-prime.events", ...)`
+
+### Tests
+- 411/411 passed — no regressions
+
+### What's next
+- User should send a fresh Google Chat message to test end-to-end
+- Monitor Sheets quota recovery (~1–2 min after storm stops)
+- Consider reducing `init_sheets_client` calls in `boot()` or adding lazy init strategy for high-frequency deployments
+
+---
+
+## 2026-03-21T21:54-03:00 — Google Chat Operational Integrity Audit + Three Bug Fixes
+
+### What was done
+Full operational integrity check of the Google Chat integration path. All 411 tests
+passed before and after changes. Three production bugs found and patched; nexus-prime
+redeployed to revision `nexus-prime-00011-sg5` (serving 100% traffic).
+
+### Files changed
+- **`main.py`** — Two fixes:
+  1. `_verify_chat_jwt`: Changed `audience=service_url` to `audience=f"{service_url}/chat"`.
+     The Google Chat JWT `aud` claim is the full endpoint URL including the `/chat` path.
+     Using the bare base URL caused every inbound Chat event to return 401.
+  2. `/pubsub` handler: Changed `JSONResponse(content={"status":"ok"}, status_code=204)`
+     to `Response(status_code=204)`. HTTP 204 No Content must have no body; the JSON body
+     caused uvicorn to raise `RuntimeError: Response content longer than Content-Length` on
+     every Pub/Sub ACK, crashing the response and triggering a Pub/Sub retry storm
+     (the origin of the repeated 429 "no available instance" errors in Cloud Run logs).
+
+- **`agents/nexus_prime/orchestrator.py`** — `boot()` function: Changed
+  `state.get("project_id", settings.GCP_PROJECT_ID)` to
+  `state.get("project_id") or settings.GCP_PROJECT_ID`. The `initial_state` dict
+  initialises `project_id=""` (empty string), so `dict.get(key, default)` returned `""`
+  (key is present!) and never used the default. Every agent invocation called
+  `init_sheets_client("")` and logged ERROR on boot. The `or` operator correctly
+  falls back when the value is falsy.
+
+### Bugs found from logs (before fixes)
+| Bug | Symptom | Root cause |
+|-----|---------|------------|
+| Chat JWT 401 | Every inbound `/chat` POST rejected 401 | `aud` verified against base URL; Chat sends `/chat` path |
+| Sheets init ERROR | `project_id ''` on every invocation | `dict.get("", default)` returns `""` not fallback |
+| Pub/Sub retry storm | 429 "no available instance" flood | HTTP 204 with JSON body → uvicorn RuntimeError → Pub/Sub retries |
+
+### Test result
+411 passed — all green before and after.
+
+### Deployment
+`gcloud run deploy nexus-prime --source . --region us-central1 --project morphic-gaos-prod`
+Traffic migrated to `nexus-prime-00011-sg5` via `update-traffic --to-revisions`.
+
+> **Note:** `gcloud run deploy --source` with an explicitly pinned traffic revision
+> (spec.traffic[].revisionName) creates a new revision but does NOT automatically
+> update traffic. Must follow with `gcloud run services update-traffic --to-revisions
+> <new-rev>=100` or redeploy with `--tag latest`.
+
+### What's next
+- Conduct live mobile Chat test (send a message to Nexus-Prime in the owner DM space).
+- If daily-sync briefing card is still missing at 06:00, rebuild with settings.yaml check.
+
+---
+
 ## 2026-03-21T21:08-03:00 — Chat quality improvements from GAOS-Chat-Dev-Reference.md
 
 ### What was done

@@ -1,5 +1,6 @@
 FROM python:3.11-slim
 
+# Build timestamp: 2026-03-22T09:05:00Z (forces cache invalidation)
 WORKDIR /app
 COPY . .
 

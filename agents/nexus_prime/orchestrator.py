@@ -67,6 +67,9 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
     # Internal timing
     _started_at: float
 
+    # Raw Pub/Sub envelope — set by run(), consumed by monitor()
+    _raw_incoming: Any
+
     # Vision workflow (Phase 2.5 Step 5)
     active_blueprints: dict  # maps blueprint_id → doc_id
     blueprint_constraints: list[dict]  # active constraint stack per blueprint
@@ -461,7 +464,8 @@ def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     state.setdefault("blueprint_constraints", [])
 
     settings = get_settings()
-    pid = state.get("project_id", settings.GCP_PROJECT_ID)
+    # Use `or` so an empty-string project_id falls back to settings, not just absent key.
+    pid = state.get("project_id") or settings.GCP_PROJECT_ID
     state["project_id"] = pid
 
     try:
@@ -511,15 +515,41 @@ def monitor(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     """Decode incoming Pub/Sub push envelope from state and populate working memory."""
     from tools.pubsub import decode_push_message
 
+    project_id = state.get("project_id", "")
+    task_id = state.get("task_id", "monitor")
+
     raw = state.get("_raw_incoming")  # type: ignore[typeddict-item]
     if not raw:
+        _log_cloud("nexus-prime", project_id, "task", task_id, "monitor: no _raw_incoming")
         state["step_count"] = state.get("step_count", 0) + 1
         return state
-    msg = decode_push_message(raw)
+
+    _log_cloud("nexus-prime", project_id, "task", task_id, "monitor: decoding push message")
+    try:
+        msg = decode_push_message(raw)
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"monitor: decode_push_message failed — {exc}",
+            "ERROR",
+        )
+        state["step_count"] = state.get("step_count", 0) + 1
+        return state
+
     state["incoming_message"] = msg
     state["project_id"] = msg.project_id
     state["task_id"] = msg.task_id or str(uuid.uuid4())
     state["step_count"] = state.get("step_count", 0) + 1
+    _log_cloud(
+        "nexus-prime",
+        msg.project_id,
+        "task",
+        state["task_id"],
+        f"monitor: decoded msg_type={msg.message_type.value} from={msg.source_agent}",
+    )
     return state
 
 
@@ -1042,21 +1072,24 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     except Exception:
         pass
 
+    # Don't re-publish a STATUS_UPDATE when already processing one — prevents
+    # the nexus-prime.sub.events self-delivery loop.
     heartbeat_text = _format_heartbeat(state)
-    heartbeat = A2AMessage(
-        source_agent="nexus-prime",
-        target_agent="broadcast",
-        project_id=state.get("project_id", ""),
-        task_id=state.get("task_id", str(uuid.uuid4())),
-        message_type=MessageType.STATUS_UPDATE,
-        priority=1,
-        payload={"summary": heartbeat_text},
-    )
+    if not (msg and msg.message_type == MessageType.STATUS_UPDATE):
+        heartbeat = A2AMessage(
+            source_agent="nexus-prime",
+            target_agent="broadcast",
+            project_id=state.get("project_id", ""),
+            task_id=state.get("task_id", str(uuid.uuid4())),
+            message_type=MessageType.STATUS_UPDATE,
+            priority=1,
+            payload={"summary": heartbeat_text},
+        )
 
-    try:
-        publish("agent.nexus-prime.events", heartbeat)
-    except Exception:
-        pass
+        try:
+            publish("agent.nexus-prime.events", heartbeat)
+        except Exception:
+            pass
 
     _write_heartbeat(
         agent_id="nexus-prime",
@@ -2295,22 +2328,55 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     from config import get_settings
     from tools.google_chat import send_threaded_reply
 
+    project_id = state.get("project_id", "")
+    task_id = state.get("task_id", "")
+    _log_cloud("nexus-prime", project_id, "task", task_id, "chat_respond: ENTRY")
+
     msg = state.get("incoming_message")
     if msg is None:
+        _log_cloud("nexus-prime", project_id, "task", task_id, "chat_respond: no incoming_message")
         return state
 
     payload = msg.payload or {}
     user_text: str = payload.get("text", "")
     space_name: str = payload.get("space_name", "")
-    task_id = state.get("task_id", "")
     message_name: str = payload.get("message_name", "")
     project_id = state["project_id"]
 
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"chat_respond: user_text={user_text[:50]!r} space={space_name!r}",
+    )
+
     if not user_text or not space_name:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"chat_respond: BAIL — text empty={not user_text}, space empty={not space_name}",
+            "WARNING",
+        )
         return state
 
     settings = get_settings()
     context_trio = _load_context_trio()
+
+    # Chat-specific formatting rules — Google Chat renders plain text, not Markdown
+    chat_format_rules = (
+        "\n\n--- CHAT FORMATTING RULES ---\n"
+        "You are responding in Google Chat. Do NOT use Markdown formatting:\n"
+        "- No ** for bold or emphasis\n"
+        "- No * for italics\n"
+        "- No ` for code\n"
+        '- Use plain quotation marks " for quotes\n'
+        "- Keep responses concise (under 500 characters when possible)\n"
+        "- Do not acknowledge or echo the user's question — answer directly\n"
+    )
+    system_prompt = context_trio + chat_format_rules
 
     # Include active project summary for grounding
     system_state: dict = state.get("system_state_summary") or {}  # type: ignore[assignment]
@@ -2325,7 +2391,7 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         resp = _call_model(
             prompt,
             model=settings.models.FAST_MODEL,
-            system_prompt=context_trio,
+            system_prompt=system_prompt,
         )
         reply = resp.text.strip() or "I'm processing your request."
         state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
@@ -2472,6 +2538,7 @@ if _HAS_ADK:
         model: Any = ""  # type: ignore[assignment] — ADK accepts str at runtime
         instruction: Any = ""  # type: ignore[assignment]
         tools: list = []
+        _graph: Any = None  # Compiled LangGraph StateGraph, set in __init__
 
         def __init__(self, **data: Any) -> None:
             from config import get_settings
@@ -2593,7 +2660,7 @@ else:
                 "monologue_frame": None,
             }
             try:
-                final_state = await self._graph.ainvoke(
+                final_state = await self._graph.ainvoke(  # type: ignore[union-attr]
                     {**initial_state, "_raw_incoming": agent_input},
                     config={"configurable": {"thread_id": initial_state["task_id"]}},
                 )
