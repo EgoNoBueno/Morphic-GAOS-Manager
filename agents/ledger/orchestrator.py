@@ -126,7 +126,7 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
     # Step 4: Pub/Sub — ensure outbound topic exists
     try:
-        ensure_topic_exists(_OUTBOUND_TOPIC, pid)
+        ensure_topic_exists(_OUTBOUND_TOPIC)
     except Exception:
         pass
 
@@ -308,8 +308,16 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
     try:
         publish(_OUTBOUND_TOPIC, heartbeat)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", "unknown"),
+            f"publish to {_OUTBOUND_TOPIC} failed (heartbeat): {exc}",
+            "ERROR",
+        )
+        raise
 
     open_proposals = len(state.get("parked_proposals", []))
     _write_heartbeat(
@@ -343,8 +351,16 @@ def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
     )
     try:
         publish(_OUTBOUND_TOPIC, handoff)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", proposal_id),
+            f"publish to {_OUTBOUND_TOPIC} failed (handoff proposal_id={proposal_id}): {exc}",
+            "ERROR",
+        )
+        raise
 
     _write_heartbeat(
         _AGENT_ID,
@@ -397,8 +413,16 @@ def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
     )
     try:
         publish(_OUTBOUND_TOPIC, escalation)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", "unknown"),
+            f"publish to {_OUTBOUND_TOPIC} failed (escalation): {exc}",
+            "ERROR",
+        )
+        raise
 
     _write_heartbeat(
         _AGENT_ID,

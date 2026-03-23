@@ -11,14 +11,14 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 Full codebase audit against AI-Autocoding-Rules.md uncovered two critical bugs.
 
 **Bug 7 — publish() 3-arg TypeError (silent failure across 5 orchestrators):**
-11 call sites across Beacon (3), Pursuit (2), Scout (4), Steward (3), and Ledger (3)
+14 call sites across Beacon (3), Pursuit (2), Scout (3), Steward (3), and Ledger (3)
 passed `project_id` as a third argument to `publish(topic_name, message)` which only
 accepts 2 parameters (`project_id` is read internally from `settings.GCP_PROJECT_ID`).
 Every call raised `TypeError: publish() takes 2 positional arguments but 3 were given`
 — but the error was silently swallowed by `except Exception: pass` blocks.
 Result: all Pub/Sub messages (heartbeats, handoffs, escalations) from 5 of 6
 sub-orchestrators were silently dropped. Only Foreman had correct 2-arg calls.
-Fix: removed the trailing `pid` argument from all 11 call sites.
+Fix: removed the trailing `pid` argument from all 14 call sites.
 
 **Bug 8 — Nexus-Prime boot() missing secret validation (Rule 9 §7 Step 3):**
 `boot()` did not call `get_secret()` at startup — a missing `GEMINI_API_KEY`
@@ -30,7 +30,7 @@ Fix: added `get_secret("GEMINI_API_KEY", pid)` with `sys.exit(1)` on
 ### Files changed
 - `agents/beacon/orchestrator.py` — Removed trailing `pid` from 3 `publish()` calls
 - `agents/pursuit/orchestrator.py` — Removed trailing `pid` from 2 `publish()` calls
-- `agents/scout/orchestrator.py` — Removed trailing `pid` from 4 `publish()` calls
+- `agents/scout/orchestrator.py` — Removed trailing `pid` from 3 `publish()` calls
 - `agents/steward/orchestrator.py` — Removed trailing `pid` from 3 `publish()` calls
 - `agents/ledger/orchestrator.py` — Removed trailing `pid` from 3 `publish()` calls
 - `agents/nexus_prime/orchestrator.py` — Added secret validation block in `boot()`

@@ -64,9 +64,6 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
     system_state_summary: dict
     last_ttl_sweep_at: str | None
 
-    # Internal timing
-    _started_at: float
-
     # Raw Pub/Sub envelope — set by run(), consumed by monitor()
     _raw_incoming: Any
 
@@ -82,6 +79,13 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
 # ── Constraint compaction threshold ──────────────────────────────────────────
 
 _COMPACTION_THRESHOLD = 5
+
+# ── Secret validation cache ───────────────────────────────────────────────────
+# Tracks which project_ids have already passed the GEMINI_API_KEY check so
+# boot() does not hit Secret Manager on every request (boot() is the LangGraph
+# entry point and runs on every ainvoke call). sys.exit(1) fires only on the
+# first encounter for a given pid; subsequent requests short-circuit.
+_validated_pids: set[str] = set()
 
 
 # ── Decision / format model selection ────────────────────────────────────────
@@ -490,16 +494,23 @@ def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             "ERROR",
         )
 
-    # Fail fast if critical secrets are missing (Rule 9 §7 Step 3)
-    try:
-        from tools.secrets import SecretAccessDenied, SecretNotFoundError, get_secret
+    # Fail fast if critical secrets are missing (Rule 9 §7 Step 3).
+    # _validated_pids caches successful checks so Secret Manager is called at
+    # most once per pid per process lifetime — boot() is the LangGraph entry
+    # point and runs on every ainvoke(), making per-request validation unsafe.
+    if pid not in _validated_pids:
+        try:
+            from tools.secrets import SecretAccessDenied, SecretNotFoundError, get_secret
 
-        get_secret("GEMINI_API_KEY", pid)
-    except (SecretNotFoundError, SecretAccessDenied) as exc:
-        _log_cloud("nexus-prime", pid, "security", "boot", f"STARTUP_FAILURE: {exc}", "CRITICAL")
-        import sys
+            get_secret("GEMINI_API_KEY", pid)
+            _validated_pids.add(pid)
+        except (SecretNotFoundError, SecretAccessDenied) as exc:
+            _log_cloud(
+                "nexus-prime", pid, "security", "boot", f"STARTUP_FAILURE: {exc}", "CRITICAL"
+            )
+            import sys
 
-        sys.exit(1)
+            sys.exit(1)
 
     # Ensure all Pub/Sub topics exist (idempotent)
     for topic in settings.pubsub.all_topics:

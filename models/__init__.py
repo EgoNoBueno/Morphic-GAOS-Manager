@@ -195,6 +195,9 @@ class AgentWorkingMemory(TypedDict):
     incoming_message: A2AMessage | None  # Current message being handled
     messages: list  # LangGraph message log
 
+    # Internal timing (set at boot, used for elapsed-time logging)
+    _started_at: float
+
     # Guard flags
     hard_stop_triggered: bool  # True if a hard stop constraint fired
     evolution_triggered: bool  # True if Write-Test-Refine loop is active

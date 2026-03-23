@@ -84,7 +84,7 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
         sys.exit(1)
 
     try:
-        ensure_topic_exists(_OUTBOUND_TOPIC, pid)
+        ensure_topic_exists(_OUTBOUND_TOPIC)
     except Exception:
         pass
 
