@@ -242,7 +242,6 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 priority=1,
                 payload={"status": "WORKING", "cost_usd": state.get("cost_usd", 0.0)},
             ),
-            pid,
         )
     except Exception:
         pass
@@ -276,7 +275,6 @@ def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 priority=3,
                 payload={"proposal_id": proposal_id},
             ),
-            pid,
         )
     except Exception:
         pass

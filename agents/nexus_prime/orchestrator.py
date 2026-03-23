@@ -353,6 +353,16 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             "partial_result_available": False,
             "reasoning_summary": "High-priority message; Tactical mode applied without model call.",
         }
+    # Conversational fast-path — CHAT_MESSAGE mode and next node are deterministic.
+    # Skipping the LLM call here halves the hot-path latency for every chat message.
+    elif msg_type == MessageType.CHAT_MESSAGE:
+        data = {
+            "response_mode": "Direct",
+            "knowledge_gap_detected": False,
+            "knowledge_gap_description": "",
+            "partial_result_available": False,
+            "reasoning_summary": "CHAT_MESSAGE — conversational direct response, no pre-analysis needed.",
+        }
     else:
         context_trio = _load_context_trio()
         prompt = _build_think_prompt(state, msg, priority)
@@ -479,6 +489,17 @@ def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             f"boot: init_sheets_client failed — {_sheets_init_exc}",
             "ERROR",
         )
+
+    # Fail fast if critical secrets are missing (Rule 9 §7 Step 3)
+    try:
+        from tools.secrets import SecretAccessDenied, SecretNotFoundError, get_secret
+
+        get_secret("GEMINI_API_KEY", pid)
+    except (SecretNotFoundError, SecretAccessDenied) as exc:
+        _log_cloud("nexus-prime", pid, "security", "boot", f"STARTUP_FAILURE: {exc}", "CRITICAL")
+        import sys
+
+        sys.exit(1)
 
     # Ensure all Pub/Sub topics exist (idempotent)
     for topic in settings.pubsub.all_topics:
@@ -2326,7 +2347,7 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     Spec: GAOS-Nexus-Prime-Spec.md §3.3 — chat_respond node
     """
     from config import get_settings
-    from tools.google_chat import send_threaded_reply
+    from tools.google_chat import send_reply_in_thread, send_threaded_reply
 
     project_id = state.get("project_id", "")
     task_id = state.get("task_id", "")
@@ -2341,6 +2362,7 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     user_text: str = payload.get("text", "")
     space_name: str = payload.get("space_name", "")
     message_name: str = payload.get("message_name", "")
+    thread_name: str = payload.get("thread_name", "")
     project_id = state["project_id"]
 
     _log_cloud(
@@ -2408,8 +2430,13 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         reply = "I'm having trouble processing your request right now. Please try again."
 
     try:
-        thread_key = message_name or f"chat-{task_id}"
-        send_threaded_reply(space_name, thread_key, reply)
+        if thread_name:
+            # Use server-assigned thread name — replies in the user's actual thread.
+            send_reply_in_thread(space_name, thread_name, reply)
+        else:
+            # Fallback: developer threadKey. May create a new thread on first use.
+            thread_key = message_name or f"chat-{task_id}"
+            send_threaded_reply(space_name, thread_key, reply)
         _log_cloud(
             "nexus-prime",
             project_id,
@@ -2423,7 +2450,7 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             project_id,
             "task",
             task_id,
-            f"chat_respond: send_threaded_reply failed — {exc}",
+            f"chat_respond: send reply failed — {exc}",
             "WARNING",
         )
 

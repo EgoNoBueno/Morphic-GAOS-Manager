@@ -307,7 +307,7 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
     )
 
     try:
-        publish(_OUTBOUND_TOPIC, heartbeat, pid)
+        publish(_OUTBOUND_TOPIC, heartbeat)
     except Exception:
         pass
 
@@ -342,7 +342,7 @@ def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
         payload={"proposal_id": proposal_id, "parked_by": _AGENT_ID},
     )
     try:
-        publish(_OUTBOUND_TOPIC, handoff, pid)
+        publish(_OUTBOUND_TOPIC, handoff)
     except Exception:
         pass
 
@@ -396,7 +396,7 @@ def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
         },
     )
     try:
-        publish(_OUTBOUND_TOPIC, escalation, pid)
+        publish(_OUTBOUND_TOPIC, escalation)
     except Exception:
         pass
 

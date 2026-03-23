@@ -6,6 +6,7 @@ Provides:
   - send_card()             Send a rich Card v2 to a Chat space.
   - send_approval_card()    Post an Approve/Reject card for the Approval Gate.
   - send_skill_import_card() Post a card requesting library installation approval.
+  - send_reply_in_thread()  Reply in an existing thread via server-assigned thread name.
   - parse_chat_event()      Validate and parse an inbound Chat push payload.
 
 Authentication:
@@ -167,6 +168,62 @@ def send_threaded_reply(space_name: str, thread_key: str, text: str) -> dict:
     except HttpError as exc:
         raise ChatDeliveryError(
             f"Chat API error {exc.status_code} sending threaded reply to {space_name}: {exc.reason}"
+        ) from exc
+
+
+def send_reply_in_thread(space_name: str, thread_name: str, text: str) -> dict:
+    """Send a reply in an existing Chat thread using the server-assigned thread resource name.
+
+    Unlike ``send_threaded_reply()`` which uses a developer-assigned ``threadKey``,
+    this function references the thread by its server-assigned resource name
+    (e.g. ``"spaces/XXXXX/threads/YYYYY"``), ensuring the reply appears in the
+    same thread as the user's original message rather than creating a new thread.
+
+    Use this whenever the inbound Chat event includes ``message.thread.name``
+    (available in ``parse_chat_event()`` as the ``thread_name`` key).
+
+    Args:
+        space_name:  The Chat space resource name (e.g. ``"spaces/XXXXXXXXX"``).
+        thread_name: The server-assigned thread resource name
+                     (e.g. ``"spaces/XXXXX/threads/YYYYY"``).
+        text:        Plain-text message body (≤ 4096 characters; truncated if longer).
+
+    Returns:
+        The Chat API Message resource dict returned by the API.
+
+    Raises:
+        ChatConfigError:   If ``space_name`` or ``thread_name`` is empty.
+        ChatDeliveryError: If the Chat API returns an HTTP error.
+    """
+    if not space_name:
+        raise ChatConfigError("space_name must not be empty.")
+    if not thread_name:
+        raise ChatConfigError("thread_name must not be empty.")
+    if len(text) > 4096:
+        text = text[:4093] + "..."
+
+    service = _get_chat_service()
+    try:
+        result = (
+            service.spaces()
+            .messages()
+            .create(
+                parent=space_name,
+                messageReplyOption="REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD",
+                body={"text": text, "thread": {"name": thread_name}},
+            )
+            .execute()
+        )
+        log.info(
+            "Chat reply sent to %s in thread %s: messageId=%s",
+            space_name,
+            thread_name,
+            result.get("name"),
+        )
+        return result
+    except HttpError as exc:
+        raise ChatDeliveryError(
+            f"Chat API error {exc.status_code} replying in thread {thread_name}: {exc.reason}"
         ) from exc
 
 
@@ -450,6 +507,7 @@ def parse_chat_event(body: dict) -> dict:
             "action_name":  str,          # button actionMethodName (CARD_CLICKED only)
             "parameters":   dict[str,str],# button parameters keyed by "key"
             "message_name": str,          # Chat message resource name
+            "thread_name":  str,          # server-assigned thread resource name (may be "")
             "attachments":  list[dict],   # attachment metadata (MESSAGE only)
         }
 
@@ -518,6 +576,7 @@ def _parse_addons_format(body: dict, common_event: dict) -> dict:
         message: dict = payload.get("message", {})
         text = message.get("text", "").strip()
         message_name = message.get("name", "")
+        thread_name = message.get("thread", {}).get("name", "")
         space: dict = payload.get("space", body.get("space", {}))
         space_name = space.get("name", "")
         # Sender from payload or body
@@ -532,6 +591,7 @@ def _parse_addons_format(body: dict, common_event: dict) -> dict:
         payload = chat_obj["buttonClickedPayload"]
         message: dict = payload.get("message", {})
         message_name = message.get("name", "")
+        thread_name = message.get("thread", {}).get("name", "")
         space: dict = payload.get("space", body.get("space", {}))
         space_name = space.get("name", "")
         sender: dict = payload.get("sender", body.get("user", {}))
@@ -556,6 +616,7 @@ def _parse_addons_format(body: dict, common_event: dict) -> dict:
         sender_email = ""
         text = ""
         message_name = ""
+        thread_name = ""
         action_name = ""
         parameters = {}
         attachments = []
@@ -568,6 +629,7 @@ def _parse_addons_format(body: dict, common_event: dict) -> dict:
         sender_email = ""
         text = ""
         message_name = ""
+        thread_name = ""
         action_name = ""
         parameters = {}
         attachments = []
@@ -585,6 +647,7 @@ def _parse_addons_format(body: dict, common_event: dict) -> dict:
         "action_name": action_name,
         "parameters": parameters,
         "message_name": message_name,
+        "thread_name": thread_name,
         "attachments": attachments,
     }
 
@@ -604,6 +667,7 @@ def _parse_legacy_format(body: dict) -> dict:
     message: dict = body.get("message", {})
     text: str = message.get("text", "").strip()
     message_name: str = message.get("name", "")
+    thread_name: str = message.get("thread", {}).get("name", "")
 
     action_name = ""
     parameters: dict[str, str] = {}
@@ -628,5 +692,6 @@ def _parse_legacy_format(body: dict) -> dict:
         "action_name": action_name,
         "parameters": parameters,
         "message_name": message_name,
+        "thread_name": thread_name,
         "attachments": attachments,
     }

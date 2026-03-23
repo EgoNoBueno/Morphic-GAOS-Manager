@@ -1,7 +1,7 @@
 """
 tests/test_google_chat.py — Unit tests for tools/google_chat.py and the POST /chat endpoint.
 
-TestGoogleChatTool (16 tests):
+TestGoogleChatTool (18 tests):
   C1   send_message raises ChatConfigError on empty space_name.
   C2   send_message truncates text longer than 4096 chars.
   C3   send_message calls Chat API with correct parent and body.
@@ -18,6 +18,8 @@ TestGoogleChatTool (16 tests):
   C14  send_approval_card without reasoning_summary produces exactly two sections.
   C15  send_threaded_reply calls API with messageReplyOption and thread key in body.
   C16  send_threaded_reply raises ChatConfigError on empty thread_key.
+  C17  send_reply_in_thread calls API with server thread name in body.
+  C18  send_reply_in_thread raises ChatConfigError on empty thread_name.
 
 TestParseChatEvent (7 tests):
   P1   MESSAGE event returns correct event_type, text, sender_email.
@@ -59,6 +61,7 @@ from tools.google_chat import (
     send_approval_card,
     send_card,
     send_message,
+    send_reply_in_thread,
     send_skill_import_card,
     send_threaded_reply,
 )
@@ -333,11 +336,46 @@ class TestGoogleChatTool:
         with pytest.raises(ChatConfigError, match="thread_key"):
             send_threaded_reply(_SPACE, "", "hello")
 
+    # C17
+    def test_send_reply_in_thread_calls_api_with_thread_name(self):
+        captured: dict = {}
+        mock_msg = {"name": f"{_SPACE}/messages/reply-1"}
+
+        create_mock = MagicMock()
+        create_mock.execute.return_value = mock_msg
+        messages_mock = MagicMock()
+
+        def _create(**kwargs):
+            captured.update(kwargs)
+            return create_mock
+
+        messages_mock.create.side_effect = _create
+        spaces_mock = MagicMock()
+        spaces_mock.messages.return_value = messages_mock
+        svc = MagicMock()
+        svc.spaces.return_value = spaces_mock
+
+        thread_name = f"{_SPACE}/threads/thread-abc"
+        with patch("tools.google_chat._get_chat_service", return_value=svc):
+            result = send_reply_in_thread(_SPACE, thread_name, "hello thread")
+
+        assert captured["parent"] == _SPACE
+        assert captured["body"]["thread"]["name"] == thread_name
+        assert captured["body"]["text"] == "hello thread"
+        assert result["name"] == f"{_SPACE}/messages/reply-1"
+
+    # C18
+    def test_send_reply_in_thread_raises_on_empty_thread_name(self):
+        with pytest.raises(ChatConfigError, match="thread_name"):
+            send_reply_in_thread(_SPACE, "", "hello")
+
 
 # ── TestParseChatEvent ────────────────────────────────────────────────────
 
 
 class TestParseChatEvent:
+    _THREAD_NAME = f"{_SPACE}/threads/thread-1"
+
     def _message_body(self, text: str = "hello bot") -> dict:
         return {
             "type": "MESSAGE",
@@ -346,6 +384,7 @@ class TestParseChatEvent:
             "message": {
                 "text": text,
                 "name": f"{_SPACE}/messages/msg-1",
+                "thread": {"name": self._THREAD_NAME},
             },
         }
 
@@ -370,6 +409,7 @@ class TestParseChatEvent:
         assert event["space_name"] == _SPACE
         assert event["action_name"] == ""
         assert event["parameters"] == {}
+        assert event["thread_name"] == self._THREAD_NAME
 
     # P2
     def test_card_clicked_approve_returns_correct_fields(self):

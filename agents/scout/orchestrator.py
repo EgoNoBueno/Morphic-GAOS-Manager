@@ -214,7 +214,6 @@ def _dispatch(state: AgentWorkingMemory) -> AgentWorkingMemory:
                     priority=2,
                     payload={"research_findings": [r["output"] for r in findings]},
                 ),
-                state["project_id"],
             )
         except Exception:
             pass
@@ -273,7 +272,6 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 priority=1,
                 payload={"status": "WORKING", "cost_usd": state.get("cost_usd", 0.0)},
             ),
-            pid,
         )
     except Exception:
         pass
@@ -307,7 +305,6 @@ def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 priority=3,
                 payload={"proposal_id": proposal_id},
             ),
-            pid,
         )
     except Exception:
         pass
@@ -348,7 +345,6 @@ def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 priority=3,
                 payload={"description": last_error, "error_fingerprint": last_error[:64]},
             ),
-            pid,
         )
     except Exception:
         pass

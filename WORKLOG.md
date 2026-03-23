@@ -5,6 +5,93 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-23T10:04-03:00 — Bug 7+8: Silent publish() Failures + Nexus-Prime Boot Secret Validation
+
+### What was done
+Full codebase audit against AI-Autocoding-Rules.md uncovered two critical bugs.
+
+**Bug 7 — publish() 3-arg TypeError (silent failure across 5 orchestrators):**
+11 call sites across Beacon (3), Pursuit (2), Scout (4), Steward (3), and Ledger (3)
+passed `project_id` as a third argument to `publish(topic_name, message)` which only
+accepts 2 parameters (`project_id` is read internally from `settings.GCP_PROJECT_ID`).
+Every call raised `TypeError: publish() takes 2 positional arguments but 3 were given`
+— but the error was silently swallowed by `except Exception: pass` blocks.
+Result: all Pub/Sub messages (heartbeats, handoffs, escalations) from 5 of 6
+sub-orchestrators were silently dropped. Only Foreman had correct 2-arg calls.
+Fix: removed the trailing `pid` argument from all 11 call sites.
+
+**Bug 8 — Nexus-Prime boot() missing secret validation (Rule 9 §7 Step 3):**
+`boot()` did not call `get_secret()` at startup — a missing `GEMINI_API_KEY`
+would only be discovered at first task execution, not at boot. All other
+orchestrators (Beacon confirmed) already implement the fail-fast pattern.
+Fix: added `get_secret("GEMINI_API_KEY", pid)` with `sys.exit(1)` on
+`SecretNotFoundError` or `SecretAccessDenied`, matching Beacon's established pattern.
+
+### Files changed
+- `agents/beacon/orchestrator.py` — Removed trailing `pid` from 3 `publish()` calls
+- `agents/pursuit/orchestrator.py` — Removed trailing `pid` from 2 `publish()` calls
+- `agents/scout/orchestrator.py` — Removed trailing `pid` from 4 `publish()` calls
+- `agents/steward/orchestrator.py` — Removed trailing `pid` from 3 `publish()` calls
+- `agents/ledger/orchestrator.py` — Removed trailing `pid` from 3 `publish()` calls
+- `agents/nexus_prime/orchestrator.py` — Added secret validation block in `boot()`
+
+### Tests
+413/413 passed (full suite in ~581s).
+
+### Audit findings tracked for later
+- 3 tools missing test files: `drive.py`, `google_search.py`, `web_search.py` (Rule 8)
+- `_ALLOWED_IMPORTS` wider than spec (28+ vs ~14 documented)
+- ~40 bare `except Exception: pass` blocks (intentional per SIM105 ignore in pyproject.toml)
+
+### What's next
+- Deploy to Cloud Run with Bug 7+8 fixes
+- Address remaining audit findings (missing tests, allowed imports alignment)
+
+---
+
+## 2026-03-22T20:15-03:00 — Bug 5+6: Chat Thread Routing + Double LLM Call
+
+### What was done
+Diagnosed and fixed two production bugs causing "Nexus-Prime not responding" errors in Google Chat.
+
+**Bug 5 — Thread routing (root cause of "not responding" symptom):**
+`chat_respond()` called `send_threaded_reply(space_name, threadKey=message_name)`.
+`threadKey` is a developer-assigned identifier that only works when the bot originally
+created the thread. User-originated messages have no bot-assigned threadKey →
+`REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD` created a new top-level thread for every reply.
+The user's original thread received no reply → Chat showed "not responding."
+Fix: extract `message.thread.name` (server-assigned, always present on inbound events)
+from `parse_chat_event()` and use new `send_reply_in_thread(space, thread_name, text)`
+that sends with `{"thread": {"name": thread_name}}`.
+
+**Bug 6 — Double LLM call (latency):**
+`CHAT_MESSAGE` routed through `think()` (FAST_MODEL call #1 — deterministic result for
+CHAT_MESSAGE) then `chat_respond()` (FAST_MODEL call #2). Added `CHAT_MESSAGE` fast-path
+in `think()` that skips the model call with `response_mode: "Direct"`, cutting hot-path
+latency roughly in half.
+
+### Files changed
+- `tools/google_chat.py` — Added `thread_name` extraction to both `_parse_legacy_format`
+  and `_parse_addons_format`; added `send_reply_in_thread()` function.
+- `main.py` — Added `"thread_name": event.get("thread_name", "")` to CHAT_MESSAGE payload.
+- `agents/nexus_prime/orchestrator.py` — `chat_respond()` now uses `send_reply_in_thread`
+  when `thread_name` present; `think()` skips LLM for CHAT_MESSAGE.
+- `tests/test_google_chat.py` — Added C17 (`send_reply_in_thread` API shape), C18
+  (raises on empty thread_name); updated P1 to assert `thread_name`; updated `_message_body`
+  to include `thread.name`.
+
+### Tests
+413/413 passed (34/34 for `test_google_chat.py` in 0.90s, full suite in ~676s).
+
+### What's next
+Full codebase alignment audit — completed in next session (see Bug 7+8 entry above).
+
+### What's next
+- Live chat smoke test — send a message to Nexus-Prime and confirm reply lands in same thread
+- Phase 3 tasks (see GAOS-Agent-Spec.md §Phase 3 checklist)
+
+---
+
 ## 2026-03-21T22:17-03:00 — Bug 4: STATUS_UPDATE Heartbeat Self-Loop + Pub/Sub Storm
 
 ### What was done

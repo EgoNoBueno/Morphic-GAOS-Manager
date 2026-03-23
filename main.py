@@ -731,6 +731,7 @@ async def chat(request: Request) -> JSONResponse:
                 "sender_email": event["sender_email"],
                 "space_name": event["space_name"],
                 "message_name": event["message_name"],
+                "thread_name": event.get("thread_name", ""),
             }
     else:
         # Unknown CARD_CLICKED action or unsupported event — ACK silently
