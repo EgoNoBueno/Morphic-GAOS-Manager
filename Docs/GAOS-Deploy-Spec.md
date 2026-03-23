@@ -1222,6 +1222,7 @@ gcloud iam service-accounts add-iam-policy-binding \
 
 # Store the provider resource name as GitHub Secret WIF_PROVIDER:
 echo "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-actions/providers/github-oidc"
+```
 
 ---
 
@@ -1379,8 +1380,6 @@ gcloud run services list --region=$REGION --project=$PROJECT
 5. Run the Phase 4 exit criteria checklist (§19).
 
 > ⚠️ **Warning — `tofu init` required before first `tofu plan`:** The CI/CD pipeline runs `tofu init` automatically in the `plan` job. If you want to run Terraform locally before pushing, run `tofu init -backend-config="bucket=morphic-gaos-tfstate"` from the `infra/` directory first. The `-backend-config` is not hardcoded in `main.tf` so it can be overridden for different environments.
-# (repo → Settings → Secrets and variables → Actions → New repository secret → WIF_PROVIDER)
-```
 
 > ⚠️ **Note — attribute-condition scope:** The `--attribute-condition` locks this WIF provider to
 > tokens issued for `EgoNoBueno/Morphic-GAOS-Manager` only. A fork cannot impersonate `deployer-sa`
@@ -1716,3 +1715,72 @@ Phase 3 is complete — and Phase 4 (production validation) may begin — when *
 - [x] All 408 unit tests passing — zero regressions from all Phase 3 additions ✅ (2026-03-20)
 - [ ] **[Requires GCP]** One-time OpenTofu bootstrap: `morphic-gaos-tfstate` GCS bucket created, `cloud-run-source-deploy` Artifact Registry repo created, `deployer-sa` created with required IAM bindings, WIF pool + OIDC provider created, `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` GitHub Secrets set → first `tofu plan` + `tofu apply` deploys all 7 Cloud Run services (see §9.3)
 - [ ] **[Requires Cloud Run]** Approval Gate Chat-path validated end-to-end: Chat card button tap → `APPROVAL_RESULT` published to Pub/Sub → Nexus-Prime resumes the parked task → `Agent_Approvals` row updated + audit row written to Logs tab (see §14 unchecked item)
+
+---
+
+## 21. Turnkey Deployment Roadmap
+
+This section tracks the five gaps between the current state of the project and a
+fully turnkey, one-command deployment experience (comparable to Nemoclaw or Abacus.ai
+container deployments). Each gap is classified by whether it should be worked now
+(active development) or at Phase 4 exit (pre-ship).
+
+### Gap Assessment
+
+| Gap | Description | Scripts/Files | Status |
+|-----|-------------|---------------|--------|
+| **Gap 3** | Secret provisioning is manual `gcloud` commands | `scripts/setup_secrets.py` | ✅ **Done** — 2026-03-23 |
+| **Gap 4** | `setup_workspace.py` prints IDs but user copies them into `settings.yaml` by hand | `scripts/setup_workspace.py` | ✅ **Done** — 2026-03-23 |
+| **Gap 1** | No CI/CD pipeline — build, push, and `tofu apply` are manual | `.github/workflows/` | ✅ Done (Phase 4) |
+| **Gap 2** | Bootstrap requires manual pre-steps (GCS bucket, GCP APIs) | `scripts/bootstrap.py` | Phase 4 exit |
+| **Gap 5** | No pre-built image in a public registry | CI/CD output | Phase 4 exit (depends on Gap 1) |
+
+### Target new-deployment sequence (all gaps closed)
+
+```
+1. gcloud auth application-default login
+2. python scripts/setup_workspace.py          # Drive/Sheets → auto-writes config/settings.yaml
+3. python scripts/setup_secrets.py            # interactively provisions all Secret Manager secrets
+4. tofu init && tofu apply -var="image_tag=latest"   # all 7 agents live
+```
+
+### Gap 3 — `scripts/setup_secrets.py`
+
+Auto-provisions all Secret Manager secrets and per-secret IAM bindings.
+
+- Secrets requiring user input (GEMINI_API_KEY, GOOGLE_SEARCH_API_KEY, GOOGLE_SEARCH_CX): read
+  via `getpass.getpass()` — never echoed to terminal or shell history.
+- OLLAMA_HOST: prompted with default `http://localhost:11434`.
+- WEBHOOK_HMAC_SECRET: auto-generated via `secrets.token_hex(32)`.
+- WEBHOOK_URL: skipped — created by `scripts/setup_apps_script.py`.
+- Idempotent: skips any secret that already has a version.
+- IAM bindings: applied using the Secret Manager SDK `set_iam_policy` call.
+
+Run:
+```powershell
+python scripts/setup_secrets.py --project morphic-gaos-prod
+```
+
+### Gap 4 — `setup_workspace.py` auto-write
+
+`setup_workspace.py` now auto-writes `config/settings.yaml` from the template
+after creating Drive/Sheets resources:
+- Replaces `<your-spreadsheet-id>` with the live spreadsheet ID.
+- Replaces `<your-drive-folder-id>` with the live Knowledge/ folder ID.
+- Skips the write if `config/settings.yaml` already exists (prints a notice).
+- Pass `--overwrite` to replace an existing `settings.yaml`.
+
+The spec instructions in §4.1 no longer require a manual copy step — the script
+handles it. The printout of IDs is retained for reference.
+
+### Gaps 2 and 5 — Phase 4 exit tasks
+
+These are build/ship concerns, not development concerns. Build them when Phase 4
+exit criteria are otherwise met:
+
+- **Gap 2 (bootstrap script):** Wrap GCS bucket creation + `gcloud services enable`
+  into `scripts/bootstrap.py`. Target audience: new deployments on a blank GCP project.
+  All current provisioning is complete — this script has zero value today.
+
+- **Gap 5 (pre-built image):** Publish `gaos-agent:latest` to a public or
+  customer-accessible registry in the CI/CD apply job. Depends on Gap 1 (done).

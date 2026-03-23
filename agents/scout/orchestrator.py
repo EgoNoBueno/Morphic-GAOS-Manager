@@ -571,7 +571,7 @@ def _inject_knowledge(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
     pid = state["project_id"]
     msg = state.get("incoming_message")
-    mandate_id = msg.task_id if msg else str(uuid.uuid4())
+    mandate_id: str = (msg.task_id if msg else None) or str(uuid.uuid4())
     payload = (msg.payload or {}) if msg else {}
     corroborated = state.get("observation_buffer", [])
     total_found = len(state.get("sub_task_results", []))
@@ -595,7 +595,6 @@ def _inject_knowledge(state: AgentWorkingMemory) -> AgentWorkingMemory:
                         "knowledge_type": "market_intel",
                     },
                 ),
-                pid,
             )
         except Exception as exc:
             _log_cloud(

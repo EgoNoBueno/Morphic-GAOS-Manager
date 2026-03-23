@@ -5,6 +5,61 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-23T12:00-03:00 — Turnkey Deployment Gaps 3 & 4
+
+### What was done
+Identified and closed two developer-friction gaps toward a turnkey deployment experience.
+
+**Gap 4 — `setup_workspace.py` auto-writes `config/settings.yaml`:**
+Previously the script printed spreadsheet ID and Knowledge/ folder ID and required
+the user to copy them manually into `settings.yaml`. The script now:
+- Reads `config/settings.yaml.template`, substitutes both `<your-spreadsheet-id>` and
+  `<your-drive-folder-id>` with the live IDs from the current run, and writes
+  `config/settings.yaml`.
+- Skips the write if `settings.yaml` already exists (prints a notice).
+- Accepts `--overwrite` to replace an existing file.
+- Added `argparse` argument parsing to the script.
+
+**Gap 3 — `scripts/setup_secrets.py` created:**
+New script that provisions all 5 Secret Manager secrets in one run:
+
+| Secret | Source |
+|--------|--------|
+| `GEMINI_API_KEY` | `getpass()` — user types, not echoed |
+| `OLLAMA_HOST` | prompted with default `http://localhost:11434` |
+| `WEBHOOK_HMAC_SECRET` | auto-generated via `secrets.token_hex(32)` |
+| `GOOGLE_SEARCH_API_KEY` | `getpass()` |
+| `GOOGLE_SEARCH_CX` | `getpass()` |
+
+Features: idempotent (skips secrets with existing versions by default), still updates
+IAM bindings on skipped secrets, `--force` flag to add a new version to existing
+secrets, per-secret IAM using Secret Manager SDK `set_iam_policy`, summary table on
+completion. `WEBHOOK_URL` is excluded (created by `setup_apps_script.py`).
+
+**Gaps 1, 2, 5 — deferred to Phase 4 exit:**
+CI/CD pipeline (Gap 1) is already implemented. Bootstrap script (Gap 2) and
+pre-built registry image (Gap 5) deferred — they are ship concerns, not dev concerns.
+
+**Documented in Deploy Spec §21:**
+New section `## 21. Turnkey Deployment Roadmap` added to `GAOS-Deploy-Spec.md`
+with the full gap assessment table, target new-deployment sequence, and per-gap details.
+
+### Files changed
+- `scripts/setup_workspace.py` — added `_write_settings()`, `argparse`, step 7 auto-write
+- `scripts/setup_secrets.py` — new file
+- `Docs/GAOS-Deploy-Spec.md` — new `## 21. Turnkey Deployment Roadmap` section
+
+### Tests
+No test-impacting changes. Setup scripts are in `scripts/` (interactive, exempt from
+auto-test per Rule 18 / Rule 8).
+
+### What's next
+- Run `pytest` to confirm suite is still green (no production code touched)
+- Commit and push
+- Optionally run `setup_secrets.py` to validate the interactive prompts against the live project
+
+---
+
 ## 2026-03-23T10:04-03:00 — Bug 7+8: Silent publish() Failures + Nexus-Prime Boot Secret Validation
 
 ### What was done
@@ -84,9 +139,7 @@ latency roughly in half.
 413/413 passed (34/34 for `test_google_chat.py` in 0.90s, full suite in ~676s).
 
 ### What's next
-Full codebase alignment audit — completed in next session (see Bug 7+8 entry above).
-
-### What's next
+- Full codebase alignment audit — completed in next session (see Bug 7+8 entry above).
 - Live chat smoke test — send a message to Nexus-Prime and confirm reply lands in same thread
 - Phase 3 tasks (see GAOS-Agent-Spec.md §Phase 3 checklist)
 

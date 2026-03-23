@@ -315,10 +315,17 @@ def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 priority=3,
                 payload={"description": last_error, "error_fingerprint": last_error[:64]},
             ),
-            pid,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", "unknown"),
+            f"publish to {_OUTBOUND_TOPIC} failed (escalation): {exc}",
+            "ERROR",
+        )
+        raise
     _write_heartbeat(
         _AGENT_ID,
         pid,

@@ -22,7 +22,9 @@ Prerequisites:
 
 from __future__ import annotations
 
+import argparse
 import sys
+from pathlib import Path
 
 import google.auth
 import gspread
@@ -214,7 +216,43 @@ def setup_tabs(gc: gspread.Client, spreadsheet_id: str) -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 
+def _write_settings(sheet_id: str, knowledge_id: str, *, overwrite: bool = False) -> None:
+    """Write config/settings.yaml from the template, substituting live IDs.
+
+    Args:
+        sheet_id: The Google Sheets spreadsheet ID created by this run.
+        knowledge_id: The Drive Knowledge/ folder ID created by this run.
+        overwrite: If False (default), skip the write when settings.yaml already exists.
+    """
+    repo_root = Path(__file__).parent.parent
+    template_path = repo_root / "config" / "settings.yaml.template"
+    settings_path = repo_root / "config" / "settings.yaml"
+
+    if settings_path.exists() and not overwrite:
+        print(
+            "\nconfig/settings.yaml already exists — skipping auto-write.\n"
+            "Re-run with --overwrite to replace it, or copy the IDs above manually."
+        )
+        return
+
+    preexisting = settings_path.exists()
+    content = template_path.read_text(encoding="utf-8")
+    content = content.replace("<your-spreadsheet-id>", sheet_id)
+    content = content.replace("<your-drive-folder-id>", knowledge_id)
+    settings_path.write_text(content, encoding="utf-8")
+    action = "updated" if preexisting else "created"
+    print(f"\nconfig/settings.yaml {action} — IDs written from this run.")
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Provision the Morphic-G AOS Google Workspace.")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite config/settings.yaml if it already exists.",
+    )
+    args = parser.parse_args()
+
     print("Authenticating via ADC...")
     drive, gc = _get_clients()
 
@@ -247,14 +285,17 @@ def main() -> None:
         share_with_sa(drive, root_id, email, role="writer")
         print(f"  + {email}")
 
-    # 6. Print settings.yaml values
+    # 6. Print settings.yaml values for reference
     print("\n" + "=" * 60)
-    print("SUCCESS — add these to config/settings.yaml:")
+    print("SUCCESS — IDs from this run:")
     print("=" * 60)
-    print(f"  sheet.workbook_id:              {sheet_id}")
-    print(f"  projects.default.sheet_id:      {sheet_id}")
+    print(f"  sheet.workbook_id:                {sheet_id}")
+    print(f"  projects.default.sheet_id:        {sheet_id}")
     print(f"  projects.default.drive_folder_id: {knowledge_id}")
     print("=" * 60)
+
+    # 7. Auto-write config/settings.yaml from template
+    _write_settings(sheet_id, knowledge_id, overwrite=args.overwrite)
 
 
 if __name__ == "__main__":
