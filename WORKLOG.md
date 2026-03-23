@@ -5,6 +5,48 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-23T16:30-03:00 — Rule 8 Compliance: Test Files for drive.py, google_search.py, web_search.py
+
+### What was done
+Added the three missing test files flagged during the Bug 7+8 audit (Rule 8: every tool
+in `tools/` must have a corresponding test file).
+
+**`tests/test_drive.py`** — 21 tests covering:
+- `read_file`: happy path, str/bytes return, file not found, path traversal block,
+  Drive 500 → DriveReadError, Drive 403 → DrivePermissionError, no folder configured
+- `write_file`: creates new file, updates existing, 500 → DriveWriteError, 403 →
+  DrivePermissionError, empty content
+- `copy_file`: happy path, source not found, 500 → DriveWriteError, 403 → DrivePermissionError
+- `list_folder`: happy path, not found, empty folder, 403 in collect, recursive subfolder
+
+**`tests/test_google_search.py`** — 23 tests covering:
+- `search`: happy path, snippet/date extraction, no items key, num cap at 10/min 1,
+  empty/whitespace query, SecretNotFoundError, SecretAccessDenied, HTTP 429/403/500,
+  TimeoutException, ConnectError, JSON decode failure
+- `research_topic`: empty queries, merged results, URL deduplication, failed query skipped,
+  max_queries cap, blank strings skipped, all-queries-fail returns empty list
+
+**`tests/test_web_search.py`** — 14 tests covering:
+- Happy path: abstract + source, direct answer, related topics, max_results cap,
+  empty source label, topics without Text skipped, all fields combined
+- Empty/invalid input: empty string, whitespace, no content, empty Text fields
+- Network failure: TimeoutException, ConnectError, HTTPStatusError, JSON decode error
+
+### Files changed
+- `tests/test_drive.py` — new (21 tests)
+- `tests/test_google_search.py` — new (23 tests)
+- `tests/test_web_search.py` — new (14 tests)
+
+### Tests
+471/471 passed (full suite in ~581s). New tests: 58/58 in 1.09s.
+
+### What's next
+- Rule 8 is now satisfied for all 14 tools in `tools/`
+- Remaining open Phase 4 exit items: Approval Gate Chat-path E2E, Vision path E2E,
+  billing ≤ $5/month verification (§19 checklist)
+
+---
+
 ## 2026-03-23T12:00-03:00 — Turnkey Deployment Gaps 3 & 4
 
 ### What was done
