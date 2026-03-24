@@ -1545,11 +1545,23 @@ Any occurrence of the following in the proposed code blocks deployment:
 
 #### Import Allowlist
 
-Only the following top-level module names are permitted in `import` and `from … import` statements:
+Only the following modules are permitted in `import` and `from … import` statements. The list is defined as `_ALLOWED_IMPORTS` in `agents/__init__.py`. Prefix-matching is used — `google.cloud.bigquery` covers `from google.cloud.bigquery import ...` but not arbitrary `google.*` modules that are not listed.
 
-`google`, `vertexai`, `langchain`, `pydantic`, `datetime`, `json`, `re`, `math`, `typing`, `collections`, `itertools`, `functools`, `logging`, `gspread`
+**Standard library:**
+`datetime`, `json`, `math`, `re`, `uuid`, `hashlib`, `time`, `typing`, `dataclasses`, `collections`, `functools`, `itertools`, `pathlib`, `enum`, `abc`, `copy`, `textwrap`
 
-> **Updating the allowlist:** Any addition requires a Priority-4 owner approval proposal first. The allowlist is stored in `settings.yaml` under `code_safety.allowed_imports` so it can be updated without modifying Apps Script.
+**Google Cloud SDKs:**
+`google.cloud.bigquery`, `google.cloud.logging`, `google.cloud.pubsub`, `google.cloud.secretmanager`, `google.cloud.storage`, `google.adk`, `google.genai`, `google.auth`
+
+**Third-party:**
+`gspread`, `pydantic`, `yaml`, `langgraph`
+
+**Internal (GAOS):**
+`config`, `models`, `tools`, `agents`
+
+> **Updating the allowlist:** Any addition requires a Priority-4 owner approval proposal first. The allowlist is hardcoded in `agents/__init__.py` (`_ALLOWED_IMPORTS`). Updating it requires a code change and a passing test suite run.
+
+> ⚠️ **Warning — spec divergence (resolved 2026-03-23):** The original allowlist documented ~14 entries (`google`, `vertexai`, `langchain`, etc.) and incorrectly stated the list was config-driven via `settings.yaml`. The implementation expanded the list to 33 entries covering all stdlib modules agents use, GCP SDK namespaces, and internal packages — and is hardcoded, not config-driven. This spec entry now reflects the live implementation. `vertexai` and `langchain` (listed in the original spec) are not in the current allowlist; `langchain` was replaced by `langgraph`.
 
 #### Testing Requirements
 

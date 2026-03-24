@@ -5,6 +5,47 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-23T21:38-03:00 — Audit Close: _ALLOWED_IMPORTS Spec Alignment
+
+### What was done
+Investigated the open audit finding from the Bug 7+8 session:
+`_ALLOWED_IMPORTS wider than spec (28+ vs ~14 documented)`.
+
+**Finding:** `GAOS-Manager-Spec.md §15.4` documented only 14 top-level module names
+(`google`, `vertexai`, `langchain`, etc.) and incorrectly stated the list was
+config-driven via `settings.yaml`. The actual `_ALLOWED_IMPORTS` set in
+`agents/__init__.py` has 33 entries, split across:
+- Standard library (17): `datetime`, `json`, `math`, `re`, `uuid`, `hashlib`, `time`,
+  `typing`, `dataclasses`, `collections`, `functools`, `itertools`, `pathlib`, `enum`,
+  `abc`, `copy`, `textwrap`
+- GCP SDKs (8): specific `google.cloud.*` namespaces, `google.adk`, `google.genai`,
+  `google.auth`
+- Third-party (4): `gspread`, `pydantic`, `yaml`, `langgraph`
+- Internal (4): `config`, `models`, `tools`, `agents`
+
+All 33 entries are legitimate. None are spurious. The list grew organically as agents
+needed more stdlib modules and GCP SDK namespaces — no trimming required.
+
+**Resolution (Rule 13 — spec must match reality):** Updated `GAOS-Manager-Spec.md §15.4`
+Import Allowlist section to document all 33 entries, grouped by category, with a warning
+callout about the original spec divergence and a correction note that the list is
+hardcoded in `agents/__init__.py`, not in `settings.yaml`.
+
+### Files changed
+- `Docs/GAOS-Manager-Spec.md` — §15.4 Import Allowlist updated to reflect actual 33-entry set
+
+### Tests
+No code changes — spec-only update. Suite remains at 471/471.
+
+### What's next
+- Remaining open Phase 4 exit items (all require live Cloud Run + manual interaction):
+  - Approval Gate Chat-path E2E: Chat card → tap Approve → verify Pub/Sub + Sheet
+  - Vision path E2E: send image → confirm extraction → Blueprint Doc → link reply
+  - Billing ≤ $5/month verification (7-day observation window)
+  - `VERTEX_AGENT_ENDPOINT` Script Property update in Apps Script (manual)
+
+---
+
 ## 2026-03-23T16:30-03:00 — Rule 8 Compliance: Test Files for drive.py, google_search.py, web_search.py
 
 ### What was done
