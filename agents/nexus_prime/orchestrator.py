@@ -1749,7 +1749,8 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                 send_threaded_reply(
                     space_name,
                     task_id,
-                    f"\U0001f9e0 Vision received but Blueprint generation failed: {exc}",
+                    "\U0001f9e0 Vision received but Blueprint generation failed. "
+                    "Our team has been notified.",
                 )
             except Exception:
                 pass
@@ -1863,7 +1864,7 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         from tools.google_chat import send_threaded_reply
 
         try:
-            thread_key = msg.task_id
+            thread_key = task_id
             if doc_url:
                 reply_text = (
                     f"\U0001f9e0 Vision received and Blueprint Doc created!\n"
