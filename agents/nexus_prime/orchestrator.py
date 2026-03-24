@@ -1781,6 +1781,7 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     blueprint_id = task_id  # use task_id as stable blueprint identifier
     doc_id = ""
     doc_url = ""
+    doc_creation_error = ""
     try:
         doc_id = create_document(
             title=doc_title,
@@ -1793,6 +1794,7 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             "nexus-prime", project_id, "task", task_id, f"vision_blueprint: created doc {doc_id}"
         )
     except Exception as exc:
+        doc_creation_error = str(exc)
         _log_cloud(
             "nexus-prime",
             project_id,
@@ -1870,8 +1872,8 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                 )
             else:
                 reply_text = (
-                    "\U0001f9e0 Vision received but Blueprint Doc creation failed. "
-                    "Please check the logs or try again."
+                    "\U0001f9e0 Vision received but Blueprint Doc creation failed.\n"
+                    f"Error: {doc_creation_error or 'unknown'}"
                 )
             send_threaded_reply(space_name, thread_key, reply_text)
         except Exception as exc:
