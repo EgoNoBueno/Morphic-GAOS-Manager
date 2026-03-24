@@ -66,7 +66,8 @@ def _get_credentials() -> Any:
         A google.oauth2 Credentials object with Docs + Drive scopes.
     """
     import google.auth
-    from google.auth import impersonated_credentials
+    from google.auth import iam as google_auth_iam
+    from google.auth.transport import requests as google_auth_requests
 
     settings = get_settings()
     docs_cfg = getattr(settings, "docs", None)
@@ -77,16 +78,33 @@ def _get_credentials() -> Any:
         return service_account.Credentials.from_service_account_file(key_path, scopes=_DOCS_SCOPES)
 
     if dwd_subject:
-        # Cloud Run: SA has cloud-platform ADC + serviceAccountTokenCreator on itself.
-        # impersonated_credentials + subject = DWD: generates a token as the Workspace
-        # user so Drive/Docs API calls succeed (SA identity has no Drive storage quota).
-        source_creds, _ = google.auth.default()
+        # Cloud Run DWD: use IAM signBlob API to create a JWT with sub=workspace_user,
+        # then exchange it for an access token.  impersonated_credentials.Credentials
+        # does NOT honour the `subject` param — the token has no `sub` claim, so the
+        # SA acts as itself (no Drive quota → 403).  The correct path is:
+        #   1. ADC (Cloud Run SA) → refresh → iam.Signer (signBlob)
+        #   2. service_account.Credentials(signer, subject=user) → DWD token
+        # Requires: DWD configured in Workspace Admin for the SA's OAuth client ID,
+        # and roles/iam.serviceAccountTokenCreator on itself.
+        source_creds, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/iam"],
+        )
+        request = google_auth_requests.Request()
+        source_creds.refresh(request)
+
         gcp_project: str = getattr(getattr(settings, "gcp", None), "project_id", "") or ""
         sa_email = f"nexus-prime-sa@{gcp_project}.iam.gserviceaccount.com" if gcp_project else ""
-        return impersonated_credentials.Credentials(
-            source_credentials=source_creds,
-            target_principal=sa_email,
-            target_scopes=_DOCS_SCOPES,
+
+        signer = google_auth_iam.Signer(
+            request=request,
+            credentials=source_creds,
+            service_account_email=sa_email,
+        )
+        return service_account.Credentials(
+            signer=signer,
+            service_account_email=sa_email,
+            token_uri="https://oauth2.googleapis.com/token",
+            scopes=_DOCS_SCOPES,
             subject=dwd_subject,
         )
 
