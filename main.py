@@ -673,8 +673,8 @@ async def chat(request: Request) -> JSONResponse:
                     send_threaded_reply(
                         event["space_name"],
                         _thread_key,
-                        "\U0001f4f8 I received your image but couldn't download it. "
-                        "Please try again or describe your vision in text.",
+                        f"\U0001f4f8 Image download failed: {exc}\n"
+                        f"(uri={'<empty>' if not download_uri else download_uri[-40:]})",
                     )
                 except Exception:
                     pass
