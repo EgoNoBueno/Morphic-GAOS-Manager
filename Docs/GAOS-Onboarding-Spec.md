@@ -822,6 +822,7 @@ gcloud secrets versions disable $OLD_VERSION --secret=GEMINI_API_KEY --project=$
 |-------|----------|---------|
 | Infrastructure provisioning (low-level) | `GAOS-Deploy-Spec.md` | §1–§13 |
 | Privacy topology options | `GAOS-Privacy-Spec.md` | §4–§5 |
+| Zero trust security policy (identity, gates, incidents) | `GAOS-Security-Policy.md` | All |
 | Model alias definitions | `GAOS-Manager-Spec.md` | §11 |
 | Approval Gate mechanics | `GAOS-Manager-Spec.md` | §14 |
 | Steward identity file | `Docs/agents/steward.md` | All |

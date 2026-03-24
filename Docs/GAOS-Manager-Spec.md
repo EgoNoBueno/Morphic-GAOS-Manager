@@ -1332,6 +1332,8 @@ function setupProtections() {
 
 ## 15. Governance & Security
 
+> **Canonical security policy:** `GAOS-Security-Policy.md` is the authoritative zero trust policy document for all agentic systems in this project. It defines identity requirements, prompt injection controls, code gate specifications, human-in-the-loop policy, data protection, observability requirements, threat detection thresholds, and the DevSecOps integration checklist. This section (§15) documents the *implementation* of those controls.
+
 | Control | Implementation |
 |---------|---------------|
 | **Secrets Management** | Google Secret Manager — see Section 15.1 |

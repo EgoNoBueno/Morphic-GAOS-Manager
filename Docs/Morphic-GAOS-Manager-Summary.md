@@ -116,7 +116,7 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 **Resources required:** Cloud Run (scale-to-zero), Ollama (local), Cloud Scheduler, all free-tier Google services.
 
 #### Governance & Security
-**What it is:** A layered security architecture covering: secret management (Google Secret Manager), webhook authentication (HMAC-SHA256), approval access control (protected Sheet ranges + tier-based RBAC), code injection prevention (SHA-256 hash pinning + static analysis + import allowlist), and VPC sandboxing.
+**What it is:** A layered security architecture covering: secret management (Google Secret Manager), webhook authentication (HMAC-SHA256), approval access control (protected Sheet ranges + tier-based RBAC), code injection prevention (SHA-256 hash pinning + static analysis + import allowlist), and VPC sandboxing. **See `GAOS-Security-Policy.md`** for the canonical zero trust policy document that formalizes all of these controls.
 **Why it exists:** The approval queue is the most sensitive surface in the system — an approved row deploys Python code to production. Every layer is designed to ensure that only legitimate, unmodified code, approved by the right person, ever reaches Vertex AI.
 **Resources required:** Google Secret Manager, Google Apps Script (protected ranges, `onChange` trigger, `syncSkillsToVertex`), Vertex AI sandbox, Cloud Logging.
 
@@ -346,7 +346,21 @@ Every agent in the hierarchy inherits the **Strategic Architect** soul when form
 
 ---
 
-### 9. `GAOS-Privacy-Spec.md` — Privacy & Data Sovereignty
+### 9. `GAOS-Security-Policy.md` — Zero Trust Security Policy for Agentic Systems
+
+*Organizational security policy governing all seven GAOS orchestrators, all tools, Apps Script components, and any generated or approved skills deployed to Vertex AI.*
+
+**Derived from:** IBM/Anthropic guidance on architecting secure enterprise AI agents, mapped to the specific threat model and implementation of this system.
+
+**Why a separate policy document:** Agentic systems require a distinct security posture from traditional software. Probabilistic outputs cannot be exhaustively reviewed at compile time; autonomous tool execution can chain calls the developer never anticipated; and a compromised agent amplifies attacks at machine speed. Zero Trust — never trust, always verify — is the correct mental model, applied to agents, their inputs, their tools, and their outputs.
+
+**Coverage:** Non-human identity management (7 dedicated SAs, no shared credentials, no key files), principle of least privilege, prompt injection prevention (structural separation + provenance markers + injection signal detection), three static-analysis code gates (`validate_code_safety()` pattern gate + import allowlist + SHA-256 integrity pinning), human-in-the-loop Approval Gate, five-tier priority escalation ladder, data classification and retention policy, structured logging and reasoning trace requirements, network isolation (all 7 services `--no-allow-unauthenticated`), real-time alert thresholds (`HMAC_FAILURE`, `CODE_HASH_MISMATCH`, `APPROVAL_RBAC_BLOCK`, etc.), configuration drift detection, and incident response path (Priority-5 → Chat alert → SA revocation).
+
+**Key gaps called out honestly:** Tool response provenance markers (§2.2) are currently a SHOULD for Phase 4, required for Phase 5. Access-pattern anomaly detection (§8.3) is currently manual.
+
+---
+
+### 10. `GAOS-Privacy-Spec.md` — Privacy & Data Sovereignty
 
 *Frank assessment of what data the AOS stores and transmits, and a menu of mitigations with explicit effort/compliance labels.*
 
@@ -358,7 +372,7 @@ Every agent in the hierarchy inherits the **Strategic Architect** soul when form
 
 ---
 
-### 10. `GAOS-Skill-Compliance-Spec.md` — External Skill Review Process
+### 11. `GAOS-Skill-Compliance-Spec.md` — External Skill Review Process
 
 *Mandatory review checklist for any externally sourced Python module before it is integrated into the AOS environment.*
 
@@ -370,7 +384,7 @@ A "skill" in this context is any tool module (`tools/`), agent class, or support
 
 ---
 
-### 11. Agent Identity Files (`Docs/agents/`)
+### 12. Agent Identity Files (`Docs/agents/`)
 
 *One Markdown file per domain orchestrator. This file is loaded verbatim as the agent's system prompt at the start of every session — it is who the agent thinks it is.*
 
@@ -410,7 +424,7 @@ Scout implements a recursive deep-research pipeline (Phase 2.5 Step 6): when it 
 
 ---
 
-### 12. Context Trio Files (`Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`)
+### 13. Context Trio Files (`Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`)
 
 *Three owner-authored Markdown files that act as standing orders for every agent in the system — injected automatically into every agent's system prompt at boot via `_load_identity_file()`.*
 
@@ -445,6 +459,7 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 | `Docs/GAOS-Skill-Compliance-Spec.md` | External skill review process before AOS integration | ~298 lines |
 | `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 14 modules) | ~893 lines |
 | `Docs/GAOS-Persona-Spec.md` | AOS soul ("The Strategic Architect"), `think` node spec, tone standard | ~297 lines |
+| `Docs/GAOS-Security-Policy.md` | Zero trust security policy — identity, code gates, prompt injection, threat detection, incident response | ~400 lines |
 | `Docs/GAOS-Privacy-Spec.md` | Cloud data exposure, privacy risk analysis, and mitigation strategies | ~260 lines |
 | `Docs/GAOS-Project-Glossary.md` | Canonical glossary of all abbreviations and technical terms | ~157 lines |
 | `Docs/GAOS-Doctor.md` | Health-check runbook for diagnosing deployment and runtime issues | ~55 lines |

@@ -6,6 +6,7 @@
 >
 > **This is not a compliance certification.** It is an honest map of the risk surface and a menu of tools to reduce it.
 > **Prerequisites:** `GAOS-Deploy-Spec.md` (infrastructure), `GAOS-Manager-Spec.md` §9 (cost profile), `GAOS-Agent-Spec.md` §2.2 (`AgentInput` schema).
+> **Related policy:** `GAOS-Security-Policy.md` — zero trust policy covering identity, code gates, prompt injection controls, human-in-the-loop requirements, threat detection thresholds, and incident response. Read alongside this document for the full security picture.
 
 ---
 

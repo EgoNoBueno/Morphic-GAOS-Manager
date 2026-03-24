@@ -5,6 +5,65 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-23T22:24-03:00 — Security Policy + E2E Script + Doc Cross-References
+
+### What was done
+
+**`GAOS-Security-Policy.md` created:**
+New document derived from IBM/Anthropic zero trust guidance for agentic systems,
+mapped to the actual GAOS implementation. Covers 11 sections:
+- §1 Identity & access management (7 dedicated SAs, no key files, least privilege)
+- §2 Prompt injection prevention (structural separation, provenance markers, injection signals)
+- §3 Three code safety gates (pattern gate, import allowlist, SHA-256 integrity pinning)
+- §4 Human-in-the-loop controls (Approval Gate mandate, 5-tier priority escalation, hard-stop behavior)
+- §5 Data protection (classification table, residency, DLP signals, retention)
+- §6 Observable traces & audit logging (`_log_cloud()` mandate, MonologueFrame, cross-domain tracing)
+- §7 Boundary enforcement (network isolation, acceptable agency scope, topic ownership)
+- §8 Threat detection & response (alert thresholds, drift detection, anomaly baseline, incident response)
+- §9 DevSecOps integration (per-phase security controls mapped to the agent lifecycle)
+- §10 Compliance posture table
+- §11 Policy maintenance rules
+
+Two honest gaps called out: provenance markers on tool responses (SHOULD Phase 4,
+required Phase 5) and access-pattern anomaly detection (currently manual).
+
+**`scripts/_sync_e2e_test.py` rewritten:**
+Replaced 30-line token-from-env stub with a full §4d Approval Gate E2E script:
+1. Writes minimal test proposal row to Agent_Approvals (Status=Pending, SHA256 set)
+2. Obtains OIDC token via `gcloud auth print-identity-token --impersonate-service-account`
+3. POSTs proposal to nexus-prime `/sync`
+4. Polls Agent_Approvals until Status changes from Pending (PASS=Deployed, FAIL=else)
+5. Cleans up test row; exits 0/1
+
+**Doc cross-references updated (Rule 13):**
+- `GAOS-Manager-Spec.md` §15 — added callout pointing to policy as canonical source
+- `GAOS-Privacy-Spec.md` prerequisites — added `GAOS-Security-Policy.md` as related policy
+- `GAOS-Onboarding-Spec.md` reference index — added security policy row
+- `Morphic-GAOS-Manager-Summary.md` — added §9 entry for security policy doc,
+  renumbered §§10–13, added row to doc index table, updated Governance & Security
+  description to reference the new policy
+
+### Files changed
+- `Docs/GAOS-Security-Policy.md` — new (404 lines)
+- `scripts/_sync_e2e_test.py` — rewritten (224 lines)
+- `Docs/GAOS-Manager-Spec.md` — §15 header callout added
+- `Docs/GAOS-Privacy-Spec.md` — prerequisites block updated
+- `Docs/GAOS-Onboarding-Spec.md` — reference index row added
+- `Docs/Morphic-GAOS-Manager-Summary.md` — §9 entry + doc index + governance description
+
+### Tests
+No code changes — suite remains at 471/471.
+
+### What's next
+- Phase 4 E2E items (require live Cloud Run + manual interaction):
+  - `VERTEX_AGENT_ENDPOINT` Script Property: Apps Script editor → Project Settings →
+    Script Properties → add key with nexus-prime Cloud Run URL
+  - Approval Gate Chat-path E2E: run `python scripts/_sync_e2e_test.py` after above
+  - Vision path E2E: send image to Nexus-Prime Chat bot
+  - Billing ≤ $5/month: check GCP Billing after 7-day observation window
+
+---
+
 ## 2026-03-23T21:38-03:00 — Audit Close: _ALLOWED_IMPORTS Spec Alignment
 
 ### What was done
