@@ -53,19 +53,42 @@ def _get_credentials() -> Any:
     """
     Return Google OAuth2 credentials for the Docs and Drive APIs.
 
-    Tries service account key first (settings.docs.service_account_key),
-    then falls back to Application Default Credentials.
+    Resolution order:
+    1. Service account key file (settings.docs.service_account_key) — local dev override.
+    2. Domain-Wide Delegation (settings.docs.dwd_subject) — Cloud Run production path.
+       Uses impersonated_credentials to impersonate the configured Workspace user so the
+       SA can create Drive/Docs resources in that user's account.  Requires DWD to be
+       configured in Google Workspace Admin > Security > API Controls > Domain-wide
+       Delegation for the nexus-prime-sa OAuth client ID (106746764104037891386).
+    3. ADC with explicit scopes — local dev fallback (gcloud application-default login).
 
     Returns:
         A google.oauth2 Credentials object with Docs + Drive scopes.
     """
+    import google.auth
+    from google.auth import impersonated_credentials
+
     settings = get_settings()
-    key_path: str = getattr(getattr(settings, "docs", None), "service_account_key", "") or ""
+    docs_cfg = getattr(settings, "docs", None)
+    key_path: str = getattr(docs_cfg, "service_account_key", "") or ""
+    dwd_subject: str = getattr(docs_cfg, "dwd_subject", "") or ""
 
     if key_path:
         return service_account.Credentials.from_service_account_file(key_path, scopes=_DOCS_SCOPES)
 
-    import google.auth
+    if dwd_subject:
+        # Cloud Run: SA has cloud-platform ADC + serviceAccountTokenCreator on itself.
+        # impersonated_credentials + subject = DWD: generates a token as the Workspace
+        # user so Drive/Docs API calls succeed (SA identity has no Drive storage quota).
+        source_creds, _ = google.auth.default()
+        gcp_project: str = getattr(getattr(settings, "gcp", None), "project_id", "") or ""
+        sa_email = f"nexus-prime-sa@{gcp_project}.iam.gserviceaccount.com" if gcp_project else ""
+        return impersonated_credentials.Credentials(
+            source_credentials=source_creds,
+            target_principal=sa_email,
+            target_scopes=_DOCS_SCOPES,
+            subject=dwd_subject,
+        )
 
     creds, _ = google.auth.default(scopes=_DOCS_SCOPES)
     return creds
