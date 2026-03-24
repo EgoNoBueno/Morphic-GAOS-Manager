@@ -28,7 +28,7 @@ The system is designed to run for roughly **$2.50 per month** in cloud costs by 
 
 6. **Layered Memory** — Scratchpad → BigQuery (episodic) → Sheets staging buffer → Vertex AI Memory Bank (long-term). Agents propose learnings; Nexus-Prime promotes them to permanent memory only after owner approval.
 
-**Current State (Phases 1–3 complete, Phase 4 in progress):** All 7 orchestrators, the full tool layer (14 modules including `google_chat.py`, `vertex_search.py`, `google_docs.py`, and `google_search.py`), and a **408-test suite** are built and passing. Phases 1 through 3 are complete: all 7 Cloud Run services are deployed, the Approval Gate Chat-path E2E is validated (5 live approval proposals delivered via Google Chat), and the `think` node, vision hub, and full approval loop are live. Phase 4 — production bootstrap validation — is in progress; cost/security verification and the GAOS-Doctor checklist remain.
+**Current State (Phases 1–3 complete, Phase 4 in progress):** All 7 orchestrators, the full tool layer (14 modules including `google_chat.py`, `vertex_search.py`, `google_docs.py`, and `google_search.py`), and a **483-test suite** are built and passing. Phases 1 through 3 are complete: all 7 Cloud Run services are deployed, the Approval Gate Chat-path E2E is validated (5 live approval proposals delivered via Google Chat), and the `think` node, vision hub, full approval loop, and two Phase 3 reactive routing nodes (`market_watchdog`, `roi_optimizer`) are live. Phase 4 — production bootstrap validation — is in progress; cost/security verification and the GAOS-Doctor checklist remain.
 
 ---
 
@@ -91,7 +91,7 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 **Resources required:** Ollama (local machine), Google Gemini API, `config/settings.yaml`.
 
 #### A2A Communication Protocol
-**What it is:** A standardized message envelope (`A2AMessage`) with typed fields — source agent, target agent, message type, priority, payload, project ID, correlation ID. All agent-to-agent communication goes through this envelope on Cloud Pub/Sub. The `MessageType` enum has 22 values covering the full operational surface: status updates, task routing, data exchange, alerts, escalation, approval flow (`APPROVAL_REQUEST` / `APPROVAL_RESULT`), knowledge promotion, self-evolution, project registry changes, system broadcasts, the Cloud Scheduler TTL sweep (`TTL_SWEEP`) and nightly archive (`NIGHTLY_ARCHIVE`), and 8 Phase 2.5 conversation and intelligence types (`CHAT_MESSAGE`, `DAILY_SYNC`, `VISION_SUBMITTED`, `PLAN_REVIEW`, `COMMENT_RECEIVED`, `RESEARCH_MANDATE`, `SKILL_REQUEST`, `KNOWLEDGE_INJECTION`).
+**What it is:** A standardized message envelope (`A2AMessage`) with typed fields — source agent, target agent, message type, priority, payload, project ID, correlation ID. All agent-to-agent communication goes through this envelope on Cloud Pub/Sub. The `MessageType` enum has 24 values covering the full operational surface: status updates, task routing, data exchange, alerts, escalation, approval flow (`APPROVAL_REQUEST` / `APPROVAL_RESULT`), knowledge promotion, self-evolution, project registry changes, system broadcasts, the Cloud Scheduler TTL sweep (`TTL_SWEEP`) and nightly archive (`NIGHTLY_ARCHIVE`), 8 Phase 2.5 conversation and intelligence types (`CHAT_MESSAGE`, `DAILY_SYNC`, `VISION_SUBMITTED`, `PLAN_REVIEW`, `COMMENT_RECEIVED`, `RESEARCH_MANDATE`, `SKILL_REQUEST`, `KNOWLEDGE_INJECTION`), and 2 Phase 3 reactive event types (`STOCK_INSUFFICIENT`, `DEAL_CLOSED`).
 **Why it exists:** Standardization means any agent can be replaced or updated without changing the messaging layer. The `correlation_id` links related messages across a multi-step workflow for audit traceability.
 **Resources required:** Cloud Pub/Sub, Pydantic.
 
@@ -310,6 +310,7 @@ This is the construction counterpart to the behavioral description in `GAOS-Mana
 - Handles **project namespace initialization**: when a new row appears in the Project Registry with status `Active`, Nexus-Prime creates the Sheet tabs, Drive folder, and Pub/Sub topics for the new project.
 - Owns the `/sync` endpoint on the Cloud Run service — the Apps Script `syncSkillsToVertex` calls this endpoint to promote an approved skill to Vertex AI after the owner's approval.
 - Defines the **cross-domain conflict resolution** policy: when two orchestrators publish contradictory states (e.g., Pursuit quotes a product Foreman has suspended), Nexus-Prime is the arbitrator.
+- Implements two **Phase 3 reactive routing nodes** (no LLM, no data mutation): **`market_watchdog`** — receives `STOCK_INSUFFICIENT` from Foreman and immediately publishes a priority-4 ALERT to Scout to find alternative sourcing; **`roi_optimizer`** — receives `DEAL_CLOSED` from Pursuit, computes gross margin `(revenue − cogs) / revenue`, and publishes a priority-3 `low_margin` ALERT to Beacon if margin falls below 20%.
 
 **Resources required:** Google ADK, LangGraph, all 8 Pub/Sub topics, Google Sheets (all tabs), Vertex AI Memory Bank (write access), Google Drive (write access via Nexus-Prime service account).
 
@@ -396,9 +397,9 @@ Tracks every financial transaction — invoices, expenses, payables, receivables
 *Key dependency:* Listens to Pursuit (deal-closed events trigger invoice creation) and Foreman (fulfillment-confirmed events close AR entries).
 
 #### Beacon — Marketing Agent (`beacon.md`)
-Monitors campaign performance across all channels, tracks ad spend against budget, and surfaces underperforming campaigns. It owns the Marketing-related Sheet tabs. Before committing any new spend, it must query Ledger for the available budget balance — it cannot authorize spending that Ledger has not confirmed is available.
+Monitors campaign performance across all channels, tracks ad spend against budget, and surfaces underperforming campaigns. It owns the Marketing-related Sheet tabs. Before committing any new spend, it must query Ledger for the available budget balance — it cannot authorize spending that Ledger has not confirmed is available. When Nexus-Prime's `roi_optimizer` detects a low-margin deal, it sends Beacon a `low_margin` ALERT; Beacon front-queues a `lead_source_roi_analysis` task to identify which lead source produced the low-margin customer.
 
-*Key dependency:* Gets win/loss data from Pursuit for campaign ROI calculations. Gets market signals from Scout for targeting recommendations.
+*Key dependency:* Gets win/loss data from Pursuit for campaign ROI calculations. Gets market signals from Scout for targeting recommendations. Receives `low_margin` ALERTs from Nexus-Prime when deal margin falls below 20%.
 
 #### Pursuit — Sales Agent (`pursuit.md`)
 Manages the sales pipeline from lead scoring through quote generation to deal close. It owns the `Sales by Product` tab. It drafts emails and quotes but cannot send anything — all outbound communications require an approval. It watches Foreman's stock alerts and must suspend quoting any product that drops below threshold.
@@ -420,7 +421,7 @@ Monitors competitors, tracks market trends, identifies sourcing alternatives, an
 
 Scout implements a recursive deep-research pipeline (Phase 2.5 Step 6): when it receives a `RESEARCH_MANDATE` Pub/Sub message, it routes to the `_discover` node, which generates LLM-driven search queries, calls `tools/google_search.py` up to `max_search_depth` levels (default 3, max 15 queries), and accumulates results. Findings corroborated across ≥ 5 independent sources (confidence ≥ 0.70) are held in the observation buffer and published as `KNOWLEDGE_INJECTION` events. If a `blueprint_doc_id` is present in the mandate payload, Scout appends a Section E Market Intelligence block directly to the Blueprint Doc.
 
-*Key dependencies:* When Foreman detects a stockout, Scout is automatically tasked to find alternative sourcing options within 48 hours. Nexus-Prime triggers deep research by publishing `RESEARCH_MANDATE` — Scout replies with `KNOWLEDGE_INJECTION`.
+*Key dependencies:* When Foreman detects a stockout, Nexus-Prime's `market_watchdog` node receives the `STOCK_INSUFFICIENT` event and immediately dispatches a priority-4 `stock_insufficient` ALERT to Scout — Scout finds alternative sourcing without waiting for a manual `RESEARCH_MANDATE`. Nexus-Prime also triggers proactive deep research by publishing `RESEARCH_MANDATE` — Scout replies with `KNOWLEDGE_INJECTION`.
 
 ---
 
@@ -475,7 +476,7 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 | `Docs/agents/steward.md` | Identity file — Steward (Admin & HR Agent) | — |
 | `Docs/agents/scout.md` | Identity file — Scout (Research Agent) | — |
 | `main.py` | Cloud Run HTTP entry point — all 7 agents, selected by `AGENT_NAME` env var | — |
-| `tests/` | 408-test suite — U1–U5 unit specs + S1–S4 static analysis + tool modules + Phases 2–3 | — |
+| `tests/` | 483-test suite — U1–U5 unit specs + S1–S4 static analysis + tool modules + Phases 2–3 + Phase 3 reactive routing | — |
 
 ---
 
