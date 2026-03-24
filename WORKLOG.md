@@ -5,6 +5,61 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-24T02:48-03:00 — Vision Blueprint E2E Debugging + DWD Impersonation Fix
+
+### What was done
+
+**Vision blueprint flow debugged end-to-end (5 commits):**
+
+Iterated through a live vision_blueprint test — sending an image attachment to Nexus-Prime via Chat — and fixed every failure point in sequence:
+
+1. **`2e7dd8b` — debug: surface attachment download exception in Chat reply**
+   `main.py`: wrapped attachment download in try/except and surfaced the raw exception text in the Chat reply so failure reasons were visible.
+
+2. **`13a9fd9` — fix: use `media_resource_name` to construct download URL**
+   `main.py`: Workspace Add-ons format attachments omit `downloadUri`; fixed by constructing the URL from `media_resource_name` when `downloadUri` is absent.
+
+3. **`f646a06` — fix: threaded reply + error surfacing in vision_blueprint node**
+   `agents/nexus_prime/orchestrator.py`: added threaded reply on failure, wrapped model call in try/except, surfaced error text in reply.
+
+4. **`08cecfc` — fix: share blueprint folder with nexus-prime-sa; surface doc creation error**
+   `agents/nexus_prime/orchestrator.py`: captured doc_creation_error from `create_document()` exception, included it in the failure reply.
+   `scripts/share_blueprints_folder.py` (new): idempotent script to grant nexus-prime-sa `writer` on the Project_Incubator/blueprints folder; run once to unblock doc creation.
+
+5. **`d3b1592` — feat: DWD impersonation for Docs/Drive API calls on Cloud Run**
+   Root cause of doc creation failures: Cloud Run ADC (cloud-platform scope) cannot create Google Docs because service accounts have no Drive storage quota.
+   Fix: `_get_credentials()` in `tools/google_docs.py` now checks `settings.docs.dwd_subject`; if set, impersonates the configured Workspace user via `google.auth.impersonated_credentials` so Docs/Drive calls run under a real Drive account.
+   `scripts/create_docs_sa_key.py` (new): reference script documenting how to create/rotate the docs SA key (constrained by org policy — DWD is the correct cloud-native path, this script exists for reference only).
+   `nexus-prime-sa` granted `roles/iam.serviceAccountTokenCreator` on itself (required for impersonation token generation from Cloud Run ADC).
+   `config/settings.yaml.template`: `dwd_subject` field documented.
+
+### Files changed
+- `main.py` — attachment download error surfacing + `media_resource_name` fallback URL
+- `agents/nexus_prime/orchestrator.py` — threaded reply, error surfacing, try/except on model call
+- `tools/google_docs.py` — `_get_credentials()` DWD impersonation via `settings.docs.dwd_subject`
+- `config/settings.yaml.template` — `dwd_subject` field added
+- `scripts/share_blueprints_folder.py` — new: grant nexus-prime-sa writer on blueprints folder
+- `scripts/create_docs_sa_key.py` — new: reference script for SA key creation (DWD path preferred)
+
+### Tests
+471/471 passing — no regressions. Terminal crashed after push; session context lost.
+
+### Commits
+- `2e7dd8b` — debug: surface attachment download exception in Chat reply
+- `13a9fd9` — fix: use media_resource_name to construct download URL (Workspace Add-ons format)
+- `f646a06` — fix: add threaded reply and error surfacing to vision_blueprint node
+- `08cecfc` — Fix vision_blueprint doc creation: surface error text in reply; share blueprint folder with SA
+- `d3b1592` — feat: use DWD impersonation for Docs/Drive API calls on Cloud Run
+
+### What's next
+- Verify CI deploy completed for `d3b1592` (check GitHub Actions `production` environment gate)
+- Run `python scripts/_sync_e2e_test.py` (§4d Approval Gate E2E) — requires live Cloud Run
+- Vision path E2E: send image to Nexus-Prime Chat bot (DWD fix should unblock doc creation)
+- `VERTEX_AGENT_ENDPOINT` Script Property: Apps Script editor → Project Settings → Script Properties → add key with nexus-prime Cloud Run URL (required for Approval Gate Chat-path)
+- 7-day billing observation (§4e)
+
+---
+
 ## 2026-03-23T23:45-03:00 — Drive Folder Provisioning + CI settings.yaml Fix
 
 ### What was done
