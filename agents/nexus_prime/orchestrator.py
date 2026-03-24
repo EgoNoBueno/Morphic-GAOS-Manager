@@ -615,6 +615,8 @@ def route(state: NexusPrimeWorkingMemory) -> str:
         MessageType.PLAN_REVIEW: "iterate_plan",
         MessageType.COMMENT_RECEIVED: "iterate_plan",
         MessageType.SKILL_REQUEST: "handle_skill_request",
+        MessageType.STOCK_INSUFFICIENT: "market_watchdog",
+        MessageType.DEAL_CLOSED: "roi_optimizer",
     }
     return routing_table.get(msg.message_type, "record")
 
@@ -2523,6 +2525,143 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     return state
 
 
+# ── Reactive cross-domain routing nodes ──────────────────────────────────────
+
+#: Minimum gross-margin ratio below which Beacon ROI analysis is triggered.
+#: Override by adding ``watchdog.low_margin_threshold`` to settings.yaml.
+_LOW_MARGIN_THRESHOLD: float = 0.20
+
+
+def market_watchdog(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    """
+    React to a STOCK_INSUFFICIENT signal from Foreman by dispatching an
+    urgent sourcing-research task to Scout.
+
+    The original message payload is forwarded intact so Scout can read
+    ``sku``, ``quantity_on_hand``, and any other context Foreman attached.
+    Nexus-Prime wraps it in a ``MessageType.ALERT`` with
+    ``alert_type = "stock_insufficient"`` — the form Scout's monitor already
+    expects (see agents/scout/orchestrator.py _plan()).
+    """
+    from tools.pubsub import publish
+
+    project_id = state.get("project_id", "")
+    task_id = state.get("task_id", str(uuid.uuid4()))
+
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+
+    forwarded_payload = {**(msg.payload or {}), "alert_type": "stock_insufficient"}
+    sku = forwarded_payload.get("sku", "unknown")
+
+    alert = A2AMessage(
+        source_agent="nexus-prime",
+        target_agent="scout",
+        project_id=project_id,
+        task_id=task_id,
+        message_type=MessageType.ALERT,
+        priority=4,
+        payload=forwarded_payload,
+    )
+    try:
+        publish("agent.scout.events", alert)
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"market_watchdog: STOCK_INSUFFICIENT for sku={sku!r} — Scout dispatched",
+        )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"market_watchdog: publish to Scout failed — {exc}",
+            "ERROR",
+        )
+
+    return state
+
+
+def roi_optimizer(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    """
+    React to a DEAL_CLOSED signal from Pursuit by checking gross margin.
+
+    If the reported margin is below ``_LOW_MARGIN_THRESHOLD`` (default 20 %),
+    dispatch a ``MessageType.ALERT`` with ``alert_type = "low_margin"`` to
+    Beacon so it can analyse whether the marketing source is driving
+    unprofitable leads.
+
+    Expected payload keys from Pursuit:
+        deal_id (str), lead_source (str), revenue (float), cogs (float)
+    """
+    from tools.pubsub import publish
+
+    project_id = state.get("project_id", "")
+    task_id = state.get("task_id", str(uuid.uuid4()))
+
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+
+    payload = msg.payload or {}
+    deal_id: str = payload.get("deal_id", "unknown")
+    lead_source: str = payload.get("lead_source", "unknown")
+    revenue: float = float(payload.get("revenue", 0.0) or 0.0)
+    cogs: float = float(payload.get("cogs", 0.0) or 0.0)
+
+    margin: float = ((revenue - cogs) / revenue) if revenue > 0 else 0.0
+
+    if margin >= _LOW_MARGIN_THRESHOLD:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"roi_optimizer: deal_id={deal_id!r} margin={margin:.1%} — above threshold, no action",
+        )
+        return state
+
+    alert = A2AMessage(
+        source_agent="nexus-prime",
+        target_agent="beacon",
+        project_id=project_id,
+        task_id=task_id,
+        message_type=MessageType.ALERT,
+        priority=3,
+        payload={
+            **payload,
+            "alert_type": "low_margin",
+            "margin_pct": round(margin * 100, 2),
+            "threshold_pct": round(_LOW_MARGIN_THRESHOLD * 100, 2),
+        },
+    )
+    try:
+        publish("agent.beacon.events", alert)
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"roi_optimizer: deal_id={deal_id!r} lead_source={lead_source!r} "
+            f"margin={margin:.1%} below threshold — Beacon dispatched",
+        )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"roi_optimizer: publish to Beacon failed — {exc}",
+            "ERROR",
+        )
+
+    return state
+
+
 # ── Graph assembly ────────────────────────────────────────────────────────────
 
 
@@ -2549,6 +2688,8 @@ def build_nexus_prime_graph() -> Any:
     graph.add_node("vision_blueprint", vision_blueprint)
     graph.add_node("iterate_plan", iterate_plan)
     graph.add_node("handle_skill_request", handle_skill_request)
+    graph.add_node("market_watchdog", market_watchdog)
+    graph.add_node("roi_optimizer", roi_optimizer)
 
     graph.set_entry_point("boot")
     graph.add_edge("boot", "monitor")
@@ -2597,6 +2738,8 @@ def build_nexus_prime_graph() -> Any:
     graph.add_edge("vision_blueprint", "record")
     graph.add_edge("iterate_plan", "record")
     graph.add_edge("handle_skill_request", "record")
+    graph.add_edge("market_watchdog", "record")
+    graph.add_edge("roi_optimizer", "record")
     graph.add_edge("record", END)
 
     return graph.compile(checkpointer=MemorySaver())

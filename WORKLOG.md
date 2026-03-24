@@ -5,6 +5,38 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-24T22:00-03:00 — Reactive cross-domain routing (Market Watchdog + ROI Optimizer)
+
+### What was done
+
+Implemented two reactive routing nodes in Nexus-Prime that turn domain events into automatic
+cross-agent work orders — no manual trigger or Antigravity prompt overlay required.
+
+**Market Watchdog (`market_watchdog` node):**
+- Registered `MessageType.STOCK_INSUFFICIENT` → routes to `market_watchdog`
+- Node forwards the stockout payload to Scout as `MessageType.ALERT` with `alert_type = "stock_insufficient"`
+- Scout's existing `_plan()` already front-queued urgent sourcing research on this alert type — no Scout changes needed
+
+**ROI Optimizer (`roi_optimizer` node):**
+- Registered `MessageType.DEAL_CLOSED` → routes to `roi_optimizer`
+- Node computes gross margin from `revenue`/`cogs` in Pursuit's payload
+- If margin < 20% threshold, dispatches `MessageType.ALERT` with `alert_type = "low_margin"` to Beacon
+- Updated Beacon's `_plan()` monitor to handle `low_margin` alerts: inserts `lead_source_roi_analysis` task at queue front
+
+### Files changed
+- `models/__init__.py` — Added `STOCK_INSUFFICIENT`, `DEAL_CLOSED` to `MessageType`
+- `agents/nexus_prime/orchestrator.py` — `market_watchdog` + `roi_optimizer` node functions, routing table entries, graph nodes + edges
+- `agents/beacon/orchestrator.py` — `ALERT / low_margin` branch in `_plan()`
+- `README.md` — "Reactive Event-Driven Workflows" subsection under Cross-Domain Workflows
+
+### Tests
+471 passed, 0 failures
+
+### What's next
+- Phase 2.5 exit criteria: Approval Gate Chat-path E2E verification
+
+---
+
 ## 2026-03-24T21:15-03:00 — _dwd_diag.py hardening
 
 ### What was done

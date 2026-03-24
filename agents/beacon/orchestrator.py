@@ -124,6 +124,20 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
     msg = state.get("incoming_message")
     if msg and msg.message_type in (MessageType.TASK_HANDOFF, MessageType.BROADCAST):
         pending_items.append(msg.payload or {})
+    elif msg and msg.message_type == MessageType.ALERT:
+        a_payload = msg.payload or {}
+        if a_payload.get("alert_type") == "low_margin":
+            # Nexus-Prime detected a low-margin deal close — prioritise lead-source ROI analysis
+            pending_items.insert(
+                0,
+                {
+                    "task_type": "lead_source_roi_analysis",
+                    "lead_source": a_payload.get("lead_source", "unknown"),
+                    "deal_id": a_payload.get("deal_id", ""),
+                    "margin_pct": a_payload.get("margin_pct", 0.0),
+                    "reason": "low_margin_deal_closed",
+                },
+            )
 
     prompt = (
         f"Marketing campaign plan.\nFlagged: {pending_items[:5]}\n"

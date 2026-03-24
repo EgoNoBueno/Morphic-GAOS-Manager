@@ -64,6 +64,15 @@ Agents collaborate across departments through defined policies. Examples:
 - **Purchase Reconciliation:** Foreman receives goods → Ledger matches the vendor invoice.
 - **Market-to-Campaign:** Scout surfaces a competitor move → Beacon adjusts ad strategy.
 
+#### Reactive Event-Driven Workflows (Phase 3)
+
+Two new routing nodes in Nexus-Prime turn domain events into automatic cross-agent work orders — no manual trigger required:
+
+- **Market Watchdog** — When Foreman emits `STOCK_INSUFFICIENT`, Nexus-Prime immediately dispatches an urgent sourcing-research task to Scout (`alert_type: stock_insufficient`). Scout front-queues the SKU ahead of all routine research and begins finding alternative suppliers.
+- **ROI Optimizer** — When Pursuit emits `DEAL_CLOSED`, Nexus-Prime evaluates the gross margin. If it falls below **20 %**, Nexus-Prime dispatches a `low_margin` alert to Beacon. Beacon front-queues a lead-source ROI analysis to determine whether the marketing channel is generating unprofitable leads.
+
+These workflows are implemented entirely in Nexus-Prime's event dispatcher (`market_watchdog` and `roi_optimizer` nodes) and the receiving agents' `_plan()` monitors. No new microservices, no polling — the Pub/Sub message is the trigger.
+
 ---
 
 ## Key Capabilities

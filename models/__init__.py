@@ -45,6 +45,9 @@ class MessageType(StrEnum):
     KNOWLEDGE_INJECTION = (
         "KNOWLEDGE_INJECTION"  # Scout: corroborated market intelligence (≥5 sources)
     )
+    # ── Phase 3 — Reactive cross-domain routing ────────────────────────────
+    STOCK_INSUFFICIENT = "STOCK_INSUFFICIENT"  # Foreman: stockout detected → Nexus-Prime dispatches Scout sourcing pivot
+    DEAL_CLOSED = "DEAL_CLOSED"  # Pursuit: deal closed → Nexus-Prime checks margin → dispatches Beacon ROI analysis
 
 
 # ── A2AMessage ─────────────────────────────────────────────────────────────
