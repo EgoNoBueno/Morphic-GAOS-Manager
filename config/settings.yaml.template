@@ -84,7 +84,7 @@ vertex_search:
 # Leave empty to use ADC (recommended for Cloud Run and local dev with oauth-client.json).
 docs:
   service_account_key: ""      # e.g. config/keys/nexus-prime-sa.json
-  blueprints_folder_id: ""     # Drive folder ID for Blueprint Docs (Project_Incubator/)
+  blueprints_folder_id: "<your-blueprints-folder-id>"     # Drive folder ID for Blueprint Docs (Project_Incubator/)
   knowledge_atlas_doc_id: ""   # Google Doc ID for the Knowledge Atlas (Memory Mirror — Layer 4)
 
 # Google Custom Search — Scout deep research (Phase 2.5 Step 6)

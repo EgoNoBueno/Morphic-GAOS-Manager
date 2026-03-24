@@ -6,11 +6,13 @@ Creates the full Google Drive + Sheets structure for Morphic-G AOS:
   Google Drive/
   └── Morphic-G AOS/                       ← project root folder
       ├── Morphic-G AOS — Control Plane    ← spreadsheet (14 tabs + headers)
-      └── Knowledge/                       ← §6 knowledge folder
-          ├── workflows/
-          ├── procedures/
-          ├── policies/
-          └── archive/
+      ├── Knowledge/                       ← §6 knowledge folder
+      │   ├── workflows/
+      │   ├── procedures/
+      │   ├── policies/
+      │   ├── archive/
+      │   └── playbooks/
+      └── Project_Incubator/               ← Blueprint Docs folder (Vision path)
 
 After running, prints all IDs needed for config/settings.yaml.
 
@@ -36,6 +38,7 @@ PROJECT = "morphic-gaos-prod"
 DRIVE_ROOT_NAME = "Morphic-G AOS"
 SHEET_NAME = "Morphic-G AOS — Control Plane"
 KNOWLEDGE_FOLDER_NAME = "Knowledge"
+BLUEPRINTS_FOLDER_NAME = "Project_Incubator"
 
 SERVICE_ACCOUNTS = [
     "nexus-prime-sa",
@@ -133,7 +136,7 @@ HEADERS: dict[str, list[str]] = {
     ],
 }
 
-KNOWLEDGE_SUBFOLDERS = ["workflows", "procedures", "policies", "archive"]
+KNOWLEDGE_SUBFOLDERS = ["workflows", "procedures", "policies", "archive", "playbooks"]
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -216,12 +219,19 @@ def setup_tabs(gc: gspread.Client, spreadsheet_id: str) -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 
-def _write_settings(sheet_id: str, knowledge_id: str, *, overwrite: bool = False) -> None:
+def _write_settings(
+    sheet_id: str,
+    knowledge_id: str,
+    blueprints_id: str,
+    *,
+    overwrite: bool = False,
+) -> None:
     """Write config/settings.yaml from the template, substituting live IDs.
 
     Args:
         sheet_id: The Google Sheets spreadsheet ID created by this run.
         knowledge_id: The Drive Knowledge/ folder ID created by this run.
+        blueprints_id: The Drive Project_Incubator/ folder ID created by this run.
         overwrite: If False (default), skip the write when settings.yaml already exists.
     """
     repo_root = Path(__file__).parent.parent
@@ -239,6 +249,7 @@ def _write_settings(sheet_id: str, knowledge_id: str, *, overwrite: bool = False
     content = template_path.read_text(encoding="utf-8")
     content = content.replace("<your-spreadsheet-id>", sheet_id)
     content = content.replace("<your-drive-folder-id>", knowledge_id)
+    content = content.replace("<your-blueprints-folder-id>", blueprints_id)
     settings_path.write_text(content, encoding="utf-8")
     action = "updated" if preexisting else "created"
     print(f"\nconfig/settings.yaml {action} — IDs written from this run.")
@@ -274,6 +285,11 @@ def main() -> None:
         sub_id = create_folder(drive, sub, knowledge_id)
         print(f"  + {sub}/ : {sub_id}")
 
+    # 3b. Project_Incubator/ folder for Blueprint Docs (Vision path)
+    print(f"\nCreating Blueprint Docs folder: '{BLUEPRINTS_FOLDER_NAME}'...")
+    blueprints_id = create_folder(drive, BLUEPRINTS_FOLDER_NAME, root_id)
+    print(f"  {BLUEPRINTS_FOLDER_NAME}/ folder ID: {blueprints_id}")
+
     # 4. Create tabs + headers in spreadsheet
     print("\nSetting up tabs and headers...")
     setup_tabs(gc, sheet_id)
@@ -292,10 +308,11 @@ def main() -> None:
     print(f"  sheet.workbook_id:                {sheet_id}")
     print(f"  projects.default.sheet_id:        {sheet_id}")
     print(f"  projects.default.drive_folder_id: {knowledge_id}")
+    print(f"  docs.blueprints_folder_id:        {blueprints_id}")
     print("=" * 60)
 
     # 7. Auto-write config/settings.yaml from template
-    _write_settings(sheet_id, knowledge_id, overwrite=args.overwrite)
+    _write_settings(sheet_id, knowledge_id, blueprints_id, overwrite=args.overwrite)
 
 
 if __name__ == "__main__":
