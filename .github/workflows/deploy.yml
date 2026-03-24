@@ -58,6 +58,13 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
 
+      # settings.yaml is gitignored (contains project IDs) but must be present
+      # in the Docker build context so the container can load config at runtime.
+      # The file is stored base64-encoded in the SETTINGS_YAML GitHub Secret.
+      # Update the secret via: gh secret set SETTINGS_YAML --body $(base64 config/settings.yaml)
+      - name: Write settings.yaml from secret
+        run: echo "${{ secrets.SETTINGS_YAML }}" | base64 --decode > config/settings.yaml
+
       - name: Build and push image
         run: |
           docker build -t ${{ env.IMAGE }}:${{ github.sha }} .

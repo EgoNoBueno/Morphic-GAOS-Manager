@@ -1237,6 +1237,7 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 - [x] `deployer-sa` service account created and all IAM bindings applied: `roles/run.admin` (project), `roles/artifactregistry.writer` (AR repo), `roles/storage.objectAdmin` (tfstate bucket), `roles/iam.serviceAccountUser` on all 7 agent SAs
 - [x] Workload Identity Federation pool `github-actions` + OIDC provider `github-oidc` created; `attribute.repository` condition locks to `EgoNoBueno/Morphic-GAOS-Manager` only; `roles/iam.workloadIdentityUser` binding applied to `deployer-sa`
 - [x] `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` GitHub Secrets set — verified via `gh secret list`
+- [x] `SETTINGS_YAML` GitHub Secret set — base64-encoded `config/settings.yaml` written before the Docker `build` step so containers have full config at runtime; added 2026-03-23 after confirming CI builds were missing settings.yaml (Drive folder IDs, model aliases, etc.)
 - [x] `production` GitHub Environment created with `EgoNoBueno` as required reviewer — configured via GitHub API 2026-03-21
 
 ### 4b — CI/CD Pipeline Validation
@@ -1358,6 +1359,13 @@ Write-Host "WIF_SERVICE_ACCOUNT = ${SA}@${PROJECT}.iam.gserviceaccount.com"
 # Replace <WIF_PROVIDER_VALUE> with the output from Step 4
 gh secret set WIF_PROVIDER --body "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-actions/providers/github-oidc" --repo EgoNoBueno/Morphic-GAOS-Manager
 gh secret set WIF_SERVICE_ACCOUNT --body "${SA}@${PROJECT}.iam.gserviceaccount.com" --repo EgoNoBueno/Morphic-GAOS-Manager
+
+# SETTINGS_YAML — base64-encoded config/settings.yaml so CI can write it into
+# the Docker build context before `docker build`. Must be re-set whenever
+# settings.yaml changes (e.g. new Drive folder IDs, model aliases, etc.).
+# On Windows (PowerShell):
+$b64 = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes("config\settings.yaml"))
+gh secret set SETTINGS_YAML --body $b64 --repo EgoNoBueno/Morphic-GAOS-Manager
 
 # ── Step 6: GitHub Environment ──────────────────────────────────────────
 # Manual — GitHub UI only:
