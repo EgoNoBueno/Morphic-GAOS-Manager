@@ -5,6 +5,81 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-24T19:45-03:00 — Docs update + linter scope fixes
+
+### What was done
+
+1. **Updated `Docs/GAOS-Chat-Dev-Reference.md`** with four sections of production gotchas and best practices from recent sessions:
+   - §5 warning: HTTP 204 + JSON body → Pub/Sub retry storm
+   - §12 checklist: added 3 new items (204 response, STATUS_UPDATE guard, Pydantic field check)
+   - §16 thread keys: replaced stale "Current gap" with implemented fix + ⚠️ warning on `threadKey` vs `thread.name`
+   - New §19: Production Operational Gotchas (5 entries with root cause, symptom, fix)
+   - Footer updated to 2026-03-24
+
+2. **Created `Docs/GAOS-Chat-Implementation-Problems.md`** — standalone reference doc with all 14 production failures encountered during Chat integration, organized by failure class (infinite-loop, silent 403, silent config, Cloud Run traps, dependency mismatches). Prepared for Google Dev Conference presentation.
+
+3. **Fixed linter false-positive** in `tools/google_docs.py` and `scripts/_dwd_diag.py`: changed `auth/iam` scope to `auth/cloud-platform` (functionally equivalent for signBlob; recognized as valid by the Google OAuth scope linter extension).
+
+4. **Added `scripts/_dwd_diag.py`** to version control — DWD diagnostic script created during the 403 debugging session.
+
+### Files changed
+- `Docs/GAOS-Chat-Dev-Reference.md` — gotchas, §16 fix, new §19, updated footer
+- `Docs/GAOS-Chat-Implementation-Problems.md` — new file
+- `tools/google_docs.py` — `auth/iam` → `auth/cloud-platform`
+- `scripts/_dwd_diag.py` — `auth/iam` → `auth/cloud-platform`
+- `WORKLOG.md` — this entry
+
+### What's next
+- Phase 2.5 exit criteria: Approval Gate Chat-path E2E verification
+
+---
+
+## 2026-03-24T16:00-03:00 — Vision Blueprint E2E: DWD Root-Cause Fix (Pydantic field missing)
+
+### What was done
+
+Completed the vision blueprint end-to-end fix across 3 commits after the prior session:
+
+1. **`5d9605c` — fix: eager DWD token refresh + credential-path logging in google_docs**
+   Added `log.warning("google_docs: credential path=...")` to `_get_credentials()` so Cloud Run logs
+   would reveal which credential branch was actually taken. Also added an eager `creds.refresh(request)`
+   call in the DWD branch (matching `_dwd_diag.py` behaviour) so token exchange failures surface with
+   a clear error rather than a silent 403 from the API.
+
+2. **`41792ff` — fix: add dwd_subject field to DocsConfig (Pydantic was silently dropping it)**
+   Root cause confirmed from logs: Cloud Run was always logging `credential path=ADC (no dwd_subject configured)`
+   despite `dwd_subject: 'dhess@sl10repairtechs.com'` being present in `settings.yaml`.
+   The field was declared in `settings.yaml` and correctly encoded in the `SETTINGS_YAML` GitHub secret,
+   but was **not declared as a field in `DocsConfig(BaseModel)`** in `config/__init__.py`.
+   Pydantic silently drops unknown fields → the value was always `""` → DWD path never reached
+   → ADC fallback → 403 on every Docs API call in Cloud Run.
+   Fix: added `dwd_subject: str = ""` to `DocsConfig`.
+
+### Files changed
+- `tools/google_docs.py` — credential-path logging + eager DWD refresh
+- `config/__init__.py` — added `dwd_subject` field to `DocsConfig`
+
+### Tests
+- No new tests required (existing test suite green)
+- Live E2E confirmed: vision test in Chat produced "Blueprint Doc created!" and doc link returned
+
+### What was learned
+- **Pydantic silently drops unknown YAML fields** — presence in the file ≠ presence in the model.
+  Any new settings.yaml key needs a corresponding field in the Pydantic model or it is invisible at runtime.
+  No error, no warning — just the field's default value.
+- **`credential path` logging is the fastest diagnostic for Cloud Run auth issues** — add a
+  `log.warning` at each credential branch entry point; one log line reveals which path was taken
+  without any local reproduction attempt.
+
+### What's next
+- Remove the `log.warning` credential-path breadcrumbs in a follow-up cleanup commit (they served
+  their diagnostic purpose and are now noise)
+- Vision blueprint workflow is fully functional; next Phase 3 task can proceed
+
+---
+
+---
+
 ## 2026-03-24T02:48-03:00 — Vision Blueprint E2E Debugging + DWD Impersonation Fix
 
 ### What was done

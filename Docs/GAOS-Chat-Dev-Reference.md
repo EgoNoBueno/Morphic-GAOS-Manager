@@ -245,6 +245,13 @@ return JSONResponse(content={"status": "ok"})   # immediate ACK
 > A more robust approach publishes to Pub/Sub and lets the graph reply asynchronously
 > via `send_message()` in the `chat_respond` node after the queue delivers the message.
 
+> ⚠️ **Warning — HTTP 204 with a JSON body causes a Pub/Sub retry storm.** Returning
+> `JSONResponse(content={...}, status_code=204)` sends a body on a No-Content response.
+> uvicorn raises `RuntimeError: Response content longer than Content-Length`, closes the
+> connection, and Pub/Sub retries indefinitely — saturating all Cloud Run instances and
+> blocking `/chat`. Use `Response(status_code=204)` with **no content** for any handler
+> that must return 204. Never pass `content=` or a body to a 204 response.
+
 **"Thinking..." immediate ACK + async patch pattern:**
 
 For tasks that will definitely exceed a few seconds, send a placeholder immediately
@@ -440,6 +447,9 @@ Before deploying any Chat integration change:
 - [ ] New `MessageType` variants are in `routing_table` in `route()` in the orchestrator
 - [ ] `parse_chat_event()` returns all fields the new handler needs
 - [ ] `send_message()` / `send_card()` calls are inside `try/except` — Chat delivery failure must not propagate as a 500 to Google (it will retry)
+- [ ] Any handler returning 204 uses `Response(status_code=204)` with no body — not `JSONResponse` (see §5 warning)
+- [ ] `record()` / `publish()` calls from `nexus-prime` do **not** publish `STATUS_UPDATE` messages to `agent.nexus-prime.events` — guard with `if not (msg and msg.message_type == MessageType.STATUS_UPDATE)`
+- [ ] New `settings.yaml` keys have a corresponding field declared in the Pydantic model in `config/__init__.py` — Pydantic silently drops unknown fields with no error
 - [ ] 408/408 tests pass: `python -m pytest --tb=short -q`
 - [ ] WORKLOG updated with the change
 
@@ -594,11 +604,43 @@ no `threadKey`, so every reply starts a new conversation. To fix this, the
 `message.name` from the original Chat event), and `chat_respond` should thread
 its reply back to that message's thread.
 
-Copilot prompt: _"Add a `send_threaded_reply()` function to `tools/google_chat.py`
-that accepts `space_name`, `thread_key`, and `text`, and uses
-`messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`. Update `chat_respond`
-in the orchestrator to call it using the incoming `message_name` as the
-`thread_key`."_
+> ⚠️ **Warning — `threadKey` does NOT work for replies to user-originated messages.**
+> `threadKey` is a developer-assigned namespace. For messages sent by a human, Chat has
+> never seen your `threadKey`, so `REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD` falls back to a
+> new top-level thread — the bot reply appears disconnected from the original message.
+>
+> **Correct pattern for replying to a user message:** use the **server-assigned**
+> `thread.name` from the inbound Chat event, not `threadKey`:
+>
+> ```python
+> # In tools/google_chat.py — send_reply_in_thread()
+> service.spaces().messages().create(
+>     parent=space_name,
+>     messageReplyOption="REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD",
+>     body={
+>         "text": text,
+>         "thread": {"name": thread_name},   # e.g. "spaces/XXX/threads/YYY"
+>     },
+> ).execute()
+> ```
+>
+> `thread_name` is `message["thread"]["name"]` from the raw Chat event body.
+> `parse_chat_event()` returns it as `event["thread_name"]`. Pass it through the
+> A2A envelope payload so `chat_respond` can use it.
+>
+> **`threadKey` is correct for bot-initiated threads** (approval cards, briefings)
+> where no user message exists to anchor the thread — the table above still applies
+> for that use case.
+
+**Current implementation in GAOS:** `send_reply_in_thread(space, thread_name, text)` in
+`tools/google_chat.py` uses the `thread.name` pattern above. `chat_respond` in the
+orchestrator extracts `thread_name` from the payload and calls it directly.
+
+Copilot prompt: _"Add a `send_reply_in_thread()` function to `tools/google_chat.py`
+that accepts `space_name`, `thread_name`, and `text`, using `thread.name` (not
+`threadKey`) with `messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`. Update
+`chat_respond` in the orchestrator to extract `thread_name` from the payload and call it
+instead of `send_message()`."_
 
 ---
 
@@ -666,4 +708,101 @@ that stores and retrieves graph state as a JSON column keyed by `thread_id` and
 
 ---
 
-_Last updated: 2026-03-21 — Morphic-GAOS Phase 2.5_
+## 19. Production Operational Gotchas
+
+Failures discovered during live Chat integration testing that are non-obvious from the
+code alone. Root cause, symptom, and exact fix for each.
+
+### STATUS_UPDATE self-loop — `record()` saturates all instances
+
+**Root cause:** `record()` publishes every log message to `agent.nexus-prime.events`.
+`nexus-prime.sub.events` is a push subscription on that same topic. Every published
+message triggers a Pub/Sub delivery → `agent.run()` → `record()` → publishes again
+— infinite loop at ~25 req/sec.
+
+**Symptom:** All Cloud Run instances at 429, Sheets write quota exhausted within
+minutes, zero `/chat` entries responding in logs.
+
+**Fix:** Guard the publish call in `record()` (or wherever `STATUS_UPDATE` messages
+are generated):
+
+```python
+if not (msg and msg.message_type == MessageType.STATUS_UPDATE):
+    publish(topic, msg)
+```
+
+### HTTP 204 + JSON body → uvicorn RuntimeError → Pub/Sub retry storm
+
+**Root cause:** `JSONResponse(content={...}, status_code=204)` attaches a body to a
+No-Content response. uvicorn raises `RuntimeError: Response content longer than
+Content-Length` and closes the TCP connection. Pub/Sub treats this as a delivery
+failure and retries at ~1 req/sec indefinitely.
+
+**Symptom:** The same Pub/Sub message ID visible in Cloud Logging every second,
+handler apparently executing but the message never ACKs, instances stuck.
+
+**Fix:** `return Response(status_code=204)` — no `content=` argument, no
+`JSONResponse`. Any 204 path must have zero body.
+
+### `threadKey` doesn't keep replies in-thread for user messages
+
+**Root cause:** `threadKey` is a developer namespace; it only creates or joins threads
+that the bot itself originated. A human's message lives in a Chat-managed thread
+with no developer `threadKey`, so `REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD` with a
+`threadKey` starts a new thread instead of replying.
+
+**Symptom:** Bot replies appear as new top-level posts, not threaded under the user's
+message. Content is correct; only threading is wrong.
+
+**Fix:** Use `message["thread"]["name"]` (server-assigned) extracted from the inbound
+Chat event. Pass it as `{"thread": {"name": thread_name}}` in the create body.
+Full details and the correct function signature in §16.
+
+### Cloud Run auth credential path — diagnose with a `log.warning` branch marker
+
+**Root cause pattern:** When a tool uses a multi-branch credential strategy (key file
+→ DWD → ADC fallback), a 403 from the target API doesn't reveal which branch was
+taken. If a config value like `dwd_subject` is silently absent (see next entry),
+the fallback runs without error — the 403 only appears when the wrong credential
+hits the API.
+
+**Diagnostic pattern:** Add a `log.warning("tool: credential path=<branch>")` at the
+top of each credential branch. One line in Cloud Run Logs immediately reveals the
+path; no local reproduction needed.
+
+```python
+if dwd_subject:
+    log.warning("google_docs: credential path=DWD subject=%s", dwd_subject)
+    # ... DWD setup
+else:
+    log.warning("google_docs: credential path=ADC (no dwd_subject configured)")
+    # ... ADC fallback
+```
+
+### Pydantic silently drops unknown YAML fields — new `settings.yaml` keys vanish
+
+**Root cause:** Pydantic `BaseModel` ignores YAML keys that have no matching field
+declaration. A value present in `settings.yaml` is invisible at runtime if the
+corresponding field is missing from the model — no error, no warning, the field reads
+as its default (usually `""`).
+
+**Symptom:** Config appears correct in `settings.yaml`; runtime shows the default
+value with no indication the YAML key was ever read.
+
+**Fix:** Every new key added to `settings.yaml` **must** have a matching typed field
+in the relevant config class in `config/__init__.py`:
+
+```python
+# ❌ Wrong — dwd_subject is in settings.yaml but DocsConfig has no field for it
+class DocsConfig(BaseModel):
+    scope: str = ""
+
+# ✅ Correct
+class DocsConfig(BaseModel):
+    scope: str = ""
+    dwd_subject: str = ""   # must declare or Pydantic silently drops the YAML value
+```
+
+---
+
+_Last updated: 2026-03-24 — Morphic-GAOS Phase 2.5_

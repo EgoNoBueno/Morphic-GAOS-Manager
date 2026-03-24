@@ -89,7 +89,7 @@ def _get_credentials() -> Any:
         # Requires: DWD configured in Workspace Admin for the SA's OAuth client ID,
         # and roles/iam.serviceAccountTokenCreator on itself.
         source_creds, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/iam"],
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
         )
         request = google_auth_requests.Request()
         source_creds.refresh(request)
