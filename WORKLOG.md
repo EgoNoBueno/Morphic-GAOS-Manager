@@ -5,6 +5,26 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-24T22:45-03:00 — Fix post-review issues for reactive routing
+
+### What was done
+
+- **`tests/test_reactive_routing.py` (new)** — 12 tests covering `market_watchdog` and `roi_optimizer`: happy path, no-op path, threshold edge cases, zero-revenue guard, publish failure resilience
+- **`_LOW_MARGIN_THRESHOLD` docstring fix** — removed false claim that the threshold can be overridden via `settings.yaml`; it is hardcoded at 0.20
+- **Beacon unrecognized alert type logging** — added `WARNING` log in `_plan()` when `MessageType.ALERT` arrives with an unknown `alert_type` instead of silently dropping it
+
+### Files changed
+- `tests/test_reactive_routing.py` — new (12 tests)
+- `agents/nexus_prime/orchestrator.py` — docstring fix
+- `agents/beacon/orchestrator.py` — unrecognized alert type warning
+
+### Test count: 471 → 483 (all passing)
+
+### What's next
+- Phase 2.5 exit criteria: Approval Gate Chat-path E2E verification
+
+---
+
 ## 2026-03-24T22:00-03:00 — Reactive cross-domain routing (Market Watchdog + ROI Optimizer)
 
 ### What was done

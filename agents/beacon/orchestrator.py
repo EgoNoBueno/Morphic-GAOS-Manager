@@ -138,6 +138,15 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
                     "reason": "low_margin_deal_closed",
                 },
             )
+        else:
+            _log_cloud(
+                _AGENT_ID,
+                pid,
+                "task",
+                state.get("task_id", ""),
+                f"_plan: unrecognized alert_type={a_payload.get('alert_type')!r} — no action taken",
+                "WARNING",
+            )
 
     prompt = (
         f"Marketing campaign plan.\nFlagged: {pending_items[:5]}\n"

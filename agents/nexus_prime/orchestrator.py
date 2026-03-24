@@ -2528,7 +2528,6 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 # ── Reactive cross-domain routing nodes ──────────────────────────────────────
 
 #: Minimum gross-margin ratio below which Beacon ROI analysis is triggered.
-#: Override by adding ``watchdog.low_margin_threshold`` to settings.yaml.
 _LOW_MARGIN_THRESHOLD: float = 0.20
 
 
