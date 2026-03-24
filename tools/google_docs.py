@@ -75,9 +75,11 @@ def _get_credentials() -> Any:
     dwd_subject: str = getattr(docs_cfg, "dwd_subject", "") or ""
 
     if key_path:
+        log.warning("google_docs: credential path=key_file key=%s", key_path)
         return service_account.Credentials.from_service_account_file(key_path, scopes=_DOCS_SCOPES)
 
     if dwd_subject:
+        log.warning("google_docs: credential path=DWD subject=%s", dwd_subject)
         # Cloud Run DWD: use IAM signBlob API to create a JWT with sub=workspace_user,
         # then exchange it for an access token.  impersonated_credentials.Credentials
         # does NOT honour the `subject` param — the token has no `sub` claim, so the
@@ -94,20 +96,27 @@ def _get_credentials() -> Any:
 
         gcp_project: str = getattr(getattr(settings, "gcp", None), "project_id", "") or ""
         sa_email = f"nexus-prime-sa@{gcp_project}.iam.gserviceaccount.com" if gcp_project else ""
+        log.warning("google_docs: DWD sa_email=%s", sa_email)
 
         signer = google_auth_iam.Signer(
             request=request,
             credentials=source_creds,
             service_account_email=sa_email,
         )
-        return service_account.Credentials(
+        creds = service_account.Credentials(
             signer=signer,
             service_account_email=sa_email,
             token_uri="https://oauth2.googleapis.com/token",
             scopes=_DOCS_SCOPES,
             subject=dwd_subject,
         )
+        # Eagerly exchange the JWT assertion for an access token so any DWD config
+        # failure surfaces immediately with a clear error (not as a 403 from the API).
+        creds.refresh(request)
+        log.warning("google_docs: DWD token obtained expiry=%s", creds.expiry)
+        return creds
 
+    log.warning("google_docs: credential path=ADC (no dwd_subject configured)")
     creds, _ = google.auth.default(scopes=_DOCS_SCOPES)
     return creds
 
