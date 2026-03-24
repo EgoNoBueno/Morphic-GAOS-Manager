@@ -210,6 +210,11 @@ def main() -> None:
         if not args.keep_row:
             cleanup_row(ws, row_num)
         sys.exit(1)
+    except httpx.RequestError as exc:
+        print(f"  FAIL: network error — {exc}")
+        if not args.keep_row:
+            cleanup_row(ws, row_num)
+        sys.exit(1)
 
     # Step 4 — Poll for Status change
     print(f"\n[4/4] Polling Agent_Approvals row {row_num} for status change...")
