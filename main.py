@@ -262,21 +262,31 @@ def _verify_chat_jwt(request: Request) -> None:
         ) from exc
 
 
-async def _download_chat_attachment(download_uri: str) -> bytes:
+async def _download_chat_attachment(download_uri: str, media_resource_name: str = "") -> bytes:
     """
     Download a Google Chat attachment byte payload using service account credentials.
+
+    The Workspace Add-ons Chat format omits ``downloadUri`` and provides only
+    ``attachmentDataRef.resourceName`` instead.  When ``download_uri`` is empty,
+    the function constructs the URL from ``media_resource_name`` using the
+    Chat Media download endpoint.
 
     Uses the same service account key that drives the Chat API client, falling
     back to Application Default Credentials when the key file is unavailable.
 
     Args:
-        download_uri: The ``attachmentDataRef.downloadUri`` from the Chat event.
+        download_uri: The ``attachmentDataRef.downloadUri`` from the Chat event
+            (may be empty for Workspace Add-ons events).
+        media_resource_name: The ``attachmentDataRef.resourceName`` from the
+            Chat event.  Used to construct the download URL when ``download_uri``
+            is empty.
 
     Returns:
         Raw file bytes.
 
     Raises:
-        RuntimeError: If the download fails (network error, 4xx/5xx).
+        RuntimeError: If the download fails (network error, 4xx/5xx) or neither
+            ``download_uri`` nor ``media_resource_name`` is provided.
     """
     import httpx
 
@@ -284,6 +294,17 @@ async def _download_chat_attachment(download_uri: str) -> bytes:
 
     settings = get_settings()
     key_path: str = getattr(settings.chat, "service_account_key", "") or ""
+
+    # Workspace Add-ons format omits downloadUri — construct it from resourceName.
+    if not download_uri and media_resource_name:
+        download_uri = (
+            f"https://chat.googleapis.com/v1/media/{media_resource_name}?alt=media"
+        )
+
+    if not download_uri:
+        raise RuntimeError(
+            "Failed to download Chat attachment: no download_uri or media_resource_name available."
+        )
 
     try:
         if key_path and os.path.exists(key_path):
@@ -660,21 +681,22 @@ async def chat(request: Request) -> JSONResponse:
 
             settings = get_settings()
             download_uri = image_att.get("download_uri", "")
+            media_resource_name = image_att.get("media_resource_name", "")
             submitted_at = datetime.datetime.now(datetime.UTC).isoformat()
 
             try:
-                img_bytes = await _download_chat_attachment(download_uri)
+                img_bytes = await _download_chat_attachment(download_uri, media_resource_name)
             except Exception as exc:
                 log.error("Vision image download failed: %s", exc)
                 from tools.google_chat import send_threaded_reply
 
                 try:
-                    _thread_key = event["message_name"] or f"vision-{download_uri[-12:]}"
+                    _thread_key = event["message_name"] or f"vision-{media_resource_name[-12:]}"
                     send_threaded_reply(
                         event["space_name"],
                         _thread_key,
-                        f"\U0001f4f8 Image download failed: {exc}\n"
-                        f"(uri={'<empty>' if not download_uri else download_uri[-40:]})",
+                        "\U0001f4f8 I received your image but couldn't download it. "
+                        "Please try again or describe your vision in text.",
                     )
                 except Exception:
                     pass
