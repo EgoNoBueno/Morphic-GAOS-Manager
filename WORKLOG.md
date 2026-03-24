@@ -5,6 +5,24 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-24T21:15-03:00 — _dwd_diag.py hardening
+
+### What was done
+
+- **Removed hardcoded PII** (`SA_EMAIL`, `DWD_SUBJECT`) — replaced with `os.environ.get()` reads; fails fast with clear error if either is missing; docstring documents required env vars
+- **Isolated delete cleanup** — wrapped `drive_svc.files().delete()` in its own `try/except`; logs `doc_id` prominently after creation so orphaned docs are identifiable if delete fails
+- **Removed token leak** — removed `creds.token[:20]` print that could leak sensitive credential data to console/logs; only expiry is printed
+- **WORKLOG duplicate `---`** — removed extra horizontal rule separator between two WORKLOG sections
+
+### Files changed
+- `scripts/_dwd_diag.py` — env-var config, cleanup hardening, token leak removal
+- `WORKLOG.md` — duplicate separator removed
+
+### What's next
+- Phase 2.5 exit criteria: Approval Gate Chat-path E2E verification
+
+---
+
 ## 2026-03-24T19:45-03:00 — Docs update + linter scope fixes
 
 ### What was done
@@ -75,8 +93,6 @@ Completed the vision blueprint end-to-end fix across 3 commits after the prior s
 - Remove the `log.warning` credential-path breadcrumbs in a follow-up cleanup commit (they served
   their diagnostic purpose and are now noise)
 - Vision blueprint workflow is fully functional; next Phase 3 task can proceed
-
----
 
 ---
 
