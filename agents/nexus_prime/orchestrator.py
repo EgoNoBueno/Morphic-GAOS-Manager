@@ -1731,7 +1731,29 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
     # ── 1. Generate blueprint content via Gemini ──────────────────────────────
     prompt = _build_vision_prompt(vision_text, project_id)
-    resp = _call_model(prompt, model=settings.models.DEEP_MODEL, parse_json=False)
+    try:
+        resp = _call_model(prompt, model=settings.models.DEEP_MODEL, parse_json=False)
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"vision_blueprint: model call failed: {exc}",
+            "ERROR",
+        )
+        if space_name:
+            from tools.google_chat import send_threaded_reply
+
+            try:
+                send_threaded_reply(
+                    space_name,
+                    task_id,
+                    f"\U0001f9e0 Vision received but Blueprint generation failed: {exc}",
+                )
+            except Exception:
+                pass
+        return state
     state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
     state["tokens_used"] = state.get("tokens_used", 0) + resp.tokens_used
     blueprint_content = resp.text.strip()
@@ -1829,6 +1851,36 @@ def vision_blueprint(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                 "task",
                 task_id,
                 f"vision_blueprint: Chat card failed: {exc}",
+                "WARNING",
+            )
+
+    # ── 6. Send threaded reply to the originating Chat space ─────────────────
+    # The approval card goes to owner_space; this reply confirms receipt in the
+    # original conversation thread so the sender knows the request was processed.
+    if space_name:
+        from tools.google_chat import send_threaded_reply
+
+        try:
+            thread_key = msg.task_id
+            if doc_url:
+                reply_text = (
+                    f"\U0001f9e0 Vision received and Blueprint Doc created!\n"
+                    f"Review it here: {doc_url}\n"
+                    f"An approval card has been sent for your review."
+                )
+            else:
+                reply_text = (
+                    "\U0001f9e0 Vision received but Blueprint Doc creation failed. "
+                    "Please check the logs or try again."
+                )
+            send_threaded_reply(space_name, thread_key, reply_text)
+        except Exception as exc:
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"vision_blueprint: threaded reply failed: {exc}",
                 "WARNING",
             )
 
