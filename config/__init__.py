@@ -71,6 +71,7 @@ class DocsConfig(BaseModel):
     service_account_key: str = ""  # Path to SA key JSON; leave empty to use ADC
     blueprints_folder_id: str = ""  # Default Drive folder ID for Blueprint Docs
     knowledge_atlas_doc_id: str = ""  # Google Doc ID for the Knowledge Atlas (Memory Mirror)
+    dwd_subject: str = ""  # Workspace user email to impersonate via DWD (Cloud Run path)
 
 
 class GoogleSearchConfig(BaseModel):
