@@ -18,6 +18,8 @@ Maintain system integrity, enforce the Approval Gate on all code deployments, re
 - Handle `VISION_SUBMITTED` events: parse owner's vision text → generate a structured Google Doc blueprint via Blueprint Factory → write an `ApprovalProposal` referencing the Doc → post a Chat card to the owner for review.
 - Run the `ITERATE_PLAN` node when `blueprint_constraints` list reaches 5 items: call Gemini Flash to compact constraints into a summary paragraph → archive original constraints to BigQuery `aos_logs.blueprint_constraints` → replace list with the compacted paragraph.
 - Process Chat approval callbacks: tap on Approve/Reject card → publish `APPROVAL_RESULT` → resume parked task. Write a corresponding audit row to `Agent_Approvals` Sheet after every Chat approval event.
+- **Market Watchdog** *(Phase 3)*: On `STOCK_INSUFFICIENT` from Foreman, immediately dispatch an `ALERT` (`alert_type = "stock_insufficient"`, priority 4) to Scout to front-queue a sourcing pivot for the affected SKU. No LLM call — pure event relay.
+- **ROI Optimizer** *(Phase 3)*: On `DEAL_CLOSED` from Pursuit, compute gross margin `(revenue − cogs) / revenue`. If margin < 20 %, dispatch an `ALERT` (`alert_type = "low_margin"`, priority 3) to Beacon to front-queue a lead-source ROI analysis. No LLM call — pure arithmetic dispatch.
 
 ## Resources
 | Resource | Type | Access |

@@ -199,6 +199,9 @@ def route(state: NexusPrimeWorkingMemory) -> str:
         MessageType.PLAN_REVIEW:         "iterate_plan",     # Owner comment on Blueprint
         MessageType.COMMENT_RECEIVED:    "iterate_plan",     # Doc comment poll found new comment
         MessageType.SKILL_REQUEST:       "handle_skill_request",  # Agent requests package install approval
+        # ── Phase 3 — Reactive cross-domain routing ────────────────────────────
+        MessageType.STOCK_INSUFFICIENT:  "market_watchdog",  # Foreman stockout → dispatch Scout
+        MessageType.DEAL_CLOSED:         "roi_optimizer",    # Pursuit deal closed → check margin → dispatch Beacon
     }
     return routing_table.get(msg.message_type, "record")
 
@@ -1046,6 +1049,32 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
     return state
 ```
 
+#### `market_watchdog`
+
+*(Phase 3)* Handles `STOCK_INSUFFICIENT` messages from Foreman. Forwards the full stockout payload to Scout as a `MessageType.ALERT` with `alert_type = "stock_insufficient"` and `priority = 4`. Scout's `_plan()` node matches on this alert type and front-queues a sourcing pivot ahead of all routine research tasks.
+
+**Payload forwarded to Scout:** all fields from Foreman's original payload plus `alert_type = "stock_insufficient"`. Recommended fields from Foreman: `sku`, `quantity_on_hand`.
+
+**No LLM call.** This is a pure event-routing node — it dispatches and returns immediately.
+
+> ⚠️ **If publish fails:** The failure is logged at `ERROR` severity but does not re-raise. The Pub/Sub message that triggered this node will be acked regardless — Scout will not receive the dispatch. Monitor `market_watchdog: publish to Scout failed` in Cloud Logging if sourcings are missing.
+
+---
+
+#### `roi_optimizer`
+
+*(Phase 3)* Handles `DEAL_CLOSED` messages from Pursuit. Computes gross margin as `(revenue - cogs) / revenue`. If margin is below `_LOW_MARGIN_THRESHOLD` (hardcoded `0.20` / 20%), publishes a `MessageType.ALERT` with `alert_type = "low_margin"` and `priority = 3` to Beacon's topic. Beacon's `_plan()` front-queues a `lead_source_roi_analysis` task.
+
+**Expected payload from Pursuit:** `deal_id`, `lead_source`, `revenue`, `cogs`.
+
+**Payload forwarded to Beacon:** all Pursuit fields plus `alert_type = "low_margin"`, `margin_pct` (rounded to 2dp), `threshold_pct` (20.0).
+
+**Zero-revenue guard:** If `revenue == 0`, margin is treated as `0.0` (below threshold) — Beacon alert fires. No `ZeroDivisionError`.
+
+**No LLM call.** Pure arithmetic dispatch node.
+
+---
+
 ### 3.3 Graph Assembly
 
 ```python
@@ -1070,6 +1099,8 @@ def build_nexus_prime_graph() -> Any:
     graph.add_node("vision_blueprint",     vision_blueprint)
     graph.add_node("iterate_plan",         iterate_plan)
     graph.add_node("handle_skill_request", handle_skill_request)
+    graph.add_node("market_watchdog",      market_watchdog)   # Phase 3
+    graph.add_node("roi_optimizer",        roi_optimizer)     # Phase 3
 
     graph.set_entry_point("boot")
     graph.add_edge("boot", "monitor")
@@ -1091,6 +1122,8 @@ def build_nexus_prime_graph() -> Any:
             "vision_blueprint":     "vision_blueprint",
             "iterate_plan":         "iterate_plan",
             "handle_skill_request": "handle_skill_request",
+            "market_watchdog":      "market_watchdog",    # Phase 3
+            "roi_optimizer":        "roi_optimizer",      # Phase 3
         },
     )
 
@@ -1116,6 +1149,8 @@ def build_nexus_prime_graph() -> Any:
     graph.add_edge("vision_blueprint",     "record")
     graph.add_edge("iterate_plan",         "record")
     graph.add_edge("handle_skill_request", "record")
+    graph.add_edge("market_watchdog",       "record")   # Phase 3
+    graph.add_edge("roi_optimizer",         "record")   # Phase 3
     graph.add_edge("record",               END)
 
     return graph.compile(checkpointer=MemorySaver())

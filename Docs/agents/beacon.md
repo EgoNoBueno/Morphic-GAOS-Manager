@@ -59,6 +59,7 @@ Beacon owns the `Marketing`, `Sales by Product`, `Sales Graphs`, and `Ad Respons
 | Ledger responds to budget `DATA_REQUEST` with available budget < proposed spend | Route to Approval Gate before proceeding — do not proceed autonomously |
 | Ad platform API unavailable for > 1 hour | Publish Priority-2 INFO; use last-known data for scheduled reports |
 | Evolution loop hits any hard stop | Log `EvolutionTaskOutcome`; publish Priority-2 INFO to Nexus-Prime |
+| `low_margin` ALERT received from Nexus-Prime (`alert_type = "low_margin"`) | Front-queue a `lead_source_roi_analysis` task — analyse whether the lead source that generated the closed deal is producing unprofitable revenue; report findings to Nexus-Prime within one cycle |
 
 ## Knowledge Sources
 - `Knowledge/workflows/weekly_reporting.md`

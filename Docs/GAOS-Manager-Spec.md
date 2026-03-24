@@ -605,6 +605,9 @@ class A2AMessage(BaseModel):
 | `RESEARCH_MANDATE` | Nexus-Prime → Scout | Deep structured research request |
 | `SKILL_REQUEST` | Any → Nexus-Prime | Agent requests approval to install a Python package |
 | `KNOWLEDGE_INJECTION` | Scout → Nexus-Prime | Corroborated market intelligence (≥ 5 sources) |
+| — *Phase 3* — | | |
+| `STOCK_INSUFFICIENT` | Foreman → Nexus-Prime | Stockout detected on a SKU — Nexus-Prime routes to `market_watchdog`, which dispatches Scout to find alternative sourcing |
+| `DEAL_CLOSED` | Pursuit → Nexus-Prime | Deal closed — Nexus-Prime routes to `roi_optimizer`, which evaluates gross margin and dispatches Beacon for ROI analysis if margin < 20 % |
 
 ### 10.3 Cross-Domain Workflow Policies
 
