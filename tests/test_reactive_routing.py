@@ -14,7 +14,11 @@ Coverage:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
+
+if TYPE_CHECKING:
+    from agents.nexus_prime.orchestrator import NexusPrimeWorkingMemory
 
 import pytest
 
@@ -73,10 +77,10 @@ def _deal_msg(
 
 
 class TestMarketWatchdog:
-    def _run(self, state: dict) -> dict:
+    def _run(self, state: dict) -> NexusPrimeWorkingMemory:
         from agents.nexus_prime.orchestrator import market_watchdog
 
-        return market_watchdog(state)
+        return market_watchdog(cast("NexusPrimeWorkingMemory", state))
 
     @patch("agents.nexus_prime.orchestrator._log_cloud")
     @patch("tools.pubsub.publish")
@@ -138,10 +142,10 @@ class TestMarketWatchdog:
 
 
 class TestRoiOptimizer:
-    def _run(self, state: dict) -> dict:
+    def _run(self, state: dict) -> NexusPrimeWorkingMemory:
         from agents.nexus_prime.orchestrator import roi_optimizer
 
-        return roi_optimizer(state)
+        return roi_optimizer(cast("NexusPrimeWorkingMemory", state))
 
     @patch("agents.nexus_prime.orchestrator._log_cloud")
     @patch("tools.pubsub.publish")
