@@ -5,6 +5,49 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-23T23:45-03:00 — Drive Folder Provisioning + CI settings.yaml Fix
+
+### What was done
+
+**Drive folder gaps closed:**
+- Added `playbooks/` to `KNOWLEDGE_SUBFOLDERS` in `setup_workspace.py` (was documented in `GAOS-Memory-Spec.md §7` but never provisioned)
+- Added `Project_Incubator/` (blueprints folder) as a new sibling of `Knowledge/` in `setup_workspace.py`
+- `_write_settings()` now accepts and substitutes `blueprints_id` into `settings.yaml.template`
+- `settings.yaml.template` `docs.blueprints_folder_id` updated from `""` to `"<your-blueprints-folder-id>"` placeholder
+- Created `scripts/provision_missing_folders.py` — idempotent script to create the two folders in an already-provisioned workspace; reads root from `settings.yaml` `drive_folder_id` parent
+- Ran the script: `Knowledge/playbooks/` (`1qbpZxuMJ61BrorgxqgtcB_mcpg0gnCU7`) and `Project_Incubator/` (`16zys8fDgYaUyn-FyFb2lhrU3Asb2VYLR`) created in Drive
+- `config/settings.yaml` `docs.blueprints_folder_id` set to `16zys8fDgYaUyn-FyFb2lhrU3Asb2VYLR`
+
+**Critical CI bug fixed — settings.yaml was never baked into Docker images:**
+- `config/settings.yaml` is gitignored and not in `.dockerignore` exemptions →  Docker `COPY . .` never included it
+- All Cloud Run containers were running without `settings.yaml`; `/health` always returned 200 (no config read) masking the problem, but any real endpoint (`/pubsub`, `/sync`, `/chat`) would `FileNotFoundError` on first `get_settings()` call
+- Fix: base64-encoded `config/settings.yaml` stored as `SETTINGS_YAML` GitHub Secret; new CI step `Write settings.yaml from secret` decodes it before `docker build`
+- `GAOS-Deploy-Spec.md` §19 checklist updated to record `SETTINGS_YAML` secret; runbook Step 5 updated with the command to re-set the secret when settings change
+
+### Files changed
+- `scripts/setup_workspace.py` — `playbooks/` + `Project_Incubator/` provisioning, updated `_write_settings()`
+- `config/settings.yaml.template` — `blueprints_folder_id` placeholder updated
+- `scripts/provision_missing_folders.py` — new idempotent folder provisioning script
+- `.github/workflows/deploy.yml` — `Write settings.yaml from secret` step added before `docker build`
+- `Docs/GAOS-Deploy-Spec.md` — `SETTINGS_YAML` secret documented in §19 checklist and Step 5 runbook
+- `config/settings.yaml` — `docs.blueprints_folder_id` set (gitignored; propagated via `SETTINGS_YAML` GitHub Secret)
+
+### Tests
+471/471 passing — no regressions.
+
+### Commits
+- `ae85152` — feat: add playbooks/ and Project_Incubator/ folder provisioning to setup_workspace.py
+- `6238573` — fix: write settings.yaml from SETTINGS_YAML GitHub Secret before docker build in CI
+
+### What's next
+- Approve the CI `production` environment gate (GitHub Actions tab) → deployment completes
+- Set `VERTEX_AGENT_ENDPOINT` Script Property in Apps Script editor (manual — required for Approval Gate Chat-path)
+- Run `python scripts/_sync_e2e_test.py` (§4d Approval Gate E2E)
+- Send image to Nexus-Prime Chat bot (§4d Vision path E2E)
+- 7-day billing observation (§4e)
+
+---
+
 ## 2026-03-23T22:24-03:00 — Security Policy + E2E Script + Doc Cross-References
 
 ### What was done
