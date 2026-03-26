@@ -87,21 +87,29 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
         _log_cloud(_AGENT_ID, pid, "security", "boot", f"STARTUP_FAILURE: {exc}", "CRITICAL")
         sys.exit(1)
 
-    # Step 3: Project Registry validation
+    # Step 3: Project Registry validation — registry read failure is fatal
     try:
         active_ids = {p.project_id for p in load_project_registry(pid)}
-        if pid not in active_ids and pid != settings.GCP_PROJECT_ID:
-            _log_cloud(
-                _AGENT_ID,
-                pid,
-                "security",
-                "boot",
-                f"STARTUP_FAILURE: unknown project_id '{pid}'",
-                "CRITICAL",
-            )
-            sys.exit(1)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "security",
+            "boot",
+            f"STARTUP_FAILURE: registry read failed: {exc}",
+            "CRITICAL",
+        )
+        sys.exit(1)
+    if pid not in active_ids and pid != settings.GCP_PROJECT_ID:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "security",
+            "boot",
+            f"STARTUP_FAILURE: unknown project_id '{pid}'",
+            "CRITICAL",
+        )
+        sys.exit(1)
 
     # Step 4: Pub/Sub — ensure outbound topic exists
     try:

@@ -801,13 +801,15 @@ async def chat(request: Request) -> JSONResponse:
     # directly instead of the generic "Processing…" placeholder.
     if event_type == "CARD_CLICKED":
         if action_name == "approve":
-            ack_text = "✅ Approved — deploying now. I'll confirm when complete."
+            ack_text = (
+                "✅ Approval received; deployment requested. You will be notified on completion."
+            )
         elif action_name == "reject":
-            ack_text = "❌ Rejected — decision recorded."
+            ack_text = "❌ Rejection received; the request will be processed."
         elif action_name == "skill_approve":
-            ack_text = "✅ Skill import approved — notifying agent."
+            ack_text = "✅ Skill import request received; agent will be notified."
         elif action_name == "skill_reject":
-            ack_text = "❌ Skill import denied."
+            ack_text = "❌ Skill import denial received."
         else:
             ack_text = "Processing..."
     else:
