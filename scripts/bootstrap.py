@@ -109,12 +109,13 @@ def _run(
 
 
 def _gcloud(
-    *args: str, capture: bool = False, quiet: bool = False
+    *args: str, check: bool = True, capture: bool = False, quiet: bool = False
 ) -> subprocess.CompletedProcess[str]:
     """Run a gcloud command.
 
     Args:
         *args: gcloud subcommand arguments.
+        check: If True (default), raise CalledProcessError on non-zero exit.
         capture: Capture stdout/stderr.
         quiet: Suppress echoed command.
 
@@ -123,7 +124,7 @@ def _gcloud(
 
     Raises:
         SystemExit: If gcloud is not installed.
-        subprocess.CalledProcessError: On non-zero exit.
+        subprocess.CalledProcessError: If check=True and exit code is non-zero.
     """
     if not shutil.which("gcloud"):
         print(
@@ -131,7 +132,7 @@ def _gcloud(
             file=sys.stderr,
         )
         sys.exit(1)
-    return _run(["gcloud", *args], capture=capture, quiet=quiet)
+    return _run(["gcloud", *args], check=check, capture=capture, quiet=quiet)
 
 
 # ── Step implementations ───────────────────────────────────────────────────────
@@ -172,7 +173,13 @@ def check_prerequisites(project: str) -> None:
     print(f"  ✓ gcloud authenticated as: {account}")
 
     result = _gcloud(
-        "projects", "describe", project, "--format=value(projectId)", capture=True, quiet=True
+        "projects",
+        "describe",
+        project,
+        "--format=value(projectId)",
+        check=False,
+        capture=True,
+        quiet=True,
     )
     if result.returncode != 0 or not result.stdout.strip():
         print(
@@ -515,7 +522,7 @@ def setup_wif(
         "add-iam-policy-binding",
         sa_email,
         "--role=roles/iam.workloadIdentityUser",
-        f"--member=principalSet://{pool_resource.split('://', 1)[1]}",
+        f"--member={pool_resource}",
         f"--project={project}",
         capture=True,
         quiet=True,

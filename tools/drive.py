@@ -82,7 +82,9 @@ def _resolve_path(service: Any, root_folder_id: str, path: str) -> str | None:
     for part in parts:
         escaped = part.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
         query = f"'{current_id}' in parents and name = '{escaped}' and trashed = false"
-        resp = service.files().list(q=query, fields="files(id, name)").execute()
+        resp = _retry_drive(
+            lambda q=query: service.files().list(q=q, fields="files(id, name)").execute()
+        )
         files = resp.get("files", [])
         if not files:
             return None
@@ -105,7 +107,7 @@ def _ensure_folder_path(service: Any, root_folder_id: str, path: str) -> str:
             f"and mimeType = 'application/vnd.google-apps.folder' "
             f"and trashed = false"
         )
-        resp = service.files().list(q=query, fields="files(id)").execute()
+        resp = _retry_drive(lambda q=query: service.files().list(q=q, fields="files(id)").execute())
         files = resp.get("files", [])
         if files:
             current_id = files[0]["id"]
@@ -115,7 +117,9 @@ def _ensure_folder_path(service: Any, root_folder_id: str, path: str) -> str:
                 "mimeType": "application/vnd.google-apps.folder",
                 "parents": [current_id],
             }
-            created = service.files().create(body=folder_meta, fields="id").execute()
+            created = _retry_drive(
+                lambda meta=folder_meta: service.files().create(body=meta, fields="id").execute()
+            )
             current_id = created["id"]
     return current_id
 

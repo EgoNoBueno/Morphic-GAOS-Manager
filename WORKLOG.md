@@ -5,6 +5,53 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-26T17:49-03:00 — Harden registry boot + CARD_CLICKED ack fix, commit and push
+
+### What was done
+
+1. **Resumed blocked commit.** Previous session left two changes uncommitted (registry boot
+   hardening + 4 CARD_CLICKED ack text strings) after pre-commit hooks failed.
+
+2. **Diagnosed and fixed detect-secrets Python 3.13 crash.** `detect-secrets 1.5.0` has a
+   known incompatibility with Python 3.13: a nested generator comprehension in
+   `_process_line_based_plugins` (scan.py) yields `generator` objects instead of
+   `PotentialSecret` because `for secret in _scan_line(...)` is mishandled in a
+   `yield from (... for ... for ... if ...)` expression under CPython 3.13. Fix: convert
+   the nested generator comprehension to an explicit nested `for/if/yield` loop. Patched
+   both copies in the pre-commit cache:
+   - `~/.cache/pre-commit/repopb3avbld/detect_secrets/core/scan.py`
+   - `~/.cache/pre-commit/repopb3avbld/py_env-python3.13/Lib/site-packages/detect_secrets/core/scan.py`
+
+3. **Reverted `.pre-commit-config.yaml`.** Previous session had added `language_version: python3.11`
+   to the detect-secrets hook — this failed because Python 3.11 is not installed. Reverted to no
+   `language_version` (defaults to Python 3.13 which now works with the patch above).
+
+4. **Committed and pushed `0e2c278`.** All three hooks passed: detect-secrets ✅, ruff check ✅,
+   ruff format ✅.
+
+### Files changed
+
+- `agents/beacon/orchestrator.py`, `foreman/orchestrator.py`, `ledger/orchestrator.py`,
+  `pursuit/orchestrator.py`, `scout/orchestrator.py`, `steward/orchestrator.py` — registry
+  boot hardening (fatal sys.exit on registry read failure)
+- `main.py` — 4 CARD_CLICKED ack strings changed to receipt/queued wording
+- Patch applied to pre-commit cache (not tracked in git)
+
+### Lesson learned
+
+- **detect-secrets 1.5.0 crashes on Python 3.13.** PyPI has no newer release. The fix is a
+  one-line change in the pre-commit cache's `scan.py`. Must re-apply after `pre-commit install`
+  clears the cache. Full documentation below in gotchas.
+
+### What's next
+
+- Consider updating `.pre-commit-config.yaml` to pin detect-secrets to a post-1.5.0 commit SHA
+  once the fix is merged and a tag is released upstream
+- LangGraph `thread_id` replay wiring (~20-line change across 7 orchestrators) identified in
+  previous session as the next improvement
+
+---
+
 ## 2026-03-26T17:22-03:00 — Final recommendations: cost language + 3 production-readiness fixes
 
 ### What was done

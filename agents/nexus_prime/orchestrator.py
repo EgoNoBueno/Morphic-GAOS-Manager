@@ -1131,6 +1131,9 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                     },
                     state["project_id"],
                 )
+                state["parked_proposals"] = [
+                    p for p in state.get("parked_proposals", []) if p != _rejection_proposal_id
+                ]
             except Exception as _exc:
                 _log_cloud(
                     "nexus-prime",
