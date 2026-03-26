@@ -5,6 +5,131 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-26T17:22-03:00 — Final recommendations: cost language + 3 production-readiness fixes
+
+### What was done
+
+1. **Removed all fixed-cost references ($2.50, $5/month).** Replaced 8 instances across 3 docs
+   (`Morphic-GAOS-Manager-Summary.md`, `working-preferences.md`, `GAOS-Deploy-Spec.md`) with
+   "low expenses" / "minimal operating cost" language that references the project's cost
+   philosophy rather than a dollar figure that may not reflect actual usage.
+
+2. **Downgraded debug logging** in `main.py` line 604: `log.info("Chat body FULL DEBUG: …")` →
+   `log.debug(…)`. Prevents full request bodies from appearing at INFO level in Cloud Logging
+   (noise + potential PII exposure).
+
+3. **Documented `knowledge_atlas_doc_id` gap** in `config/settings.yaml.template` with a `docs:`
+   section explaining that the field must be populated or `sync_to_atlas()` raises
+   `MemoryMirrorError`. The local `settings.yaml` has it empty; production uses the
+   `SETTINGS_YAML` GitHub Secret.
+
+4. **Added Project Registry validation to all 5 Tier 2 boot sequences** (beacon, pursuit, foreman,
+   steward, scout). Matches Ledger's existing pattern: import `load_project_registry`, check
+   `pid` against active IDs, `sys.exit(1)` with `STARTUP_FAILURE` log if unknown. This enforces
+   GAOS-Agent-Spec §7 Step 4 across all agents.
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `Docs/Morphic-GAOS-Manager-Summary.md` | 5 fixed-cost references → "low expenses" language |
+| `Docs/working-preferences.md` | 1 fixed-cost reference → "low expenses standard" |
+| `Docs/GAOS-Deploy-Spec.md` | 2 references (header + Phase 4e checklist) updated |
+| `config/settings.yaml.template` | Added `docs:` section with `knowledge_atlas_doc_id` guidance |
+| `main.py` | `log.info` → `log.debug` for Chat body debug line |
+| `agents/beacon/orchestrator.py` | Added `load_project_registry` import + Step 3 validation |
+| `agents/pursuit/orchestrator.py` | Added `load_project_registry` import + Step 3 validation |
+| `agents/foreman/orchestrator.py` | Added `load_project_registry` import + Step 3 validation |
+| `agents/steward/orchestrator.py` | Added `load_project_registry` import + Step 3 validation |
+| `agents/scout/orchestrator.py` | Added `load_project_registry` import + Step 3 validation |
+
+### Tests
+
+487 passed, 46 warnings — no regressions.
+
+### What's next
+
+- Populate `knowledge_atlas_doc_id` in the `SETTINGS_YAML` GitHub Secret (if not already done)
+- Activate LangGraph replay by passing `thread_id` to `ainvoke()` (7 orchestrators, ~20 lines)
+- Complete the 4 remaining Phase 4 live-infrastructure validations
+
+---
+
+## 2026-03-26T17:00-03:00 — scripts/bootstrap.py: CI/CD infrastructure bootstrap (Gap 2)
+
+### What was done
+
+Assessed all remaining Phase 4 outstanding items. All code was already complete; the three unchecked
+items in the Phase 4 exit checklist require live GCP infrastructure (VERTEX_AGENT_ENDPOINT Apps
+Script property, Chat-path E2E, Vision E2E). The one implementable code gap was **Gap 2** from
+§21 (Turnkey Deployment Roadmap).
+
+Built `scripts/bootstrap.py` — a fully automated, idempotent bootstrap script that converts a blank
+GCP project into a CI/CD-ready state in one command. Automates the entire Phase 4 Bootstrap Runbook
+(GAOS-Deploy-Spec.md §20) that was previously a sequence of manual `gcloud` shell commands.
+
+Steps automated:
+- 14 required GCP APIs enabled via `gcloud services enable`
+- GCS state bucket `morphic-gaos-tfstate` created with versioning on (uses `google-cloud-storage`)
+- Artifact Registry Docker repo `cloud-run-source-deploy` created
+- Deployer service account `deployer-sa` created
+- All IAM bindings applied: `roles/run.admin` (project), `roles/artifactregistry.writer` (AR),
+  `roles/storage.objectAdmin` (tfstate), `roles/iam.serviceAccountUser` on all 7 agent SAs
+- WIF pool `github-actions` + OIDC provider `github-oidc` created, scoped to this repo
+- `WIF_PROVIDER`, `WIF_SERVICE_ACCOUNT`, `SETTINGS_YAML` GitHub Secrets set via `gh` CLI
+  (gracefully skipped if `gh` not installed)
+- Prints next steps including the manual Apps Script property and GitHub Environment gate
+
+All operations are idempotent (safe to re-run). Uses subprocess for `gcloud` operations (complex IAM
+and WIF calls) and `google-cloud-storage` SDK for GCS (already in dependencies).
+
+### Files changed
+- `scripts/bootstrap.py` — new file, ~340 lines
+- `Docs/GAOS-Deploy-Spec.md` — §21 Gap 2 marked ✅ Done, description expanded with run instructions
+
+### Test result
+487 passed, 46 warnings, 0 failures (bootstrap.py is a script, no unit tests per Rule 8 guidance
+for interactive setup scripts — consistent with `setup_workspace.py` and `setup_secrets.py`).
+
+### What's next
+- Remaining Phase 4 exit: live E2E validation (Chat-path, Vision path) — requires Cloud Run
+  deployment and real Chat interaction
+- Manual: set `VERTEX_AGENT_ENDPOINT` Apps Script property if not yet done
+- Phase 5: Grafana CEO dashboard (future, deferred)
+
+---
+
+## 2026-03-26T16:00-03:00 — Cards v2 approval gate: rejection fix + UX response
+
+### What was done
+
+Investigation confirmed the full Cards v2 interactive approval pipeline was already implemented end-to-end (card sending, JWT auth, CARD_CLICKED parsing, `/chat` routing, `promote` on approval). Two concrete gaps were discovered and fixed:
+
+1. **`agents/nexus_prime/orchestrator.py` — `record()` rejection path** — When an APPROVAL_RESULT arrives via the Chat card-click path (owner taps Reject button), the Agent_Approvals Sheet row was never updated. The Apps Script path was safe because the user edits the Sheet first. The Chat path bypasses the Sheet entirely, so `record()` now writes `{"Status": "Rejected", "Approved By": ...}` back to the row when `message_type == APPROVAL_RESULT` and `status == "Rejected"`. Update is idempotent (safe if Apps Script already wrote "Rejected").
+
+2. **`main.py` — `/chat` CARD_CLICKED sync response** — All Chat events returned `{"text": "Processing..."}` as the synchronous acknowledgment. Card button clicks now return action-specific text immediately:
+   - Approve → `"✅ Approved — deploying now. I'll confirm when complete."`
+   - Reject → `"❌ Rejected — decision recorded."`
+   - Skill approve → `"✅ Skill import approved — notifying agent."`
+   - Skill reject → `"❌ Skill import denied."`
+
+3. **`tests/test_agents.py` — `TestNexusPrimeRecord` (new, 4 tests)** — Covers: rejection writes Sheet, no-proposal-id skips update, approval does not update in record, Sheet failure logs WARNING without raising.
+
+### Files changed
+- `agents/nexus_prime/orchestrator.py` — `record()`: Sheet update on APPROVAL_RESULT rejection
+- `main.py` — `/chat`: action-specific sync response for CARD_CLICKED events
+- `tests/test_agents.py` — `TestNexusPrimeRecord` (4 new tests)
+
+### Test result
+487 passed (up from 483 pre-session), 46 warnings, 0 failures.
+
+### What's next
+- Phase 2.5 Step 7: `ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow
+- Approval Gate Chat-path E2E live validation (requires Cloud Run deployment)
+- Phase 5: Grafana CEO dashboard
+
+---
+
 ## 2026-03-24T22:45-03:00 — Fix post-review issues for reactive routing
 
 ### What was done

@@ -345,13 +345,15 @@ def _collect_files(service: Any, folder_id: str, prefix: str, out: list[str]) ->
     page_token: str | None = None
     while True:
         resp = _retry_drive(
-            lambda pt=page_token: service.files()
-            .list(
-                q=query,
-                fields="nextPageToken, files(id, name, mimeType)",
-                pageToken=pt,
+            lambda pt=page_token: (
+                service.files()
+                .list(
+                    q=query,
+                    fields="nextPageToken, files(id, name, mimeType)",
+                    pageToken=pt,
+                )
+                .execute()
             )
-            .execute()
         )
         for item in resp.get("files", []):
             rel = f"{prefix}/{item['name']}" if prefix else item["name"]

@@ -1248,6 +1248,126 @@ class TestArchiveJob:
 # ── TestCodeQuality ────────────────────────────────────────────────────────────
 
 
+# ── Nexus-Prime record node ────────────────────────────────────────────────
+
+
+class TestNexusPrimeRecord:
+    """
+    Tests for the record() terminal node — specifically the APPROVAL_RESULT
+    rejection path that must write 'Rejected' back to Agent_Approvals when
+    the decision arrives via the Chat card-click path (Sheet not yet updated).
+    """
+
+    def _make_state(self, msg_type: MessageType, payload: dict) -> NexusPrimeWorkingMemory:
+        from models import A2AMessage
+
+        msg = A2AMessage(
+            source_agent="google-chat",
+            target_agent="nexus-prime",
+            project_id="test-project",
+            task_id="task-rec-1",
+            message_type=msg_type,
+            priority=3,
+            payload=payload,
+        )
+        return {  # type: ignore[return-value]
+            "incoming_message": msg,
+            "project_id": "test-project",
+            "task_id": "task-rec-1",
+            "hard_stop_triggered": False,
+            "parked_proposals": [],
+            "cost_usd": 0.0,
+            "start_time": datetime.now(UTC).isoformat(),
+        }
+
+    def test_rejection_updates_sheet_row(self):
+        """record() must write 'Rejected' to Agent_Approvals on APPROVAL_RESULT rejection."""
+        from agents.nexus_prime.orchestrator import record
+
+        state = self._make_state(
+            MessageType.APPROVAL_RESULT,
+            {"status": "Rejected", "proposal_id": "prop-42", "approved_by": "owner@example.com"},
+        )
+
+        with (
+            patch("tools.bigquery.insert_row"),
+            patch("tools.pubsub.publish"),
+            patch("agents.nexus_prime.orchestrator._write_heartbeat"),
+            patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value="idle"),
+            patch("tools.google_sheets.update_row") as mock_update,
+        ):
+            record(state)
+
+        mock_update.assert_called_once_with(
+            "Agent_Approvals",
+            "prop-42",
+            {"Status": "Rejected", "Approved By": "owner@example.com"},
+            "test-project",
+        )
+
+    def test_rejection_without_proposal_id_skips_sheet_update(self):
+        """record() must not call update_row when proposal_id is empty."""
+        from agents.nexus_prime.orchestrator import record
+
+        state = self._make_state(
+            MessageType.APPROVAL_RESULT,
+            {"status": "Rejected", "proposal_id": ""},
+        )
+
+        with (
+            patch("tools.bigquery.insert_row"),
+            patch("tools.pubsub.publish"),
+            patch("agents.nexus_prime.orchestrator._write_heartbeat"),
+            patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value="idle"),
+            patch("tools.google_sheets.update_row") as mock_update,
+        ):
+            record(state)
+
+        mock_update.assert_not_called()
+
+    def test_approved_result_does_not_update_sheet_in_record(self):
+        """record() must not call update_row for Approved (that is handled by promote)."""
+        from agents.nexus_prime.orchestrator import record
+
+        state = self._make_state(
+            MessageType.APPROVAL_RESULT,
+            {"status": "Approved", "proposal_id": "prop-99"},
+        )
+
+        with (
+            patch("tools.bigquery.insert_row"),
+            patch("tools.pubsub.publish"),
+            patch("agents.nexus_prime.orchestrator._write_heartbeat"),
+            patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value="idle"),
+            patch("tools.google_sheets.update_row") as mock_update,
+        ):
+            record(state)
+
+        mock_update.assert_not_called()
+
+    def test_sheet_update_failure_is_logged_not_raised(self):
+        """A Sheet write failure in record() must log a WARNING but not raise."""
+        from agents.nexus_prime.orchestrator import record
+
+        state = self._make_state(
+            MessageType.APPROVAL_RESULT,
+            {"status": "Rejected", "proposal_id": "prop-77"},
+        )
+
+        with (
+            patch("tools.bigquery.insert_row"),
+            patch("tools.pubsub.publish"),
+            patch("agents.nexus_prime.orchestrator._write_heartbeat"),
+            patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value="idle"),
+            patch("tools.google_sheets.update_row", side_effect=RuntimeError("Sheets 503")),
+            patch("agents.nexus_prime.orchestrator._log_cloud") as mock_log,
+        ):
+            record(state)  # must not raise
+
+        warning_calls = [c for c in mock_log.call_args_list if "WARNING" in str(c)]
+        assert warning_calls, "Expected a WARNING log when Sheet update fails"
+
+
 # ── Nexus-Prime think node ─────────────────────────────────────────────────
 
 

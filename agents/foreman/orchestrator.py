@@ -54,6 +54,7 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
     from config import get_settings
     from tools.memory import load_domain_memory, query_episodic
+    from tools.project_registry import load_project_registry
     from tools.pubsub import ensure_topic_exists
     from tools.secrets import SecretAccessDenied, SecretNotFoundError, get_secret
 
@@ -79,12 +80,30 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
     ]:
         state.setdefault(k, v)
 
+    # Step 2: secrets — fail fast
     try:
         get_secret("GEMINI_API_KEY", pid)
     except (SecretNotFoundError, SecretAccessDenied) as exc:
         _log_cloud(_AGENT_ID, pid, "security", "boot", f"STARTUP_FAILURE: {exc}", "CRITICAL")
         sys.exit(1)
 
+    # Step 3: Project Registry validation
+    try:
+        active_ids = {p.project_id for p in load_project_registry(pid)}
+        if pid not in active_ids and pid != settings.GCP_PROJECT_ID:
+            _log_cloud(
+                _AGENT_ID,
+                pid,
+                "security",
+                "boot",
+                f"STARTUP_FAILURE: unknown project_id '{pid}'",
+                "CRITICAL",
+            )
+            sys.exit(1)
+    except Exception:
+        pass
+
+    # Step 4: Pub/Sub — ensure outbound topic exists
     try:
         ensure_topic_exists(_OUTBOUND_TOPIC)
     except Exception:

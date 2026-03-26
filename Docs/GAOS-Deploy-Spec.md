@@ -5,7 +5,7 @@
 > This document is the step-by-step guide for standing up every Google Cloud and Google Workspace resource the system requires. Follow the sections in order. Each section ends with a verification step — do not proceed to the next section until verification passes.
 >
 > **Estimated time:** 2–3 hours for a first-time setup, 30 minutes for a repeat deployment.
-> **Estimated monthly cost after setup:** ≈ $5 (see `GAOS-Manager-Spec.md` §9.4 for breakdown).
+> **Estimated monthly cost after setup:** Low — architecture uses free-tier services and scale-to-zero compute (see `GAOS-Manager-Spec.md` §9.4 for breakdown).
 
 ---
 
@@ -1268,7 +1268,7 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 
 ### 4e — Cost + Security Verification
 
-- [ ] Cloud Billing dashboard shows actual usage ≤ $5/month after first 7-day period at normal load
+- [ ] Cloud Billing dashboard confirms low operating expenses after first 7-day period at normal load
 - [x] Budget alert configured at $10/month threshold in GCP Billing console — `SL10 Cloud Dev Budget` at $10/month with 50%/90%/100% thresholds; confirmed 2026-03-21 via `gcloud billing budgets list`
 - [x] Cloud Logging retention set to 7 days for `projects/morphic-gaos-prod/logs/` — `_Default` bucket: 7 days; confirmed 2026-03-21 via `gcloud logging buckets describe _Default`
 - [x] All 7 Cloud Run services confirm `--no-allow-unauthenticated` — no `allUsers` IAM binding on any service; verified 2026-03-21 via `gcloud run services get-iam-policy` on all 7
@@ -1721,7 +1721,7 @@ Phase 3 is complete — and Phase 4 (production validation) may begin — when *
 - [x] OpenTofu IaC blueprint (`infra/main.tf`) and push-to-deploy CI/CD pipeline (`.github/workflows/deploy.yml`) committed to repo ✅ (2026-03-20)
 - [x] WIF (Workload Identity Federation) replaces long-lived `GCP_SA_KEY` in CI/CD; `id-token: write` permission set; `attribute.repository` condition scopes access to this repo only ✅ (2026-03-20)
 - [x] All 408 unit tests passing — zero regressions from all Phase 3 additions ✅ (2026-03-20)
-- [ ] **[Requires GCP]** One-time OpenTofu bootstrap: `morphic-gaos-tfstate` GCS bucket created, `cloud-run-source-deploy` Artifact Registry repo created, `deployer-sa` created with required IAM bindings, WIF pool + OIDC provider created, `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` GitHub Secrets set → first `tofu plan` + `tofu apply` deploys all 7 Cloud Run services (see §9.3)
+- [x] **[Requires GCP]** One-time OpenTofu bootstrap: `morphic-gaos-tfstate` GCS bucket created, `cloud-run-source-deploy` Artifact Registry repo created, `deployer-sa` created with required IAM bindings, WIF pool + OIDC provider created, `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` GitHub Secrets set → first `tofu plan` + `tofu apply` deploys all 7 Cloud Run services ✅ (2026-03-21 — all confirmed in §19 4a)
 - [ ] **[Requires Cloud Run]** Approval Gate Chat-path validated end-to-end: Chat card button tap → `APPROVAL_RESULT` published to Pub/Sub → Nexus-Prime resumes the parked task → `Agent_Approvals` row updated + audit row written to Logs tab (see §14 unchecked item)
 
 ---
@@ -1740,7 +1740,7 @@ container deployments). Each gap is classified by whether it should be worked no
 | **Gap 3** | Secret provisioning is manual `gcloud` commands | `scripts/setup_secrets.py` | ✅ **Done** — 2026-03-23 |
 | **Gap 4** | `setup_workspace.py` prints IDs but user copies them into `settings.yaml` by hand | `scripts/setup_workspace.py` | ✅ **Done** — 2026-03-23 |
 | **Gap 1** | No CI/CD pipeline — build, push, and `tofu apply` are manual | `.github/workflows/` | ✅ Done (Phase 4) |
-| **Gap 2** | Bootstrap requires manual pre-steps (GCS bucket, GCP APIs) | `scripts/bootstrap.py` | Phase 4 exit |
+| **Gap 2** | Bootstrap requires manual pre-steps (GCS bucket, GCP APIs) | `scripts/bootstrap.py` | ✅ **Done** — 2026-03-26 |
 | **Gap 5** | No pre-built image in a public registry | CI/CD output | Phase 4 exit (depends on Gap 1) |
 
 ### Target new-deployment sequence (all gaps closed)
@@ -1781,14 +1781,32 @@ after creating Drive/Sheets resources:
 The spec instructions in §4.1 no longer require a manual copy step — the script
 handles it. The printout of IDs is retained for reference.
 
-### Gaps 2 and 5 — Phase 4 exit tasks
+### Gap 2 — `scripts/bootstrap.py`
 
-These are build/ship concerns, not development concerns. Build them when Phase 4
-exit criteria are otherwise met:
+Automates the full Phase 4 Bootstrap Runbook (§20) from a blank GCP project to a
+CI/CD-ready state. Run once before the first `git push origin master`.
 
-- **Gap 2 (bootstrap script):** Wrap GCS bucket creation + `gcloud services enable`
-  into `scripts/bootstrap.py`. Target audience: new deployments on a blank GCP project.
-  All current provisioning is complete — this script has zero value today.
+Steps automated (all idempotent — safe to re-run):
+- Enables 14 required GCP APIs via `gcloud services enable`
+- Creates the GCS Terraform state bucket `morphic-gaos-tfstate` (versioning on)
+- Creates the `cloud-run-source-deploy` Artifact Registry Docker repo
+- Creates the `deployer-sa` CI/CD service account
+- Applies all IAM bindings: `roles/run.admin` (project), `roles/artifactregistry.writer` (AR
+  repo), `roles/storage.objectAdmin` (tfstate bucket), `roles/iam.serviceAccountUser` on all 7
+  per-agent service accounts
+- Creates the `github-actions` WIF pool and `github-oidc` OIDC provider, scoped to this repo
+- Applies the `roles/iam.workloadIdentityUser` binding on `deployer-sa`
+- Sets `WIF_PROVIDER`, `WIF_SERVICE_ACCOUNT`, and `SETTINGS_YAML` GitHub Secrets via `gh` CLI
+  (skipped gracefully if `gh` is not installed)
+
+Run:
+```powershell
+python scripts/bootstrap.py --project morphic-gaos-prod
+```
+
+See `scripts/bootstrap.py` docstring for full prerequisites and arg reference.
+
+### Gap 5 — Phase 4 exit task
 
 - **Gap 5 (pre-built image):** Publish `gaos-agent:latest` to a public or
   customer-accessible registry in the CI/CD apply job. Depends on Gap 1 (done).

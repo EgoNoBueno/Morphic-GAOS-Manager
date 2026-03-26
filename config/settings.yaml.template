@@ -71,6 +71,16 @@ apps_script:
 chat:
   owner_space: ""  # e.g. spaces/AAAAXXXXXXX
 
+# Google Docs — Knowledge Atlas and DWD impersonation
+# knowledge_atlas_doc_id: the single Google Doc that sync_to_atlas() writes to.
+# If empty, sync_to_atlas() raises MemoryMirrorError on every call.
+# Populate after creating the Atlas doc (setup_workspace.py or manually).
+docs:
+  knowledge_atlas_doc_id: ""
+  blueprints_folder_id: ""
+  dwd_subject: ""             # Workspace user email for domain-wide delegation
+  service_account_key: ""     # Path to SA key JSON (Cloud Run uses metadata server instead)
+
 # Vertex AI Search — Layer 5b semantic retrieval over Drive Knowledge/ corpus
 # Datastore IDs are provisioned by setup_workspace.py (Phase 2.5 Step 3)
 # Leave empty until datastores are created — tools gracefully raise DatastoreNotConfiguredError

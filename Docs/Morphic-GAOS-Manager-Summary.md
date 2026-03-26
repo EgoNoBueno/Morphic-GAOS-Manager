@@ -4,7 +4,7 @@
 
 Morphic-G AOS (Agent Operating System) is an intelligent workforce built entirely on Google's cloud ecosystem. Instead of one monolithic bot, it is a coordinated team of specialized AI agents that handle the day-to-day operations of a small business — accounting, marketing, sales, operations, admin, and research — running autonomously, learning from experience, and escalating to the human owner only when a decision genuinely requires one.
 
-The system is designed to run for roughly **$2.50 per month** in cloud costs by routing routine work to a free local AI model, reserving the paid cloud models for decisions that actually warrant them, and using Google's free-tier services wherever possible.
+The system is designed to run at **minimal operating cost** by routing routine work to a free local AI model, reserving the paid cloud models for decisions that actually warrant them, and using Google's free-tier services wherever possible.
 
 ---
 
@@ -12,7 +12,7 @@ The system is designed to run for roughly **$2.50 per month** in cloud costs by 
 
 **Primary Goal:** Run all routine small-business operations (accounting, marketing, sales, ops, admin, research) autonomously through a coordinated team of specialized AI agents — escalating to the human owner *only* when a decision genuinely requires one.
 
-**Cost Target:** ~$2.50/month by routing routine work to a free local model (Ollama), using paid Gemini models only for genuine reasoning, and staying within Google's free-tier services everywhere else.
+**Cost Target:** Minimal operating expenses by routing routine work to a free local model (Ollama), using paid Gemini models only for genuine reasoning, and staying within Google's free-tier services everywhere else.
 
 **Key Design Objectives:**
 
@@ -87,7 +87,7 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 
 #### Hybrid LLM Strategy
 **What it is:** Three model tiers — `LOCAL_MODEL` (free, runs on your local machine via Ollama), `FAST_MODEL` (Gemini Flash, fast and cheap), `DEEP_MODEL` (Gemini Pro, for serious reasoning). All three are referenced by alias in `settings.yaml`; no version strings appear in code.
-**Why it exists:** The majority of agent work is logging, formatting, and summarizing — tasks that a free local model handles perfectly. Reserving paid cloud models for genuine reasoning decisions cuts monthly costs from ~$50 to ~$2.50.
+**Why it exists:** The majority of agent work is logging, formatting, and summarizing — tasks that a free local model handles perfectly. Reserving paid cloud models for genuine reasoning decisions reduces monthly costs by an order of magnitude.
 **Resources required:** Ollama (local machine), Google Gemini API, `config/settings.yaml`.
 
 #### A2A Communication Protocol
@@ -111,8 +111,8 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 **Resources required:** Google Apps Script, BigQuery, Ollama (for weekly summarization before deletion).
 
 #### Cost Strategy
-**What it is:** A four-tier decision hierarchy: Free First → Hybrid Second → Paid Only When Necessary → Never Pay for Idle. Every infrastructure choice is evaluated against this before committing. Estimated monthly cost for a single operator during Phases 1–4 is ≈ $2.50.
-**Why it exists:** Small business operators cannot justify $50–$200/month for an AI system that mostly does routine logging. The architecture is explicitly designed to stay within Google's free tiers for everything except actual reasoning work.
+**What it is:** A four-tier decision hierarchy: Free First → Hybrid Second → Paid Only When Necessary → Never Pay for Idle. Every infrastructure choice is evaluated against this before committing — the result is low, predictable operating expenses.
+**Why it exists:** Small business operators cannot justify high monthly bills for an AI system that mostly does routine logging. The architecture is explicitly designed to stay within Google's free tiers for everything except actual reasoning work.
 **Resources required:** Cloud Run (scale-to-zero), Ollama (local), Cloud Scheduler, all free-tier Google services.
 
 #### Governance & Security
@@ -122,7 +122,7 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 
 #### Development Roadmap (5 Phases)
 **What it is:** A phased build plan. **Phase 1 is complete** — all 7 orchestrators, the `main.py` Cloud Run entry point, the core tool layer (`bigquery`, `webhook_sender`, `memory`, `project_registry`, `google_sheets`, `pubsub`, `secrets`), and a baseline test suite covering U1–U5 unit specs and S1–S4 static analysis gate.
-**Phase 2.5 Steps 1–6 are complete (408 tests passing):**
+**Phase 2.5 Steps 1–6 are complete (483 tests passing after Phase 3 additions):**
 - Step 1: `tools/google_chat.py` + `POST /chat` (25 tests; commit `551f0ca`)
 - Step 2: `handle_daily_sync()` + `POST /daily-sync` + `ChatConfig` (13 tests; commit `ed6140b`)
 - Step 3: `tools/vertex_search.py` + Playbook schema + `write_playbook` node (22 tests; commit `d0f05b1`)
@@ -440,7 +440,7 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 **Why it exists:** Without it, all agent-generated content — sales sequences, status updates, chat replies — defaults to corporate jargon. The three reference brands give agents a concrete, blend-able target rather than a vague tone descriptor.
 
 #### `working-preferences.md` — The Constitution
-**What it does:** Defines operational rules of engagement: architectural philosophy (modular, minimum complexity), economic discipline ($2.50/month ceiling, math-backed recommendations), autonomy and control policies, communication style (5 words not 10), and a Workflow Policies table (Search Before Build, Automate by Default, Atomic Execution, etc.).
+**What it does:** Defines operational rules of engagement: architectural philosophy (modular, minimum complexity), economic discipline (low expenses standard, math-backed recommendations), autonomy and control policies, communication style (5 words not 10), and a Workflow Policies table (Search Before Build, Automate by Default, Atomic Execution, etc.).
 **Why it exists:** Prevents agents from suggesting expensive, monolithic, or manual solutions. Overrides generic AI assistant defaults with the specific system and cost philosophy of this deployment.
 
 **Integration point:** `_load_context_trio()` reads all three files gracefully — if any file is absent (e.g., in a stripped container or unit test environment), it skips that file without error. The agent falls back to the identity-only prompt.

@@ -297,9 +297,7 @@ async def _download_chat_attachment(download_uri: str, media_resource_name: str 
 
     # Workspace Add-ons format omits downloadUri — construct it from resourceName.
     if not download_uri and media_resource_name:
-        download_uri = (
-            f"https://chat.googleapis.com/v1/media/{media_resource_name}?alt=media"
-        )
+        download_uri = f"https://chat.googleapis.com/v1/media/{media_resource_name}?alt=media"
 
     if not download_uri:
         raise RuntimeError(
@@ -602,7 +600,7 @@ async def chat(request: Request) -> JSONResponse:
     import json as _json
 
     _body_preview = _json.dumps(body)[:500] if isinstance(body, dict) else str(body)[:500]
-    log.info(f"Chat body FULL DEBUG: {_body_preview}")
+    log.debug(f"Chat body FULL DEBUG: {_body_preview}")
 
     import base64
     import uuid
@@ -798,15 +796,25 @@ async def chat(request: Request) -> JSONResponse:
 
     asyncio.create_task(_run_agent_async())
 
-    # Return acknowledgment for Add-ons format events.
-    # For MESSAGE events received in Add-ons format (with commonEventObject),
-    # the synchronous response shows as a separate message. The real answer
-    # follows asynchronously via send_threaded_reply().
-    # Note: Google Chat may still briefly show "not responding" for the original
-    # message until the async reply arrives — this is expected behavior for
-    # fire-and-forget async patterns.
+    # Return an immediate, action-specific acknowledgment.
+    # For CARD_CLICKED the owner already made a decision, so echo it back
+    # directly instead of the generic "Processing…" placeholder.
+    if event_type == "CARD_CLICKED":
+        if action_name == "approve":
+            ack_text = "✅ Approved — deploying now. I'll confirm when complete."
+        elif action_name == "reject":
+            ack_text = "❌ Rejected — decision recorded."
+        elif action_name == "skill_approve":
+            ack_text = "✅ Skill import approved — notifying agent."
+        elif action_name == "skill_reject":
+            ack_text = "❌ Skill import denied."
+        else:
+            ack_text = "Processing..."
+    else:
+        ack_text = "Processing..."
+
     return JSONResponse(
-        content={"text": "Processing..."},
+        content={"text": ack_text},
         headers={"Content-Type": "application/json; charset=utf-8"},
     )
 

@@ -1106,6 +1106,41 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     except Exception:
         pass
 
+    # When APPROVAL_RESULT (status=Rejected) arrives via the Chat card-click path,
+    # the Sheet row has not been touched yet (unlike the Apps Script path where the
+    # owner edits the Sheet first, then Apps Script fires the Pub/Sub message).
+    # Update the row so Agent_Approvals stays in sync regardless of approval path.
+    # This is idempotent — writing "Rejected" over an already-"Rejected" row is harmless.
+    if (
+        msg
+        and msg.message_type == MessageType.APPROVAL_RESULT
+        and (msg.payload or {}).get("status") == "Rejected"
+    ):
+        _rejection_payload = msg.payload or {}
+        _rejection_proposal_id = _rejection_payload.get("proposal_id", "")
+        if _rejection_proposal_id:
+            from tools.google_sheets import update_row as _sheets_update_row
+
+            try:
+                _sheets_update_row(
+                    "Agent_Approvals",
+                    _rejection_proposal_id,
+                    {
+                        "Status": "Rejected",
+                        "Approved By": _rejection_payload.get("approved_by", ""),
+                    },
+                    state["project_id"],
+                )
+            except Exception as _exc:
+                _log_cloud(
+                    "nexus-prime",
+                    state["project_id"],
+                    "task",
+                    state.get("task_id", ""),
+                    f"record: Sheet update for Rejected proposal failed: {_exc}",
+                    "WARNING",
+                )
+
     # Don't re-publish a STATUS_UPDATE when already processing one — prevents
     # the nexus-prime.sub.events self-delivery loop.
     heartbeat_text = _format_heartbeat(state)
