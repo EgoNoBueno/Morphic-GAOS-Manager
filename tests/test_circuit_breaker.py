@@ -162,15 +162,25 @@ class TestCooldownTransition:
             check(_AGENT, _RESOURCE, cooldown_seconds=0.01)
 
     def test_probe_slot_released_on_record_failure(self):
-        """After record_failure clears probe_in_flight, cooldown starts fresh (OPEN)."""
+        """After record_failure clears probe_in_flight, cooldown starts fresh (OPEN).
+        A new probe must be admissible once the new cooldown elapses."""
         for _ in range(3):
             record_failure(_AGENT, _RESOURCE, failure_threshold=3, cooldown_seconds=0.01)
         time.sleep(0.02)
         check(_AGENT, _RESOURCE, cooldown_seconds=0.01)  # → HALF_OPEN, probe claimed
         record_failure(_AGENT, _RESOURCE, cooldown_seconds=0.01)  # probe released, → OPEN
-        # Circuit is OPEN again — check should raise (cooldown just reset).
+        # Circuit is OPEN again — check must raise while the new cooldown is active.
         with pytest.raises(CircuitOpenError):
             check(_AGENT, _RESOURCE, cooldown_seconds=60)
+        # Sleep past the new cooldown; the probe slot must be free so a fresh
+        # probe is admitted (HALF_OPEN).  If probe_in_flight were never cleared
+        # this call would raise "probe already in flight".
+        time.sleep(0.02)
+        check(_AGENT, _RESOURCE, cooldown_seconds=0.01)  # must not raise
+        assert get_state(_AGENT, _RESOURCE) is CircuitState.HALF_OPEN
+        # A second concurrent call confirms exactly one probe slot is now occupied.
+        with pytest.raises(CircuitOpenError, match="probe already in flight"):
+            check(_AGENT, _RESOURCE, cooldown_seconds=0.01)
 
 
 # ── Reset ─────────────────────────────────────────────────────────────────────
