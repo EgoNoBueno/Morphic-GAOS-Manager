@@ -244,11 +244,14 @@ documents:
       - Term renamed across the codebase
       - New acronym established in a spec
 
-  AI-Autocoding-Rules.md:
+  # NOTE: AI-Autocoding-Rules.md was deleted 2026-03-27.
+  # The single authoritative rules file is .github/copilot-instructions.md.
+  # VS Code injects it automatically as system context for every AI session.
+  ".github/copilot-instructions.md":
     purpose: >
       Hard rules for all development — model aliases, safety gates, commit
       conventions, logging standards, PowerShell syntax, and automation-first policy.
-      Authoritative source; .github/copilot-instructions.md mirrors this.
+      Authoritative and only copy; VS Code reads this file directly.
     code_paths:
       - pyproject.toml
       - .vscode/settings.json
@@ -424,7 +427,7 @@ inverse_index:
   "pyproject.toml":
     - GAOS-Deploy-Spec.md
     - GAOS-Onboarding-Spec.md
-    - AI-Autocoding-Rules.md            # if tooling standards change
+    - ".github/copilot-instructions.md" # if tooling standards change
 
   "README.md":
     - Morphic-GAOS-Manager-Summary.md
@@ -432,10 +435,8 @@ inverse_index:
   "Docs/brand-voice.md":
     - GAOS-Persona-Spec.md
 
-  "Docs/AI-Autocoding-Rules.md":
+  ".github/copilot-instructions.md":
     - GAOS-Persona-Spec.md              # if Rule 15 changes
-    - ".github/copilot-instructions.md" # mirror — keep in sync
 
   "Docs/DOC-INDEX.yaml":
-    - AI-Autocoding-Rules.md            # §13 pointer
     - ".github/copilot-instructions.md" # §13 pointer

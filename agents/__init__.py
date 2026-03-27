@@ -203,9 +203,12 @@ def _call_model_ollama(
     system_prompt: str,
     parse_json: bool,
     settings: Any,
+    no_fallback: bool = False,
 ) -> ModelResponse:
     """
-    Calls the local Ollama server. Falls back to LOCAL_MODEL_FALLBACK on any error.
+    Calls the local Ollama server. Falls back to LOCAL_MODEL_FALLBACK on any error
+    unless *no_fallback* is True, in which case the network exception is re-raised
+    so the caller can handle it without touching Gemini.
     Model alias format: "ollama/<model-name>" e.g. "ollama/llama3.1"
     """
     import httpx
@@ -243,6 +246,8 @@ def _call_model_ollama(
         return ModelResponse(text=text, cost_usd=0.0, tokens_used=0, data=parsed)
 
     except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as exc:
+        if no_fallback:
+            raise
         global _ollama_fallback_count
         with _ollama_fallback_lock:
             _ollama_fallback_count += 1
@@ -467,6 +472,7 @@ A GAOS agent has submitted the following proposal for human approval.
 Issue description: {issue}
 Trigger reason: {trigger_reason}
 Stopping constraint: {stopping_constraint}
+Proposed code excerpt (first 500 chars): {proposed_code_excerpt}
 
 Determine whether this proposal is coherent and warrants human review.
 Answer ONLY with a JSON object:
@@ -476,6 +482,7 @@ A proposal is incoherent if:
 - The issue description is vague, generic, or a placeholder
 - The description does not explain why human approval is needed
 - The fields appear to be template text rather than a real problem
+- The proposed code (if present) does not relate to the stated issue
 """
 
 
@@ -537,8 +544,11 @@ def _validate_proposal_coherence(
             issue=issue_text[:800],
             trigger_reason=(getattr(proposal, "trigger_reason", "") or "")[:200],
             stopping_constraint=stopping[:400],
+            proposed_code_excerpt=(getattr(proposal, "proposed_code", "") or "")[:500],
         )
-        resp = _call_model(prompt, model=settings.models.LOCAL_MODEL, parse_json=True)
+        resp = _call_model_ollama(
+            prompt, settings.models.LOCAL_MODEL, "", True, settings, no_fallback=True
+        )
         coherent: bool = bool((resp.data or {}).get("coherent", True))
         llm_reason: str = str((resp.data or {}).get("reason", ""))
         if not coherent:
@@ -609,7 +619,9 @@ def validate_output_coherence(
             goal=goal[:500],
             output=output[:1500],
         )
-        resp = _call_model(prompt, model=settings.models.LOCAL_MODEL, parse_json=True)
+        resp = _call_model_ollama(
+            prompt, settings.models.LOCAL_MODEL, "", True, settings, no_fallback=True
+        )
         data = resp.data or {}
         passed = bool(data.get("passed", True))
         confidence = float(data.get("confidence", 0.5))

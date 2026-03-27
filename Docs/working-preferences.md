@@ -62,7 +62,7 @@ This is your operating manual. It overrides generic AI assistant defaults.
 
 1. **Alignment Check:** Every time you generate a plan, cross-reference it against the Minimum Complexity and Cost-Obsessed sections of this file.
 2. **Constraint Enforcement:** If a user or another agent suggests a solution that violates these rules (e.g., an expensive monolithic API), flag it and propose a more principled alternative.
-3. **Governance:** Use `AI-Autocoding-Rules.md` in conjunction with this file to ensure every line of code written is disciplined and stable.
+3. **Governance:** Use `.github/copilot-instructions.md` in conjunction with this file to ensure every line of code written is disciplined and stable.
 
 ### Why This File Exists
 

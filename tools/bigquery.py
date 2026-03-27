@@ -91,11 +91,27 @@ def insert_row(table_ref: str, row: dict[str, Any], project_id: str = "") -> Non
         raise BigQueryInsertError(f"BigQuery insert into '{full_ref}' failed: {exc}") from exc
 
 
-def insert_rows(table_ref: str, rows: list[dict[str, Any]], project_id: str = "") -> None:
-    """
-    Stream multiple rows into a BigQuery table in a single API call.
+def insert_rows(
+    table_ref: str,
+    rows: list[dict[str, Any]],
+    project_id: str = "",
+    row_ids: list[str] | None = None,
+) -> None:
+    """Stream multiple rows into a BigQuery table in a single API call.
 
     Prefer this over calling insert_row() in a loop for batches of ≥ 2 rows.
+
+    Args:
+        table_ref:  Unqualified ``dataset.table`` or fully qualified ``project.dataset.table``.
+        rows:       List of dicts keyed by column name. Values must be JSON-serialisable.
+        project_id: Unused (present for API symmetry with other tools). GCP project is
+                    always read from settings.GCP_PROJECT_ID.
+        row_ids:    Optional list of stable, unique ``insertId`` strings (one per row).
+                    When supplied, BigQuery uses these as deduplication keys for at-least-
+                    once delivery — re-sending the same ``insertId`` within the dedup
+                    window (currently ~1 minute) will not create duplicate rows. Pass a
+                    deterministic key (e.g. SHA-256 of the row's natural key) when the
+                    caller may retry, such as the nightly archive job.
 
     Raises:
         BigQueryInsertError: API call failed after retrying transient errors.
@@ -114,7 +130,7 @@ def insert_rows(table_ref: str, rows: list[dict[str, Any]], project_id: str = ""
         predicate=retry.if_transient_error, initial=1.0, maximum=4.0, multiplier=2.0, deadline=10.0
     )
     def _insert_batch() -> None:
-        errors = client.insert_rows_json(full_ref, rows)
+        errors = client.insert_rows_json(full_ref, rows, row_ids=row_ids)
         if errors:
             raise BigQueryRowError(f"BigQuery rejected rows for '{full_ref}': {errors}")
 

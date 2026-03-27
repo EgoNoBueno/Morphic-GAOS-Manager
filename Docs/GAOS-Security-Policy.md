@@ -6,7 +6,7 @@
 >
 > **Authority:** Violations of any **MUST** requirement are hard-stops. Violations of **SHOULD** requirements require a documented exception filed as a Priority-4 Approval Gate proposal.
 >
-> **Related specs:** `GAOS-Manager-Spec.md` §14–15, `GAOS-Privacy-Spec.md`, `AI-Autocoding-Rules.md` §4–5, `GAOS-Deploy-Spec.md` §3.
+> **Related specs:** `GAOS-Manager-Spec.md` §14–15, `GAOS-Privacy-Spec.md`, `.github/copilot-instructions.md` §4–5, `GAOS-Deploy-Spec.md` §3.
 
 ---
 
@@ -377,11 +377,11 @@ Security is integrated at every phase of the agent development lifecycle:
 | Audit logging | `_log_cloud()` for all side effects, BigQuery 24-month retention | `GAOS-Manager-Spec.md §15.1` |
 | Data encryption at rest | GCP default (AES-256) for Sheets, BigQuery, Secret Manager, Drive | `GAOS-Privacy-Spec.md §2.1` |
 | Data encryption in transit | TLS 1.2+ enforced by Cloud Run; HTTPS only | GCP default |
-| Secret management | Secret Manager only; no plaintext in code or config | `AI-Autocoding-Rules.md §3` |
-| Code integrity | SHA-256 pinning at proposal submission; verified at deploy | `AI-Autocoding-Rules.md §5` |
+| Secret management | Secret Manager only; no plaintext in code or config | `.github/copilot-instructions.md §3` |
+| Code integrity | SHA-256 pinning at proposal submission; verified at deploy | `.github/copilot-instructions.md §5` |
 | Least privilege | IAM bindings scoped to minimum required permissions per agent | `infra/main.tf` |
 | Incident response | Priority-5 hard stop → owner alert → SA revocation path | §8.4 above |
-| Human oversight | Approval Gate mandatory for all code deployment | `AI-Autocoding-Rules.md §4` |
+| Human oversight | Approval Gate mandatory for all code deployment | `.github/copilot-instructions.md §4` |
 
 ---
 

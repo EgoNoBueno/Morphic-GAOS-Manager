@@ -357,7 +357,7 @@ Without these files, AI agents default to generic assistant behavior — technic
 1. **Audit Stubs** — Open `about-me.md` and replace every `NOTE TO USER` placeholder with your specific niche, priorities, and KPIs. The more specific you are, the better agent outputs become.
 2. **Update Burned-By Rules** — When a session reveals a failure mode (a repeated mistake, a wrong assumption, a bad default), add it to `working-preferences.md` under Operational Workflow Policies. These accumulate into a lessons-learned database the system consults automatically.
 3. **Refine Voice** — If agent output tone feels off — too stiff, too casual, wrong vocabulary — edit the vocabulary table or voice pillars in `brand-voice.md`. Changes take effect on the next session.
-4. **Technical Stack Alignment** — When your stack changes (new LLM, new GCP project, new integration), update `working-preferences.md`'s tool references. Security and approval-gate rules live in `AI-Autocoding-Rules.md` — update both together.
+4. **Technical Stack Alignment** — When your stack changes (new LLM, new GCP project, new integration), update `working-preferences.md`'s tool references. Security and approval-gate rules live in `.github/copilot-instructions.md` — update both together.
 
 ### How the Agent Uses This Trio
 
@@ -433,6 +433,6 @@ Infrastructure as Code powered by [OpenTofu](https://opentofu.org) — an open-s
 <div align="center">
 
 *Built entirely on Google's cloud ecosystem.*
-*Phases 1–4 complete. 558 tests green. Phase 4: exiting — cost/security verification and GAOS-Doctor checklist remaining.*
+*Phases 1–3 complete. Phase 4 in progress — 558 tests green. Cost/security verification and GAOS-Doctor checklist remaining.*
 
 </div>

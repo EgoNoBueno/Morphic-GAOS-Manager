@@ -739,7 +739,7 @@ print('Dataset ready')
 "
 ```
 
-Then create all 6 tables:
+Then create all 7 tables:
 
 | Table | Partition | TTL | Purpose |
 |-------|-----------|-----|---------|
@@ -1492,7 +1492,7 @@ Summarizes and moves aged Sheet rows to BigQuery.
 
 ```bash
 NP_URL="https://nexus-prime-7bu22bxlda-uc.a.run.app"
-gcloud scheduler jobs create http nightly-archive \
+gcloud scheduler jobs create http gaos-archive \
   --location=us-central1 \
   --schedule="0 2 * * *" \
   --uri="${NP_URL}/archive" \
@@ -1502,7 +1502,7 @@ gcloud scheduler jobs create http nightly-archive \
 
 > ⚠️ **Warning — hardcoded URL:** The `NP_URL` above is the URL for the `morphic-gaos-prod` deployment. On a new project it will be different. Use `scripts/provision_schedulers.py` instead — it resolves the URL dynamically from the Cloud Run Admin API.
 
-**Verification:** In Cloud Scheduler console, both jobs appear with state `ENABLED`. Run each manually by clicking **Force run** — both should return HTTP 200. `ttl-sweep` hits `POST /ttl-sweep`; `nightly-archive` hits `POST /archive` (implemented in Phase 2 Item 3 — archives aged Sheet rows to BigQuery).
+**Verification:** In Cloud Scheduler console, both jobs appear with state `ENABLED`. Run each manually by clicking **Force run** — both should return HTTP 200. `ttl-sweep` hits `POST /ttl-sweep`; `gaos-archive` hits `POST /archive` (implemented in Phase 2 Item 3 — archives aged Sheet rows to BigQuery).
 
 ### 10.3 Daily Kickoff Job (6:00 AM daily) — *Phase 2.5 Step 2*
 
@@ -1512,7 +1512,7 @@ Triggers Nexus-Prime's morning briefing. Nexus-Prime queries overnight Logs, Err
 
 ```bash
 NP_URL="https://nexus-prime-7bu22bxlda-uc.a.run.app"
-gcloud scheduler jobs create http daily-kickoff \
+gcloud scheduler jobs create http gaos-daily-sync \
   --location=us-central1 \
   --schedule="0 6 * * *" \
   --uri="${NP_URL}/daily-sync" \
@@ -1536,7 +1536,7 @@ gcloud scheduler jobs create http doc-comment-poll \
   --project=morphic-gaos-prod
 ```
 
-**Verification:** Both Phase 2.5 jobs appear with state `ENABLED` in the Scheduler console. Force-run `daily-kickoff` — a morning briefing card appears in the owner's Chat space (`POST /daily-sync` returns HTTP 200). Force-run `doc-comment-poll` — `POST /poll-comments` returns HTTP 200.
+**Verification:** Both Phase 2.5 jobs appear with state `ENABLED` in the Scheduler console. Force-run `gaos-daily-sync` — a morning briefing card appears in the owner's Chat space (`POST /daily-sync` returns HTTP 200). Force-run `doc-comment-poll` — `POST /poll-comments` returns HTTP 200.
 
 ---
 
@@ -1587,7 +1587,7 @@ Phase 1 is complete when all of the following pass. Run them in order.
 
 | # | Test | How to run | Expected result |
 |---|------|-----------|-----------------|
-| 0 | Unit test suite | `pytest` | 558 tests pass, 0 failures |
+| 0 | Unit test suite | `pytest` | Full suite passes — 0 failures, 0 errors |
 | 1 | Sheet write | `python -c "from tools.google_sheets import init_sheets_client, append_row; import datetime; init_sheets_client('default'); append_row('Logs', {'timestamp': datetime.datetime.utcnow().isoformat(), 'level': 'SMOKE_TEST', 'source': 'smoke', 'message': 'phase 1 test'}, 'default')"` | Row appears in `Logs` tab |
 | 2 | Sheet read | `python -c "from tools.google_sheets import init_sheets_client, get_all_records; init_sheets_client('default'); rows = get_all_records('Project Registry', 'default'); print(f'{len(rows)} rows')"` | Prints `0 rows` (or more once project rows are added) |
 | 3 | Pub/Sub publish | `python -c "from tools.pubsub import publish; from models import A2AMessage; ..."` sending a test message to `agent.nexus-prime.events` | Message ID returned; no exception |
@@ -1616,7 +1616,7 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [x] **[Phase 2.5]** Vertex AI Search datastore created and indexed against Drive `Knowledge/` folder; datastore ID stored in `settings.yaml`
 - [x] **[Phase 2.5]** Google Custom Search Engine created; CSE ID and API key stored in Secret Manager as `GOOGLE_SEARCH_CX` and `GOOGLE_SEARCH_API_KEY`
 - [ ] **[Phase 2.5]** AppSheet app deployed and connected to the Google Sheets workbook (`Agent_Approvals` + `Project Registry` tabs at minimum)
-- [x] **[Phase 2.5]** Cloud Scheduler `daily-kickoff` job created (6 AM daily, `POST /daily-sync`, returns HTTP 200)
+- [x] **[Phase 2.5]** Cloud Scheduler `gaos-daily-sync` job created (6 AM daily, `POST /daily-sync`, returns HTTP 200)
 - [x] **[Phase 2.5]** Cloud Scheduler `doc-comment-poll` job created (every 5 minutes, `POST /poll-comments`, returns HTTP 200)
 - [x] **[Phase 2.5]** `POST /chat` endpoint returns HTTP 200; Nexus-Prime responds in Chat thread within 10 seconds
 - [ ] **[Phase 2.5]** Approval Gate Chat-path validated end-to-end: Chat card button tap → `APPROVAL_RESULT` published to Pub/Sub → Nexus-Prime resumes the parked task → `Agent_Approvals` row updated + audit row written to Logs tab (see §14 unchecked item)
@@ -1626,7 +1626,7 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [x] Authorized Approvers tab has at least one row (owner, tier 5, active=TRUE)
 - [x] `settings.yaml` is complete with correct `workbook_id`, `knowledge_folder_id`, and model aliases
 - [x] `WEBHOOK_URL` secret is populated in Secret Manager
-- [x] BigQuery dataset and 6 tables created with TTL partitioning
+- [x] BigQuery dataset and 7 tables created with TTL partitioning
 - [x] All Knowledge/ seed files created in Drive
 - [x] All 7 Cloud Run services deployed and returning `{"status":"ok"}` on `/health`
 - [x] All 22 Pub/Sub push subscriptions created with OIDC auth (`pubsub-push-sa`)

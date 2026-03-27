@@ -1412,8 +1412,15 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
                 }
                 for _, r in aged_logs
             ]
+            # Deterministic insertId per row — BQ deduplicates retries within ~1 min window.
+            log_row_ids = [
+                hashlib.sha256(
+                    f"{project_id}:{r.get('timestamp', '')}:{r.get('agent_id', '')}:{r.get('level', '')}".encode()
+                ).hexdigest()
+                for _, r in aged_logs
+            ]
             try:
-                bq_insert_rows("aos_logs.task_outcomes", bq_rows)
+                bq_insert_rows("aos_logs.task_outcomes", bq_rows, row_ids=log_row_ids)
                 sheets_delete_rows("Logs", [rn for rn, _ in aged_logs], project_id)
                 stats["Logs"] = len(aged_logs)
             except Exception as exc:
@@ -1456,8 +1463,15 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
                 }
                 for _, r in aged_errs
             ]
+            # Deterministic insertId per row — guards against duplicate BQ inserts on retry.
+            err_row_ids = [
+                hashlib.sha256(
+                    f"{project_id}:{r.get('timestamp', '')}:{r.get('agent_id', '')}:{r.get('error_type', '')}:{r.get('message', '')[:200]}".encode()
+                ).hexdigest()
+                for _, r in aged_errs
+            ]
             try:
-                bq_insert_rows("aos_logs.evolution_tasks", bq_rows)
+                bq_insert_rows("aos_logs.evolution_tasks", bq_rows, row_ids=err_row_ids)
                 sheets_delete_rows("Error Logs", [rn for rn, _ in aged_errs], project_id)
                 stats["Error Logs"] = len(aged_errs)
             except Exception as exc:

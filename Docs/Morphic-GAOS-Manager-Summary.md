@@ -464,7 +464,7 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 | `Docs/GAOS-Privacy-Spec.md` | Cloud data exposure, privacy risk analysis, and mitigation strategies | ~260 lines |
 | `Docs/GAOS-Project-Glossary.md` | Canonical glossary of all abbreviations and technical terms | ~157 lines |
 | `Docs/GAOS-Doctor.md` | Health-check runbook for diagnosing deployment and runtime issues | ~55 lines |
-| `Docs/AI-Autocoding-Rules.md` | Coding rules enforced during AI-assisted development sessions | ~250 lines |
+| `.github/copilot-instructions.md` | Coding rules enforced during AI-assisted development sessions | ~452 lines |
 | `Docs/about-me.md` | Context Trio — owner business context, priorities, and KPIs (The Compass) | ~67 lines |
 | `Docs/brand-voice.md` | Context Trio — Transparent Champion brand voice standard (The Persona) | ~66 lines |
 | `Docs/working-preferences.md` | Context Trio — operational rules of engagement, the Low Expenses Standard, workflow policies (The Constitution) | ~69 lines |

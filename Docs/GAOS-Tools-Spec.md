@@ -816,7 +816,7 @@ def validate_code_safety(code: str) -> dict[str, Any]:
     """
 ```
 
-Failure is a hard stop — code is not submitted, not retried. See `AI-Autocoding-Rules.md §4` for the full gate contract.
+Failure is a hard stop — code is not submitted, not retried. See `.github/copilot-instructions.md §4` for the full gate contract.
 
 ### Ollama Fallback Telemetry
 

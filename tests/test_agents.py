@@ -2140,7 +2140,7 @@ class TestQPProposalCoherence:
         mock_resp.text = '{"coherent": false, "reason": "Issue is too vague to act on."}'
 
         proposal = self._make_proposal()
-        with patch("agents._call_model", return_value=mock_resp):
+        with patch("agents._call_model_ollama", return_value=mock_resp):
             result = _validate_proposal_coherence(proposal, "acme")
 
         assert result["passed"] is False
@@ -2151,7 +2151,7 @@ class TestQPProposalCoherence:
         from agents import _validate_proposal_coherence
 
         proposal = self._make_proposal()
-        with patch("agents._call_model", side_effect=RuntimeError("ollama unavailable")):
+        with patch("agents._call_model_ollama", side_effect=RuntimeError("ollama unavailable")):
             result = _validate_proposal_coherence(proposal, "acme")
 
         assert result["passed"] is True

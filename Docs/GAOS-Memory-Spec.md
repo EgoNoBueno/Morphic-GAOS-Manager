@@ -378,7 +378,7 @@ Each agent's Layer 4 active entries are capped to prevent unbounded growth. The 
 **Behaviour on budget excess:**
 
 - Entries are trimmed in priority order: **facts** (highest, kept first) → **preferences** → **patterns** → **rules** (lowest, trimmed first).
-- No recency sort is applied — `MemoryBankClient.list()` returns no timestamps. Trimming is arbitrary within each bucket.
+- Within each priority bucket, entries are sorted **newest-first** by `created_at` (ISO string sort, descending) before trimming — the most recent entries are always kept when the budget is exceeded, older entries are dropped first. If `created_at` is absent or the Vertex AI SDK raises `TypeError` / `AttributeError` during sort, the sort is skipped and API-returned order is preserved.
 - The returned dict always includes two metadata keys alongside the normal buckets:
   - `_truncated: bool` — `True` if any entries were dropped.
   - `_dropped_count: int` — Number of entries that did not fit within the budget.
@@ -389,7 +389,7 @@ Each agent's Layer 4 active entries are capped to prevent unbounded growth. The 
 
 > ⚠️ **Warning — Type hint change:** `load_domain_memory()` return type is `dict[str, Any]` (not `dict[str, list[dict]]`) to accommodate the metadata keys. Callers that passed the return value to a strictly typed function may need to adjust.
 
-> **Recency-first truncation:** Before the budget guard runs, entries are sorted newest-first by `created_at` (ISO string sort, descending). Within the priority order (facts → preferences → patterns → rules), the most recent entries are always kept when the budget is exceeded. Older entries are dropped first. If the Vertex AI SDK does not expose `created_at` (sort raises `TypeError` / `AttributeError`), the sort is skipped and API-returned order is preserved. **Implemented:** 2026-03-27.
+> **Note — Recency sort implemented 2026-03-27:** The `created_at`-based recency sort described above supersedes the original design which relied on arbitrary API-returned order.
 
 ---
 
@@ -985,7 +985,7 @@ Ten rules every agent developer must internalize. Deeper rationale for each is i
 | 5 | Confidence gate is **≥ 0.70 (~5 corroborations)** before a proposal is triggered — never bypassed | §5 Confidence Increment Rule |
 | 6 | Tier 3 sub-agents **do not write to memory** — they return observations in `AgentOutput` | §1 Design Principles |
 | 7 | Superseded entries are **marked `active = FALSE`**, never deleted — history is immutable | §1 Design Principles |
-| 8 | Boot context is capped at **~32,000 chars** — facts keep first, rules trim last; **newest entries kept first** within each bucket | §6.2 Boot Context Token Budget |
+| 8 | Boot context is capped at **~32,000 chars** — facts kept first (highest priority), rules trimmed first (lowest priority); **newest entries kept first** within each bucket | §6.2 Boot Context Token Budget |
 | 9 | Active entries per agent are capped (150 default) — enforced by Sweep 3 | §6.1 Memory Bank Size Discipline |
 | 10 | Observation loss on crash is **accepted** — confidence threshold provides the real mitigation | §3 Warning |
 
