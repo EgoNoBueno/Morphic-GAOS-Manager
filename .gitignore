@@ -47,6 +47,7 @@ oauth-client.json
 config/keys/
 *.json
 !pyproject.json
+!dashboard/grafana/dashboards/*.json
 service_account*.json
 *_credentials.json
 *_key.json

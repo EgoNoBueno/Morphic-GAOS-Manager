@@ -1,0 +1,344 @@
+{
+  "description": "GAOS CEO overview — agent health, approval queue, evolution activity, cost, and throughput.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "auto", "displayMode": "auto", "inspect": false },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "IDLE":      { "color": "green",  "index": 0 },
+                "WORKING":   { "color": "yellow", "index": 1 },
+                "PARKED":    { "color": "orange", "index": 2 },
+                "ESCALATED": { "color": "orange", "index": 3 },
+                "ERROR":     { "color": "red",    "index": 4 }
+              }
+            }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "agent_id" },
+            "properties": [
+              { "id": "displayName", "value": "agent" },
+              { "id": "custom.width", "value": 120 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "status" },
+            "properties": [
+              { "id": "custom.displayMode", "value": "color-background" },
+              { "id": "custom.width", "value": 110 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "current_objective" },
+            "properties": [
+              { "id": "displayName", "value": "current objective" },
+              { "id": "custom.width", "value": 300 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "open_proposals" },
+            "properties": [
+              { "id": "displayName", "value": "open proposals" },
+              { "id": "custom.width", "value": 110 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "last_error" },
+            "properties": [{ "id": "displayName", "value": "last error" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "timestamp" },
+            "properties": [{ "id": "custom.width", "value": 180 }]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "footer": { "enablePagination": false, "show": false }, "showHeader": true },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT agent_id, status, current_objective, open_proposals, last_error, timestamp\nFROM (\n  SELECT *,\n    ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY timestamp DESC) AS rn\n  FROM `morphic-gaos-prod.aos_logs.status_snapshots`\n)\nWHERE rn = 1\nORDER BY agent_id",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Agent Status",
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 3 },
+              { "color": "red",    "value": 10 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 8 },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS pending_count\nFROM `morphic-gaos-prod.aos_logs.approval_history`\nWHERE status = 'pending'",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Approval Queue — Pending",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "red",    "value": 240 }
+            ]
+          },
+          "unit": "m"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 8 },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(\n  TIMESTAMP_DIFF(\n    CURRENT_TIMESTAMP(),\n    MIN(PARSE_TIMESTAMP('%Y-%m-%dT%H:%M:%E*S%Ez', timestamp)),\n    MINUTE\n  ),\n  0\n) AS oldest_pending_minutes\nFROM `morphic-gaos-prod.aos_logs.approval_history`\nWHERE status = 'pending'",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Approval Queue — Oldest Age",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 8 },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS tasks_24h\nFROM `morphic-gaos-prod.aos_logs.task_outcomes`\nWHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Tasks Completed (24h)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 8 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT SUM(cost_usd) AS total_cost_usd\nFROM `morphic-gaos-prod.aos_logs.task_outcomes`\nWHERE log_date >= DATE_TRUNC(CURRENT_DATE(), WEEK)",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Cost This Week (USD)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 13 },
+      "id": 6,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.7,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "orientation": "auto",
+        "stacking": "none",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  FORMAT_DATE('%Y-W%V', log_date) AS week,\n  SUM(cost_usd) AS total_cost_usd\nFROM `morphic-gaos-prod.aos_logs.task_outcomes`\nWHERE log_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 8 WEEK)\nGROUP BY 1\nORDER BY 1",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Weekly Cost (USD, Last 8 Weeks)",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "lineWidth": 1
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 13 },
+      "id": 7,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.7,
+        "fullHighlight": false,
+        "groupWidth": 0.7,
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "orientation": "auto",
+        "stacking": "normal",
+        "tooltip": { "mode": "single", "sort": "none" },
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  DATE(timestamp) AS day,\n  agent_id,\n  COUNT(*) AS count\nFROM `morphic-gaos-prod.aos_logs.evolution_tasks`\nWHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)\nGROUP BY 1, 2\nORDER BY 1 DESC",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Evolution Tasks by Agent (Last 30 Days)",
+      "type": "barchart"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["gaos", "ceo"],
+  "templating": { "list": [] },
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "GAOS CEO Overview",
+  "uid": "gaos-ceo-overview",
+  "version": 1
+}
