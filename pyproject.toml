@@ -33,6 +33,7 @@ dev = [
     "pytest-cov>=5.0.0",
     "ruff>=0.4.0",
     "mypy>=1.11.0",
+    "bandit>=1.8.0",
 ]
 
 [tool.ruff]
@@ -52,6 +53,16 @@ ignore = [
 "tests/**" = [
     "SIM117",  # nested with patch(...) blocks — intentional; flattening harms readability in tests
 ]
+
+[tool.bandit]
+targets = ["agents", "tools", "models", "config", "main.py"]
+# B608: BigQuery SQL — all queries use the BQ parameterized query API (@param + QueryJobConfig /
+#        query_rows params={}). String-based SQL injection is structurally impossible via the BQ
+#        HTTP API regardless of string construction. Global skip is accurate, not opportunistic.
+skips = ["B608"]
+level = "MEDIUM"  # equivalent to -ll; low-severity findings are noise in this codebase
+# NOTE: bandit does not auto-discover pyproject.toml — always invoke with:
+#   bandit -r agents/ tools/ models/ config/ main.py -ll --configfile pyproject.toml
 
 [tool.hatch.build.targets.wheel]
 packages = ["tools", "config", "models"]

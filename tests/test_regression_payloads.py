@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -28,7 +29,7 @@ _PAYLOADS_DIR = Path(__file__).parent / "payloads"
 # ── Payload discovery ──────────────────────────────────────────────────────────
 
 
-def _discover_payloads() -> list[pytest.param]:
+def _discover_payloads() -> list[Any]:
     """
     Find all regression payload files under tests/payloads/<agent>/*.json.
 
@@ -110,11 +111,15 @@ def test_regression_payload_routes_correctly(
         f"monitor() failed to populate incoming_message for {payload_path.name}. "
         "Check that the envelope is a valid Pub/Sub push format."
     )
+    incoming_message = result_state["incoming_message"]
+    assert incoming_message is not None, (
+        f"monitor() set incoming_message to None for {payload_path.name}."
+    )
 
     actual_route = route(result_state)  # type: ignore[arg-type]
     assert actual_route == expected_route, (
         f"Routing regression for '{payload_path.name}':\n"
-        f"  message_type = {result_state['incoming_message'].message_type.value}\n"
+        f"  message_type = {incoming_message.message_type.value}\n"
         f"  expected route = '{expected_route}'\n"
         f"  actual route   = '{actual_route}'\n"
         "Update _meta.expected.route in the payload file if the new behaviour is correct."

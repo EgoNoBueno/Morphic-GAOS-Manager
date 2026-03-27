@@ -964,7 +964,7 @@ if __name__ == "__main__":
     log.info("Starting GAOS agent '%s' on port %d", _AGENT_NAME, port)
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
+        host="0.0.0.0",  # nosec B104 — containerized service; 0.0.0.0 is correct for Cloud Run
         port=port,
         log_level="info",
         workers=1,  # LangGraph state must not be shared across workers
