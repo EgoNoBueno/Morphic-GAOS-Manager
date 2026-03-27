@@ -23,6 +23,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
 from agents import (
+    AgentState,
     ModelResponse,
     _call_model,
     _elapsed_seconds,
@@ -30,12 +31,27 @@ from agents import (
     _load_identity_file,
     _log_cloud,
     _run_evolution_loop,
+    _validate_proposal_coherence,
     _write_heartbeat,
+    log_state_transition,
     utcnow_date,
     utcnow_iso,
     validate_code_safety,
 )
 from models import A2AMessage, AgentWorkingMemory, ApprovalProposal, MessageType, MonologueFrame
+from tools.circuit_breaker import (
+    CircuitOpenError,
+)
+from tools.circuit_breaker import (
+    check as cb_check,
+)
+from tools.circuit_breaker import (
+    record_failure as cb_failure,
+)
+from tools.circuit_breaker import (
+    record_success as cb_success,
+)
+from tools.phoenix import save_checkpoint
 
 # ── Nexus-Prime working memory ────────────────────────────────────────────────
 
@@ -722,10 +738,39 @@ def propose_gate(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         proposed_code=candidate_code,
         code_sha256=sha256,
     )
+
+    # ── Quality gate: coherence check before writing to Agent_Approvals ───────
+    coherence = _validate_proposal_coherence(proposal, state["project_id"])
+    if not coherence["passed"]:
+        _log_cloud(
+            "nexus-prime",
+            state["project_id"],
+            "task",
+            state.get("task_id", ""),
+            f"propose_gate: coherence warning — {coherence['reason']}",
+            "WARNING",
+        )
+        # Append the warning to stopping_constraint so the owner sees it in-Sheet.
+        suffix = f" [QUALITY WARNING: {coherence['reason'][:120]}]"
+        proposal = proposal.model_copy(
+            update={"stopping_constraint": (proposal.stopping_constraint + suffix).strip()}
+        )
+    for warn_msg in coherence.get("warnings", []):
+        _log_cloud(
+            "nexus-prime",
+            state["project_id"],
+            "task",
+            state.get("task_id", ""),
+            f"propose_gate: {warn_msg}",
+            "WARNING",
+        )
+
     row = proposal.to_sheet_row()
 
     try:
+        cb_check("nexus-prime", "google-sheets")
         append_row("Agent_Approvals", row, state["project_id"])
+        cb_success("nexus-prime", "google-sheets")
         # Store proposal ID (str) consistent with AgentWorkingMemory.parked_proposals
         state["parked_proposals"].append(proposal_id)
         state["candidate_sha256"] = sha256
@@ -762,7 +807,17 @@ def propose_gate(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                     f"propose_gate: Chat card failed (non-fatal): {card_exc}",
                     "WARNING",
                 )
+    except CircuitOpenError:
+        _log_cloud(
+            "nexus-prime",
+            state["project_id"],
+            "task",
+            state.get("task_id", ""),
+            "propose_gate: Google Sheets circuit open — approval proposal skipped",
+            "ERROR",
+        )
     except Exception as exc:
+        cb_failure("nexus-prime", "google-sheets")
         _log_cloud(
             "nexus-prime",
             state["project_id"],
@@ -1088,6 +1143,15 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
     msg = state.get("incoming_message")
 
+    log_state_transition(
+        agent_id="nexus-prime",
+        project_id=state.get("project_id", ""),
+        task_id=state.get("task_id", ""),
+        from_state=AgentState.EXECUTION,
+        to_state=AgentState.OBSERVATION,
+        reason="terminal node reached",
+    )
+
     outcome: dict[str, Any] = {
         "task_id": state.get("task_id", ""),
         "project_id": state.get("project_id", ""),
@@ -1102,9 +1166,21 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     }
 
     try:
+        cb_check("nexus-prime", "bigquery")
         insert_row("aos_logs.task_outcomes", outcome)
+        cb_success("nexus-prime", "bigquery")
+        save_checkpoint("nexus-prime", state.get("project_id", ""), dict(state))
+    except CircuitOpenError:
+        _log_cloud(
+            "nexus-prime",
+            state.get("project_id", ""),
+            "task",
+            state.get("task_id", ""),
+            "record: BigQuery circuit open — task_outcome not persisted",
+            "WARNING",
+        )
     except Exception:
-        pass
+        cb_failure("nexus-prime", "bigquery")
 
     # When APPROVAL_RESULT (status=Rejected) arrives via the Chat card-click path,
     # the Sheet row has not been touched yet (unlike the Apps Script path where the
@@ -1187,11 +1263,12 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
     Not a graph node — runs outside the LangGraph state machine.
 
     Steps per GAOS-Manager-Spec.md §9.5:
-      1. Summarize — LOCAL_MODEL weekly aggregate → observability_weekly (Mondays only)
-      2. Archive   — aged rows moved to BigQuery cold storage
-      3. Delete    — successfully archived rows deleted from Sheet
-      4. Report    — one summary row appended to the Logs tab
-      5. Alert     — ALERT published if any tab exceeds 25,000 rows
+      1. Summarize   — LOCAL_MODEL weekly aggregate → observability_weekly (Mondays only)
+      2. Archive     — aged rows moved to BigQuery cold storage
+      3. Delete      — successfully archived rows deleted from Sheet
+      3.5 Distill   — LOCAL_MODEL distills last 24 h of logs per active agent → Pending_Knowledge
+      4. Report      — one summary row appended to the Logs tab
+      5. Alert       — ALERT published if any tab exceeds 25,000 rows
 
     Retention policy:
       Logs tab:        30 days → aos_logs.task_outcomes
@@ -1243,6 +1320,35 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
         except ValueError:
             pass
         return datetime(1970, 1, 1, tzinfo=UTC)
+
+    # ── 0. Idempotency guard — skip if archive already ran within last 4 hours ─
+    try:
+        recent_logs = get_all_records("Logs", project_id)
+        already_ran = any(
+            r.get("agent_id") == "nexus-prime"
+            and r.get("level") == "ARCHIVE"
+            and _parse_ts(r.get("timestamp", "")) >= now - timedelta(hours=4)
+            for r in recent_logs
+        )
+        if already_ran:
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                "handle_archive skipped — already ran within last 4 hours",
+                "WARNING",
+            )
+            return {"skipped": True, "reason": "archive already ran today", "task_id": task_id}
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"idempotency check failed (proceeding anyway): {exc}",
+            "WARNING",
+        )
 
     # ── 1. Weekly observability summary (Mondays only) ────────────────────────
     if now.weekday() == 0:
@@ -1431,10 +1537,110 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
         )
         stats["Agent_Approvals"] = 0
 
+    # ── 3.5 Progressive episodic distillation ─────────────────────────────────
+    # After archives trim the Logs tab to recent-only rows, read them back and
+    # build one candidate Pending_Knowledge entry per agent that logged ≥ 5
+    # messages in the last 24 h.  Uses LOCAL_MODEL for distillation; writes to
+    # Pending_Knowledge via flush_observations() so human approval is required
+    # before anything reaches the Memory Bank.
+    _AGENT_DOMAIN: dict[str, str] = {
+        "beacon": "marketing",
+        "ledger": "accounting",
+        "pursuit": "sales",
+        "foreman": "operations",
+        "steward": "admin",
+        "scout": "research",
+        "nexus-prime": "global",
+    }
+    _DISTILL_MIN_ENTRIES = 5
+    distilled_count = 0
+    try:
+        from tools.memory import flush_observations
+
+        yesterday = now - timedelta(hours=24)
+        recent_logs = get_all_records("Logs", project_id)
+        # Group recent log messages by agent_id
+        agent_messages: dict[str, list[str]] = {}
+        for row in recent_logs:
+            if _parse_ts(row.get("timestamp", "")) < yesterday:
+                continue
+            aid = row.get("agent_id", "").strip()
+            if not aid:
+                continue
+            agent_messages.setdefault(aid, []).append(row.get("message", ""))
+
+        for aid, messages in agent_messages.items():
+            if len(messages) < _DISTILL_MIN_ENTRIES:
+                continue
+            domain = _AGENT_DOMAIN.get(aid, "global")
+            excerpt = "\n".join(f"- {m}" for m in messages[:30])[:2000]
+            distill_prompt = (
+                f"You are a knowledge management system for a multi-agent AI platform.\n"
+                f"Agent: {aid} | Domain: {domain}\n\n"
+                f"Recent activity log (last 24 h):\n{excerpt}\n\n"
+                f"Summarize 2-3 concise, actionable lessons this agent should remember "
+                f"about its domain. Plain bullets only, no headings."
+            )
+            try:
+                distill_resp = _call_model(distill_prompt, model=settings.models.LOCAL_MODEL)
+                cost_usd += distill_resp.cost_usd
+                summary_text = distill_resp.text.strip()[:1000]
+                if not summary_text:
+                    continue
+                raw_key = f"{aid}:{domain}:{summary_text}"
+                content_hash = hashlib.sha256(raw_key.encode()).hexdigest()[:16]
+                knowledge_id = str(uuid.uuid4())
+                obs_now = now.isoformat()
+                flush_observations(
+                    [
+                        {
+                            "knowledge_id": knowledge_id,
+                            "content_hash": content_hash,
+                            "agent_id": aid,
+                            "project_id": project_id,
+                            "knowledge_type": "pattern",
+                            "domain": domain,
+                            "content": summary_text,
+                            "evidence": "",
+                            "confidence": 0.25,
+                            "observation_count": 1,
+                            "status": "Buffered",
+                            "proposed_at": obs_now,
+                            "last_seen_at": obs_now,
+                            "approved_by": "",
+                            "approved_at": "",
+                            "rejection_reason": "",
+                            "promoted_memory_id": "",
+                        }
+                    ],
+                    project_id,
+                )
+                distilled_count += 1
+            except Exception as exc_inner:
+                _log_cloud(
+                    "nexus-prime",
+                    project_id,
+                    "task",
+                    task_id,
+                    f"distillation failed for agent {aid}: {exc_inner}",
+                    "WARNING",
+                )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"progressive distillation step failed: {exc}",
+            "WARNING",
+        )
+
     # ── 4. Report ─────────────────────────────────────────────────────────────
     total_archived = sum(stats.values())
-    report_msg = f"NIGHTLY_ARCHIVE complete: {total_archived} rows archived. " + " | ".join(
-        f"{tab}={n}" for tab, n in stats.items()
+    report_msg = (
+        f"NIGHTLY_ARCHIVE complete: {total_archived} rows archived, "
+        f"{distilled_count} agents distilled. "
+        + " | ".join(f"{tab}={n}" for tab, n in stats.items())
     )
     try:
         append_row(

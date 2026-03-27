@@ -124,3 +124,45 @@ def insert_rows(table_ref: str, rows: list[dict[str, Any]], project_id: str = ""
         raise
     except (GoogleAPICallError, RetryError) as exc:
         raise BigQueryInsertError(f"BigQuery batch insert into '{full_ref}' failed: {exc}") from exc
+
+
+def query_rows(
+    sql: str,
+    project_id: str = "",
+    params: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Run a parameterised SELECT query and return results as a list of row dicts.
+
+    Args:
+        sql:        Standard SQL. Use @param_name syntax for named parameters.
+        project_id: Unused; GCP project is always read from settings.GCP_PROJECT_ID.
+        params:     Optional named query parameters. Values must be str, int, float, or bool.
+
+    Returns:
+        A list of row dicts keyed by column name. Empty list if no rows match.
+
+    Raises:
+        BigQueryInsertError: Query failed due to an API or network error.
+    """
+    settings = get_settings()
+    gcp_project = settings.GCP_PROJECT_ID
+    client = _get_client(gcp_project)
+
+    bq_params: list[bigquery.ScalarQueryParameter] = []
+    for name, value in (params or {}).items():
+        if isinstance(value, bool):
+            bq_params.append(bigquery.ScalarQueryParameter(name, "BOOL", value))
+        elif isinstance(value, int):
+            bq_params.append(bigquery.ScalarQueryParameter(name, "INT64", value))
+        elif isinstance(value, float):
+            bq_params.append(bigquery.ScalarQueryParameter(name, "FLOAT64", value))
+        else:
+            bq_params.append(bigquery.ScalarQueryParameter(name, "STRING", str(value)))
+
+    job_config = bigquery.QueryJobConfig(query_parameters=bq_params)
+    try:
+        job = client.query(sql, job_config=job_config)
+        return [dict(row) for row in job.result()]
+    except (GoogleAPICallError, RetryError) as exc:
+        raise BigQueryInsertError(f"BigQuery query failed: {exc}") from exc

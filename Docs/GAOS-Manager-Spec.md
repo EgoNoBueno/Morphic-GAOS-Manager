@@ -515,11 +515,15 @@ Unbounded log accumulation wastes storage, slows the Sheet, and eventually costs
 
 A **Cloud Scheduler job** (`nightly-archive`, `0 2 * * *`) POSTs to the Nexus-Prime Cloud Run service at **2:00 AM daily**. The `/archive` handler in the Nexus-Prime orchestrator performs all steps:
 
-1. **Summarize:** `LOCAL_MODEL` (Ollama / fallback Flash) generates one weekly aggregate row per log type (e.g., "Week of 2026-W12: 847 observability entries, top agent: beacon, 3 evolution tasks, $0.34 spent") and writes it to the Cold tier in BigQuery.
+0. **Idempotency guard:** Reads the Logs tab for any row where `agent_id == "nexus-prime"` AND `level == "ARCHIVE"` AND timestamp is within the last 4 hours. If found, logs a WARNING and returns `{"skipped": True}` immediately — prevents duplicate BigQuery rows if Cloud Scheduler retries on a 5xx or timeout. The idempotency key is the ARCHIVE-level summary row written by Step 4 of the previous successful run.
+1. **Summarize:** `LOCAL_MODEL` (Ollama / fallback Flash) generates one weekly aggregate row per log type (e.g., "Week of 2026-W12: 847 observability entries, top agent: beacon, 3 evolution tasks, $0.34 spent") and writes it to the Cold tier in BigQuery. Runs on Mondays only.
 2. **Archive:** Rows older than their Sheet retention threshold are moved to BigQuery.
 3. **Delete:** Rows moved successfully are deleted from the Sheet.
-4. **Report:** Appends one summary row to the **Archive/Audit Trail** Sheet tab: timestamp, rows archived per tab, current Sheet row counts.
-5. **Alert:** If any Sheet tab exceeds 50,000 rows after the job (indicating a failure), publishes an `ALERT` to Nexus-Prime.
+3.5. **Distill:** `LOCAL_MODEL` distills the last 24 h of Logs per active agent into candidate knowledge entries and appends them to the `Pending_Knowledge` Sheet tab for review.
+4. **Report:** Appends one summary row to the **Logs** Sheet tab with `level == "ARCHIVE"`: timestamp, rows archived per tab, current Sheet row counts.
+5. **Alert:** If any Sheet tab exceeds **25,000 rows** after the job (indicating the archive is failing or a log source is unusually high-volume), publishes an `ALERT` to Nexus-Prime.
+
+> ⚠️ **Warning — retry safety:** Cloud Scheduler retries on HTTP 5xx or timeout. Without the idempotency guard (Step 0), both the original run and the retry read the same Sheet rows before either deletes them, producing duplicate rows in BigQuery. Step 0 is the defence — do not remove it.
 
 #### BigQuery TTL Configuration (set once at table creation)
 

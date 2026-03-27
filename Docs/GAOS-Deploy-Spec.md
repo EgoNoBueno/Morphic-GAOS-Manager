@@ -749,6 +749,7 @@ Then create all 6 tables:
 | `observability_weekly` | — | indefinite | Weekly summary archive |
 | `memory_entries` | — | indefinite | Structured metadata for Vertex AI RAG entries |
 | `monologue_frames` | `timestamp` | 90 days | Think node reasoning traces (`GAOS-Persona-Spec.md` §4) |
+| `agent_checkpoints` | `timestamp` | 30 days | Phoenix recovery — SHA-256-pinned agent state snapshots (`tools/phoenix.py`) |
 
 The `memory_entries` table holds the structured `MemoryEntry` metadata (agent_id, knowledge_type,
 active flag, version, etc.) so that `load_domain_memory()` can filter by agent and active status
@@ -807,6 +808,34 @@ table.time_partitioning = bigquery.TimePartitioning(
 client.create_table(table, exists_ok=True)
 print('monologue_frames: created')
 ```
+
+```python
+# Schema: agent_checkpoints
+# Written by tools/phoenix.py save_checkpoint() after every major milestone.
+# Read by phoenix_recover() to restore state after corruption.
+# Rows are SHA-256-pinned — tampered rows are skipped at load time.
+from google.cloud import bigquery
+client = bigquery.Client(project='morphic-gaos-prod')
+table = bigquery.Table(
+    'morphic-gaos-prod.aos_logs.agent_checkpoints',
+    schema=[
+        bigquery.SchemaField('agent_id', 'STRING'),
+        bigquery.SchemaField('project_id', 'STRING'),
+        bigquery.SchemaField('timestamp', 'TIMESTAMP'),
+        bigquery.SchemaField('state_json', 'STRING'),
+        bigquery.SchemaField('checkpoint_hash', 'STRING'),
+        bigquery.SchemaField('is_valid', 'BOOL'),
+    ],
+)
+table.time_partitioning = bigquery.TimePartitioning(
+    field='timestamp',
+    expiration_ms=30 * 86_400_000,   # 30-day rolling window
+)
+client.create_table(table, exists_ok=True)
+print('agent_checkpoints: created')
+```
+
+> ⚠️ **Note — `state_json` is never re-executed:** The checkpoint blob is a serialized `dict`, not executable code. `phoenix_recover()` deserializes and hash-verifies it before use. The `is_valid` flag is always written as `True`; rows with a hash mismatch are silently skipped by `load_checkpoint()` rather than deleted, preserving the full audit trail.
 
 > ⚠️ **Warning — `exists_ok=True` will NOT alter an existing table:** If `monologue_frames` already exists with `timestamp STRING` and ingestion-time partitioning, `create_table(..., exists_ok=True)` silently succeeds without applying any schema changes. The new schema only takes effect on a fresh table.
 
@@ -926,7 +955,7 @@ bq rm --force morphic-gaos-prod:aos_logs.monologue_frames_new
 
 `MonologueFrame.timestamp` is typed as `str` and populated via `utcnow_iso()` (`datetime.now(timezone.utc).isoformat()`), which produces `"2026-03-20T10:30:00.123456+00:00"` — a valid ISO 8601 UTC timestamp that BigQuery accepts for `TIMESTAMP` columns through `insert_rows_json`. No changes to `models/__init__.py` or `agents/nexus_prime/orchestrator.py` are required.
 
-**Verification:** In BigQuery console, expand `aos_logs` dataset — 6 tables listed.
+**Verification:** In BigQuery console, expand `aos_logs` dataset — 7 tables listed.
 
 ---
 
@@ -1425,7 +1454,15 @@ deploying configuration that no longer matches the current infrastructure state.
 
 Cloud Scheduler delivers requests via OIDC. The Nexus-Prime service account issues the token; it must also have `roles/run.invoker` on the nexus-prime Cloud Run service so the token is accepted.
 
-**Grant Nexus-Prime SA invoker rights on its own service:**
+> **Preferred provisioning method:** Use `scripts/provision_schedulers.py` instead of the manual `gcloud` commands in §10.2 and §10.3. It resolves the nexus-prime Cloud Run URL dynamically (no hardcoded URL), creates or patches the two scheduled jobs (`gaos-archive` and `gaos-daily-sync`) idempotently, and grants the IAM invoker binding automatically.
+>
+> ```powershell
+> python scripts/provision_schedulers.py [--project <project_id>]
+> ```
+>
+> The `gcloud` commands below are retained as reference for manual individual operations and for §10.1 and §10.4 which the script does not cover.
+
+**Grant Nexus-Prime SA invoker rights on its own service (manual — the script handles this automatically):**
 
 ```bash
 PROJECT=morphic-gaos-prod
@@ -1463,6 +1500,8 @@ gcloud scheduler jobs create http nightly-archive \
   --project=morphic-gaos-prod
 ```
 
+> ⚠️ **Warning — hardcoded URL:** The `NP_URL` above is the URL for the `morphic-gaos-prod` deployment. On a new project it will be different. Use `scripts/provision_schedulers.py` instead — it resolves the URL dynamically from the Cloud Run Admin API.
+
 **Verification:** In Cloud Scheduler console, both jobs appear with state `ENABLED`. Run each manually by clicking **Force run** — both should return HTTP 200. `ttl-sweep` hits `POST /ttl-sweep`; `nightly-archive` hits `POST /archive` (implemented in Phase 2 Item 3 — archives aged Sheet rows to BigQuery).
 
 ### 10.3 Daily Kickoff Job (6:00 AM daily) — *Phase 2.5 Step 2*
@@ -1480,6 +1519,8 @@ gcloud scheduler jobs create http daily-kickoff \
   --oidc-service-account-email="nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com" \
   --project=morphic-gaos-prod
 ```
+
+> ⚠️ **Warning — hardcoded URL:** Same as §10.2 — use `scripts/provision_schedulers.py` for new deployments to avoid URL drift.
 
 ### 10.4 Doc Comment Poll Job (every 5 minutes) — *Phase 2.5*
 
@@ -1546,7 +1587,7 @@ Phase 1 is complete when all of the following pass. Run them in order.
 
 | # | Test | How to run | Expected result |
 |---|------|-----------|-----------------|
-| 0 | Unit test suite | `pytest` | 332 tests pass, 0 failures |
+| 0 | Unit test suite | `pytest` | 558 tests pass, 0 failures |
 | 1 | Sheet write | `python -c "from tools.google_sheets import init_sheets_client, append_row; import datetime; init_sheets_client('default'); append_row('Logs', {'timestamp': datetime.datetime.utcnow().isoformat(), 'level': 'SMOKE_TEST', 'source': 'smoke', 'message': 'phase 1 test'}, 'default')"` | Row appears in `Logs` tab |
 | 2 | Sheet read | `python -c "from tools.google_sheets import init_sheets_client, get_all_records; init_sheets_client('default'); rows = get_all_records('Project Registry', 'default'); print(f'{len(rows)} rows')"` | Prints `0 rows` (or more once project rows are added) |
 | 3 | Pub/Sub publish | `python -c "from tools.pubsub import publish; from models import A2AMessage; ..."` sending a test message to `agent.nexus-prime.events` | Message ID returned; no exception |

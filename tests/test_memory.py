@@ -386,3 +386,44 @@ class TestLoadDomainMemoryTokenBudget:
         # All facts must be present; some rules must be dropped
         assert len(ctx["fact"]) == 20
         assert len(ctx["rule"]) < 20
+
+    def test_recency_sort_newest_entries_appear_first_in_bucket(self, mock_memory_bank):
+        """Entries with a newer created_at appear before older ones within each bucket."""
+        mock_cls, mock_instance = mock_memory_bank
+        old = _make_entry("fact", "oldest fact")
+        old.created_at = "2024-01-01T00:00:00"
+        mid = _make_entry("fact", "middle fact")
+        mid.created_at = "2025-06-01T00:00:00"
+        new = _make_entry("fact", "newest fact")
+        new.created_at = "2026-03-01T00:00:00"
+        # Supply in oldest-first order — sort must reverse this
+        mock_instance.list.return_value = [old, mid, new]
+
+        ctx = load_domain_memory("ledger", "test-project")
+
+        contents = [e["content"] for e in ctx["fact"]]
+        assert contents == ["newest fact", "middle fact", "oldest fact"]
+
+    def test_recency_sort_drops_oldest_entries_first_under_budget_pressure(self, mock_memory_bank):
+        """When budget is exceeded, entries with older created_at are dropped before newer ones."""
+        mock_cls, mock_instance = mock_memory_bank
+        # 20 newer × 1,600 chars = 32,000 → exactly fills the 32,000-char budget.
+        # The 20 older entries cannot fit; they must all be dropped.
+        newer = [_make_entry("fact", "N" * 1600) for _ in range(20)]
+        older = [_make_entry("fact", "O" * 1600) for _ in range(20)]
+        for e in newer:
+            e.created_at = "2026-03-01T00:00:00"
+        for e in older:
+            e.created_at = "2024-01-01T00:00:00"
+        # Supply older-first — sort must put newer first so newer survive truncation
+        mock_instance.list.return_value = older + newer
+
+        import warnings as _warnings
+
+        with _warnings.catch_warnings(record=True):
+            _warnings.simplefilter("always")
+            ctx = load_domain_memory("ledger", "test-project")
+
+        surviving_first_chars = {e["content"][0] for e in ctx["fact"]}
+        assert "N" in surviving_first_chars, "newer entries must survive"
+        assert "O" not in surviving_first_chars, "older entries must be dropped first"

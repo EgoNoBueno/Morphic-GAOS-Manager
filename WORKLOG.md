@@ -5,6 +5,79 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-27T23:45-03:00 — Chapter 8 resilience: circuit breaker, Phoenix recovery, AgentState FSM — complete + docs
+
+### What was done
+
+Full Chapter 8 (OpenClaw Paradigm) implementation and documentation pass. All work delivered in two sessions across one day.
+
+**New files:**
+- `tools/circuit_breaker.py` — Thread-safe CLOSED/OPEN/HALF_OPEN state machine keyed by `(agent_id, resource_key)`. Threshold: 3 consecutive failures. Cooldown: 300s. Public API: `check()`, `record_failure()`, `record_success()`, `get_state()`, `reset()`, `reset_all()`. Raises `CircuitOpenError` when open.
+- `tools/phoenix.py` — Phoenix Pattern: SHA-256-pinned working-state snapshots to BigQuery `aos_logs.agent_checkpoints` (30-day TTL). Public API: `validate_state()`, `save_checkpoint()`, `load_checkpoint()`, `phoenix_recover()`. Errors: `CheckpointCorruptedError`, `CheckpointSerializationError`.
+
+**Modified files:**
+- `agents/__init__.py` — Added `AgentState` (9-state str Enum: INIT/PLANNING/EXECUTION/OBSERVATION/HEALING/SYNTHESIS/ESCALATION/IDLE/COMPLETED), `log_state_transition()`, `validate_output_coherence()`.
+- `agents/nexus_prime/orchestrator.py` — Wired circuit breaker around `append_row("Agent_Approvals")` in `propose_gate()` and `insert_row("aos_logs.task_outcomes")` in `record()`. Added `log_state_transition(EXECUTION→OBSERVATION)` at top of `record()`. Added `save_checkpoint()` after successful BQ write.
+- `Docs/GAOS-Deploy-Spec.md` — Added `agent_checkpoints` as 7th BQ table (§7), Python creation script block, updated verification count 6→7.
+- `Docs/GAOS-Tools-Spec.md` — Added AgentState/log_state_transition/validate_output_coherence to §10; 3 new rules to §13; 4 new rows to §14 index; appended §19 (`circuit_breaker.py` full API) and §20 (`phoenix.py` full API). File now 20 sections.
+- `README.md` — Added "Infrastructure Resilience" subsection to Key Capabilities; added Phase 4/Ch. 8 row to Development Roadmap; updated test count 496→558 in roadmap row and footer.
+
+**Test files added:**
+- `tests/test_circuit_breaker.py` — 22 tests
+- `tests/test_phoenix.py` — 25 tests
+
+### Test results
+
+558/558 passing (up from 496 before this session block).
+
+### What's next
+
+- GAOS-Doctor checklist remaining Phase 4 exit item
+- Cost/security verification (Phase 4 exit)
+- Phase 5 Vertex Agent Engine scope (deferred)
+
+---
+
+## 2026-03-27T20:00-03:00 — Chapter 6 review: implemented progressive distillation + recency sort
+
+### What was done
+
+Chapter 6 (File Coordination and Memory Patterns) review against GAOS architecture identified two implementable gaps:
+
+**1. Recency-first truncation in `load_domain_memory()` (`tools/memory.py`)**
+- Before the token budget guard runs, `entries_raw` is now sorted newest-first by `created_at` (ISO string sort, descending).
+- When budget is exceeded, the oldest entries are dropped first — previously dropping was unordered within each priority bucket.
+- Graceful fallback: if the Vertex AI SDK entry lacks `created_at`, the sort is skipped without error.
+
+**2. Progressive episodic distillation in `handle_archive()` (`agents/nexus_prime/orchestrator.py`)**
+- New step 3.5 added between the Agent_Approvals archive and the Report section.
+- After archives trim the Logs tab, reads back the remaining (recent) rows, groups by `agent_id`.
+- Any agent with ≥ 5 messages in the last 24 h gets a LOCAL_MODEL distillation call.
+- Distilled lessons are written to `Pending_Knowledge` via `flush_observations()` — human approval required before Memory Bank promotion.
+- Agent→domain mapping: beacon→marketing, ledger→accounting, pursuit→sales, foreman→operations, steward→admin, scout→research, nexus-prime→global.
+- All failures (LLM down, Sheets API, etc.) log WARNING and continue — non-blocking.
+- Report message updated to include distilled agent count: `"N agents distilled"`.
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `tools/memory.py` | Recency sort added to `load_domain_memory()` before budget guard |
+| `agents/nexus_prime/orchestrator.py` | Step 3.5 (progressive distillation) added to `handle_archive()`; docstring updated |
+| `tests/test_memory.py` | +2 tests: `test_recency_sort_newest_entries_appear_first_in_bucket`, `test_recency_sort_drops_oldest_entries_first_under_budget_pressure` |
+| `tests/test_agents.py` | +4 tests: `TestProgressiveDistillation` class (PA1–PA4) |
+| `Docs/GAOS-Memory-Spec.md` | Updated §6.2 "Accepted limitation" → recency sort behavior; updated quick ref rule 8 |
+
+### Tests
+
+**509 passed, 0 failures** (was 503 before this session; +6 new tests).
+
+### What's next
+
+- WORKLOG entry committed with implementation — ready for next chapter review (Chapter 7 onward).
+
+---
+
 ## 2026-03-27T02:29-07:00 — Phase 5 doc accuracy sweep — committed and pushed
 
 ### What was done

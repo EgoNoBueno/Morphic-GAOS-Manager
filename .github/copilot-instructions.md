@@ -150,6 +150,8 @@ New entries go at the **top** of WORKLOG.md (most recent first).
 
 **What "affected documents" means:**
 
+> **Quick lookup:** `Docs/DOC-INDEX.yaml` is the machine-readable index of every document in `Docs/` — it maps each file to its coverage scope, the code paths that trigger updates, and an inverse index (code path → docs to update). Read it at the start of any session involving doc updates. The summary table below is a human-readable shorthand; the index is the authoritative source.
+
 | Completed work | Documents to update |
 |----------------|-------------------|
 | New tool or helper function | `GAOS-Tools-Spec.md`, `GAOS-Manager-Spec.md` (if referenced), `AI-Autocoding-Rules.md` (if a new rule applies) |

@@ -389,7 +389,7 @@ Each agent's Layer 4 active entries are capped to prevent unbounded growth. The 
 
 > ⚠️ **Warning — Type hint change:** `load_domain_memory()` return type is `dict[str, Any]` (not `dict[str, list[dict]]`) to accommodate the metadata keys. Callers that passed the return value to a strictly typed function may need to adjust.
 
-> **Accepted limitation:** There is no recency-based eviction — low-priority buckets are trimmed wholesale when budget is exceeded. If rule density grows beyond budget, either raise `max_boot_chars` or lower another agent's cap in settings.
+> **Recency-first truncation:** Before the budget guard runs, entries are sorted newest-first by `created_at` (ISO string sort, descending). Within the priority order (facts → preferences → patterns → rules), the most recent entries are always kept when the budget is exceeded. Older entries are dropped first. If the Vertex AI SDK does not expose `created_at` (sort raises `TypeError` / `AttributeError`), the sort is skipped and API-returned order is preserved. **Implemented:** 2026-03-27.
 
 ---
 
@@ -985,7 +985,7 @@ Ten rules every agent developer must internalize. Deeper rationale for each is i
 | 5 | Confidence gate is **≥ 0.70 (~5 corroborations)** before a proposal is triggered — never bypassed | §5 Confidence Increment Rule |
 | 6 | Tier 3 sub-agents **do not write to memory** — they return observations in `AgentOutput` | §1 Design Principles |
 | 7 | Superseded entries are **marked `active = FALSE`**, never deleted — history is immutable | §1 Design Principles |
-| 8 | Boot context is capped at **~32,000 chars** — facts keep first, rules trim last | §6.2 Boot Context Token Budget |
+| 8 | Boot context is capped at **~32,000 chars** — facts keep first, rules trim last; **newest entries kept first** within each bucket | §6.2 Boot Context Token Budget |
 | 9 | Active entries per agent are capped (150 default) — enforced by Sweep 3 | §6.1 Memory Bank Size Discipline |
 | 10 | Observation loss on crash is **accepted** — confidence threshold provides the real mitigation | §3 Warning |
 

@@ -2,10 +2,11 @@
 agents/__init__.py — Shared utilities for all Morphic-G AOS agent orchestrators.
 
 Provides:
-  - ModelResponse and _call_model()   — thin wrapper over google.genai / Ollama
-  - _call_model_ollama()              — Ollama HTTP routing with timeout + fallback
-  - validate_code_safety()            — AST-based import + pattern gate
-  - _run_evolution_loop()             — Write-Test-Refine loop (§13.1)
+  - ModelResponse and _call_model()        — thin wrapper over google.genai / Ollama
+  - _call_model_ollama()                   — Ollama HTTP routing with timeout + fallback
+  - validate_code_safety()                 — AST-based import + pattern gate (Gates 1 + 2)
+  - _validate_proposal_coherence()         — quality gate run before Agent_Approvals write
+  - _run_evolution_loop()                  — Write-Test-Refine loop (§13.1)
   - _load_identity_file()             — reads Docs/agents/<name>.md at boot
   - _write_heartbeat()                — Tier 2 dashboard heartbeat helper
   - _log_cloud()                      — structured Cloud Logging entry
@@ -24,10 +25,64 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# ── Agent lifecycle state machine ────────────────────────────────────────────
+
+
+class AgentState(str, Enum):
+    """Formal lifecycle states for GAOS agent orchestrators.
+
+    Models the OODA-loop state machine described in §8.23 of the OpenClaw
+    Paradigm Book. Transitions should be logged via log_state_transition().
+    """
+
+    INIT = "INIT"
+    PLANNING = "PLANNING"
+    EXECUTION = "EXECUTION"
+    OBSERVATION = "OBSERVATION"
+    HEALING = "HEALING"
+    SYNTHESIS = "SYNTHESIS"
+    ESCALATION = "ESCALATION"
+    IDLE = "IDLE"
+    COMPLETED = "COMPLETED"
+
+
+def log_state_transition(
+    agent_id: str,
+    project_id: str,
+    task_id: str,
+    from_state: AgentState | str,
+    to_state: AgentState | str,
+    reason: str = "",
+) -> None:
+    """Log an agent lifecycle state transition to Cloud Logging.
+
+    Should be called at every OODA loop boundary so the state machine is fully
+    auditable in Cloud Logging and the Grafana dashboard.
+
+    Args:
+        agent_id:   The agent identifier (e.g., "nexus-prime").
+        project_id: The AOS project namespace.
+        task_id:    The current task UUID (or empty string for boot transitions).
+        from_state: The state being exited.
+        to_state:   The state being entered.
+        reason:     Optional human-readable explanation for the transition.
+    """
+    _log_cloud(
+        agent_id,
+        project_id,
+        "state_transition",
+        task_id,
+        f"State: {from_state} → {to_state}" + (f" | {reason}" if reason else ""),
+        severity="INFO",
+        extra={"from_state": str(from_state), "to_state": str(to_state), "reason": reason},
+    )
+
 
 # ── Ollama fallback telemetry ────────────────────────────────────────────────
 
@@ -399,6 +454,177 @@ def validate_code_safety(code: str) -> dict[str, Any]:
             return {"passed": False, "reason": f"Blocked pattern: {pattern}"}
 
     return {"passed": True, "reason": ""}
+
+
+# ── Proposal coherence gate ───────────────────────────────────────────────────
+
+_MIN_ISSUE_LENGTH = 20  # chars — guards against blank or one-word issue descriptions
+
+_COHERENCE_PROMPT_TEMPLATE = """\
+You are a code proposal quality reviewer for an AI agent system.
+A GAOS agent has submitted the following proposal for human approval.
+
+Issue description: {issue}
+Trigger reason: {trigger_reason}
+Stopping constraint: {stopping_constraint}
+
+Determine whether this proposal is coherent and warrants human review.
+Answer ONLY with a JSON object:
+  {{"coherent": true or false, "reason": "<one sentence, max 120 chars>"}}
+
+A proposal is incoherent if:
+- The issue description is vague, generic, or a placeholder
+- The description does not explain why human approval is needed
+- The fields appear to be template text rather than a real problem
+"""
+
+
+def _validate_proposal_coherence(
+    proposal: Any,
+    project_id: str,
+) -> dict[str, Any]:
+    """
+    Quality gate for Approval Gate proposals — runs before Agent_Approvals write.
+
+    Performs two checks:
+    1. Structural: issue is non-trivial (≥ ``_MIN_ISSUE_LENGTH`` chars) and
+       ``stopping_constraint`` is populated whenever ``proposed_code`` is present.
+    2. Semantic (LOCAL_MODEL): the proposal fields describe a real, coherent
+       problem that warrants human review.
+
+    This is a *warning* gate — the caller decides whether to block or log.
+    The function never raises; it returns a result dict even on LLM failure.
+
+    Args:
+        proposal: ApprovalProposal about to be written to Agent_Approvals.
+        project_id: Active project namespace (used for model cost logging).
+
+    Returns:
+        dict with keys:
+            ``passed`` (bool) — False means the proposal needs owner attention.
+            ``reason`` (str) — Explanation if not passed.
+            ``warnings`` (list[str]) — Non-blocking notes even when passed.
+    """
+    from config import get_settings
+
+    warnings_list: list[str] = []
+
+    # ── Structural checks ─────────────────────────────────────────────────────
+    issue_text: str = (getattr(proposal, "issue", "") or "").strip()
+    if len(issue_text) < _MIN_ISSUE_LENGTH:
+        return {
+            "passed": False,
+            "reason": (
+                f"Issue description is too short or empty "
+                f"(got {len(issue_text)} chars, min {_MIN_ISSUE_LENGTH})."
+            ),
+            "warnings": warnings_list,
+        }
+
+    has_code: bool = bool((getattr(proposal, "proposed_code", "") or "").strip())
+    stopping: str = (getattr(proposal, "stopping_constraint", "") or "").strip()
+    if has_code and not stopping:
+        return {
+            "passed": False,
+            "reason": "stopping_constraint must be populated when proposed_code is present.",
+            "warnings": warnings_list,
+        }
+
+    # ── Semantic coherence (LOCAL_MODEL) ──────────────────────────────────────
+    settings = get_settings()
+    try:
+        prompt = _COHERENCE_PROMPT_TEMPLATE.format(
+            issue=issue_text[:800],
+            trigger_reason=(getattr(proposal, "trigger_reason", "") or "")[:200],
+            stopping_constraint=stopping[:400],
+        )
+        resp = _call_model(prompt, model=settings.models.LOCAL_MODEL, parse_json=True)
+        coherent: bool = bool((resp.data or {}).get("coherent", True))
+        llm_reason: str = str((resp.data or {}).get("reason", ""))
+        if not coherent:
+            return {
+                "passed": False,
+                "reason": f"LOCAL_MODEL coherence check failed: {llm_reason}",
+                "warnings": warnings_list,
+            }
+    except Exception as exc:
+        warnings_list.append(f"Coherence check skipped (LOCAL_MODEL unavailable): {exc}")
+
+    return {"passed": True, "reason": "", "warnings": warnings_list}
+
+
+# ── Output coherence quality check ───────────────────────────────────────────
+
+_OUTPUT_COHERENCE_PROMPT = """\
+You are a quality assurance agent evaluating whether an AI agent's output \
+actually addresses the stated goal.
+
+Goal: {goal}
+
+Output to evaluate:
+{output}
+
+Does the output meaningfully address the goal? Consider:
+  - Relevance: Does the output pertain to the goal?
+  - Completeness: Does the output address the main ask, even if not exhaustively?
+  - Coherence: Is the output internally consistent and logically structured?
+
+Return ONLY a JSON object:
+{{"passed": true or false, "confidence": 0.0-1.0, "reason": "<one sentence, max 120 chars>"}}
+"""
+
+
+def validate_output_coherence(
+    goal: str,
+    output: str,
+    agent_id: str,
+    project_id: str,
+) -> dict[str, Any]:
+    """Run a LOCAL_MODEL semantic check to verify *output* addresses *goal*.
+
+    Uses an offline model (Ollama) to avoid data egress for operational content.
+    Gracefully degrades — if the model is unavailable, passes with a warning so
+    the caller's main path is never blocked by a downed Ollama instance.
+
+    Args:
+        goal:       The original task objective or prompt.
+        output:     The generated text to evaluate.
+        agent_id:   Calling agent identifier (used for warning logs).
+        project_id: The AOS project namespace.
+
+    Returns:
+        A dict with keys:
+          - ``passed`` (bool): True if the output is coherent with the goal.
+          - ``confidence`` (float): Model confidence score 0.0–1.0.
+          - ``reason`` (str): One-sentence explanation.
+    """
+    from config import get_settings
+
+    if not goal.strip() or not output.strip():
+        return {"passed": False, "confidence": 0.0, "reason": "Goal or output is empty."}
+
+    settings = get_settings()
+    try:
+        prompt = _OUTPUT_COHERENCE_PROMPT.format(
+            goal=goal[:500],
+            output=output[:1500],
+        )
+        resp = _call_model(prompt, model=settings.models.LOCAL_MODEL, parse_json=True)
+        data = resp.data or {}
+        passed = bool(data.get("passed", True))
+        confidence = float(data.get("confidence", 0.5))
+        reason = str(data.get("reason", ""))
+        return {"passed": passed, "confidence": confidence, "reason": reason}
+    except Exception as exc:
+        _log_cloud(
+            agent_id,
+            project_id,
+            "system",
+            "",
+            f"validate_output_coherence skipped (LOCAL_MODEL unavailable): {exc}",
+            severity="WARNING",
+        )
+        return {"passed": True, "confidence": 0.5, "reason": f"Validation skipped: {exc}"}
 
 
 # ── Self-evolution loop ───────────────────────────────────────────────────────

@@ -99,6 +99,14 @@ No agent can deploy its own code unilaterally. Code that fails either gate never
 <img src="Docs/assets/Layer-Memory-Stack.png" alt="6-Layer Memory Stack including Knowledge Atlas" width="70%"/>
 </div>
 
+### Infrastructure Resilience (Phase 4 / Ch. 8)
+
+Three patterns from the [OpenClaw Paradigm](https://github.com/chunhualiao/openclaw-paradigm-book) are now wired into production:
+
+- **Circuit Breaker** (`tools/circuit_breaker.py`) — CLOSED → OPEN → HALF_OPEN state machine keyed by `(agent_id, resource_key)`. Prevents nexus-prime from hammering dead Google Sheets or BigQuery endpoints. Wired around `append_row("Agent_Approvals")` and `insert_row("aos_logs.task_outcomes")` — the two highest-blast-radius write paths.
+- **Phoenix Recovery** (`tools/phoenix.py`) — SHA-256-pinned working-state snapshots written to `aos_logs.agent_checkpoints` (BigQuery, 30-day TTL). After every successful task write, nexus-prime checkpoints its full `NexusPrimeWorkingMemory`. On restart, `phoenix_recover()` validates the state and restores from the last vetted snapshot if corruption is detected. Tampered checkpoint rows are silently skipped.
+- **AgentState FSM + output coherence** (`agents/__init__.py`) — The OODA loop is now a typed enum (`INIT → PLANNING → EXECUTION → OBSERVATION → …`). `log_state_transition()` emits structured Cloud Logging entries at every node boundary. `validate_output_coherence()` runs an offline LOCAL_MODEL sanity check on agent outputs — degrades gracefully when Ollama is unavailable.
+
 ### Hybrid LLM Strategy
 | Tier | Model | Used for |
 |------|-------|---------|
@@ -368,6 +376,7 @@ At the start of every work session, agents read all three files as standing orde
 | **Phase 2.5** | Google Chat integration, Vertex AI Search, Google Custom Search, Cloud Scheduler daily-kickoff and poll-comments jobs, Apps Script webhook + approval gate, skill-request flow | **Complete** |
 | **Phase 3** | `think` node (Strategic Architect), multimodal vision, `iterate_plan`, memory mirror, Chat Interactive Hub (JWT + approval cards + CARD_CLICKED routing), OpenTofu IaC + WIF CI/CD | **Complete** |
 | **Phase 4** | Production bootstrap (OpenTofu deploy), Approval Gate Chat-path E2E live validation, exit criteria, cost verification | **In progress** — Chat E2E validated (5 live approval proposals); cost/security verification and GAOS-Doctor checklist remaining |
+| **Phase 4 / Ch. 8** | Infrastructure resilience: circuit breaker, Phoenix recovery, `AgentState` FSM, output coherence check — wired into Nexus-Prime | **Complete** — 558 tests green |
 | **Phase 5** | CEO dashboard (Grafana + Cloud Run) | **Complete** — Grafana dashboard live on Cloud Run. Vertex Agent Engine remains future scope. |
 
 <div align="center">
@@ -424,6 +433,6 @@ Infrastructure as Code powered by [OpenTofu](https://opentofu.org) — an open-s
 <div align="center">
 
 *Built entirely on Google's cloud ecosystem.*
-*Phases 1–4 complete. 496 tests green. Phase 4: exiting — cost/security verification and GAOS-Doctor checklist remaining.*
+*Phases 1–4 complete. 558 tests green. Phase 4: exiting — cost/security verification and GAOS-Doctor checklist remaining.*
 
 </div>

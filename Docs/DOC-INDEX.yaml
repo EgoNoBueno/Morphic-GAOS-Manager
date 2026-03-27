@@ -1,0 +1,441 @@
+# Docs/DOC-INDEX.yaml
+#
+# Machine-readable index of all documents in Docs/.
+# Used by AI sessions (Rule 13) to determine which documents need updating
+# after a given code or config change.
+#
+# Schema:
+#   documents:
+#     <filename>:
+#       purpose:       one-line description of what this document covers
+#       code_paths:    list of repo paths whose changes trigger this doc
+#       triggers:      plain-English descriptions of change events that require an update
+#
+# Agent identity files follow the same schema under `agent_identity_files:`.
+# Each agent in Docs/agents/<name>.md maps to agents/<name>/orchestrator.py.
+#
+# Inverse index (code path → documents to update) is at the bottom of this file
+# for quick lookup during an AI session.
+
+# ---------------------------------------------------------------------------
+# PRIMARY SPEC DOCUMENTS
+# ---------------------------------------------------------------------------
+
+documents:
+
+  GAOS-Agent-Spec.md:
+    purpose: >
+      Canonical spec for all 7 orchestrator agents — boot sequence, event loop,
+      AgentState FSM, heartbeat, identity loading, and shared agent conventions.
+    code_paths:
+      - agents/
+      - main.py
+    triggers:
+      - New agent added to agents/
+      - Boot sequence order changed (Rule 9)
+      - AgentState enum modified (new states, renamed states)
+      - log_state_transition() semantics changed
+      - Event loop or Pub/Sub subscription pattern changed
+      - Heartbeat interval or payload schema changed
+      - New shared agent behavior established
+
+  GAOS-Tools-Spec.md:
+    purpose: >
+      Full API reference for every file in tools/ — function signatures,
+      parameters, return types, error types, usage rules, and the reference index.
+    code_paths:
+      - tools/
+    triggers:
+      - New file created in tools/
+      - Public function signature changed in tools/ (name, params, return type)
+      - New export added or removed from tools/__init__.py
+      - New tool usage rule established (§13)
+      - New section added to the spec (§14 index must be updated)
+      - Circuit breaker wiring points change
+      - Phoenix recovery integration changed
+
+  GAOS-Deploy-Spec.md:
+    purpose: >
+      Deployment runbook — GCP project setup, BigQuery tables and schemas,
+      Cloud Run config, Pub/Sub topics, Scheduler jobs, phase exit checklists,
+      OpenTofu pipeline, and verification commands.
+    code_paths:
+      - infra/
+      - Dockerfile
+      - scripts/bootstrap.py
+      - scripts/provision_schedulers.py
+      - scripts/provision_missing_folders.py
+      - scripts/setup_workspace.py
+      - scripts/setup_secrets.py
+      - pyproject.toml
+    triggers:
+      - New BigQuery table added or schema changed
+      - BQ table TTL or partition strategy changed
+      - New GCP resource provisioned (Pub/Sub topic, scheduler, secret, bucket)
+      - Phase task completed — check off the exit checklist item
+      - Cloud Run or Dockerfile config changed
+      - New secret added or renamed in Secret Manager
+      - infra/main.tf changed
+      - New verification command established
+      - Smoke test added or removed
+
+  GAOS-Manager-Spec.md:
+    purpose: >
+      High-level system design — orchestration topology, project registry schema,
+      Pub/Sub routing, tool inventory overview, and system-wide data flow.
+    code_paths:
+      - agents/
+      - tools/
+      - main.py
+      - config/settings.yaml
+    triggers:
+      - New orchestrator agent added
+      - Pub/Sub routing topology changed
+      - Project registry schema changed (new fields, renamed columns)
+      - New top-level system capability added
+      - Settings schema changed (new keys in settings.yaml)
+
+  GAOS-Nexus-Prime-Spec.md:
+    purpose: >
+      Nexus-Prime deep-dive — OODA loop nodes, NexusPrimeWorkingMemory schema,
+      approval gate logic, circuit breaker wiring, Phoenix recovery integration,
+      and the think/iterate_plan/validate flow.
+    code_paths:
+      - agents/nexus_prime/
+    triggers:
+      - agents/nexus_prime/orchestrator.py modified
+      - NexusPrimeWorkingMemory dataclass schema changed
+      - New node added to the OODA loop
+      - Approval gate logic changed (propose_gate, record)
+      - Circuit breaker wiring in nexus-prime changed
+      - Phoenix save_checkpoint / phoenix_recover integration changed
+      - think() or iterate_plan() behavior changed
+      - validate_output_coherence() integration changed
+
+  GAOS-Memory-Spec.md:
+    purpose: >
+      Memory system design — domain memory, monologue frames, token budget,
+      load/store API, recency-first truncation, and BigQuery schema for memory tables.
+    code_paths:
+      - tools/memory.py
+    triggers:
+      - tools/memory.py modified
+      - Memory BigQuery table schema changed (domain_memory, monologue_frames)
+      - Token budget logic or truncation strategy changed
+      - load_domain_memory() or save_domain_memory() signature changed
+      - Recency-sort or progressive distillation logic changed
+
+  GAOS-Chat-Dev-Reference.md:
+    purpose: >
+      Google Chat integration reference — JWT auth, CARD_CLICKED routing,
+      slash commands, approval card schemas, and event payload formats.
+    code_paths:
+      - tools/google_chat.py
+      - apps_script/
+    triggers:
+      - tools/google_chat.py modified
+      - apps_script/*.gs modified
+      - Chat card schema changed
+      - CARD_CLICKED routing logic changed
+      - JWT verification logic changed
+      - New slash command added
+
+  GAOS-Chat-Implementation-Problems.md:
+    purpose: >
+      Living document of known Google Chat integration failure modes,
+      workarounds, and open bugs.
+    code_paths:
+      - tools/google_chat.py
+      - apps_script/
+    triggers:
+      - New Chat integration bug discovered
+      - Existing workaround confirmed effective or superseded
+      - Chat quota or rate limit behaviour observed
+
+  GAOS-Security-Policy.md:
+    purpose: >
+      Security policy — code safety gates, import allowlist, HMAC verification,
+      JWT auth, secret handling, and SHA-256 pinning for approval proposals.
+    code_paths:
+      - agents/__init__.py
+      - tools/secrets.py
+      - tools/google_chat.py
+    triggers:
+      - agents/__init__.py import allowlist modified
+      - validate_code_safety() pattern list changed
+      - New secret type or credential introduced
+      - Auth, HMAC, or JWT logic changed
+      - SHA-256 pinning logic changed
+      - New OWASP-relevant finding discovered
+
+  GAOS-Skill-Compliance-Spec.md:
+    purpose: >
+      Skill compliance — skill document schema, Vertex AI Search sync,
+      skill validation rules, and the syncSkillsToVertex pipeline.
+    code_paths:
+      - apps_script/syncSkillsToVertex.gs
+      - tools/vertex_search.py
+    triggers:
+      - apps_script/syncSkillsToVertex.gs modified
+      - Skill document schema changed
+      - tools/vertex_search.py skill-path logic changed
+      - New skill validation rule established
+
+  GAOS-Privacy-Spec.md:
+    purpose: >
+      Privacy policy — data retention windows, PII handling rules,
+      project_id scoping guarantees, and data minimisation practices.
+    code_paths:
+      - tools/
+      - agents/
+    triggers:
+      - Data retention window changed (BQ TTL, logging duration)
+      - New PII-adjacent field added to any schema
+      - project_id scoping logic changed
+      - New data store introduced (new BQ table, new GCS bucket)
+
+  GAOS-Doctor.md:
+    purpose: >
+      Health check runbook — GAOS-Doctor script diagnostics,
+      verification steps, and phase exit criteria.
+    code_paths:
+      - scripts/gaos_doctor.py
+    triggers:
+      - scripts/gaos_doctor.py modified
+      - New diagnostic check added or removed
+      - Phase exit criteria changed
+
+  GAOS-Onboarding-Spec.md:
+    purpose: >
+      Onboarding guide — prerequisites, GCP setup steps, first-run walkthrough,
+      and bootstrap sequence for new developers.
+    code_paths:
+      - scripts/setup_workspace.py
+      - scripts/setup_secrets.py
+      - scripts/bootstrap.py
+      - pyproject.toml
+    triggers:
+      - Setup sequence changed
+      - New prerequisite added (GCP service, Python version, secret)
+      - Bootstrap script behaviour changed
+      - Required IAM roles changed
+
+  GAOS-Persona-Spec.md:
+    purpose: >
+      Strategic Architect persona rules — tone, response modes (Direct/Reframe/Research/Tactical),
+      look-ahead behavior, and session defaults.
+    code_paths:
+      - Docs/brand-voice.md
+      - Docs/AI-Autocoding-Rules.md
+      - .github/copilot-instructions.md
+    triggers:
+      - Rule 15 (Persona) modified in AI-Autocoding-Rules.md
+      - brand-voice.md updated
+      - New response mode or archetype defined
+
+  GAOS-Project-Glossary.md:
+    purpose: >
+      Project-wide glossary of terms, acronyms, agent names, and tool names.
+    code_paths:
+      - agents/
+      - tools/
+    triggers:
+      - New agent, tool, or concept introduced
+      - Term renamed across the codebase
+      - New acronym established in a spec
+
+  AI-Autocoding-Rules.md:
+    purpose: >
+      Hard rules for all development — model aliases, safety gates, commit
+      conventions, logging standards, PowerShell syntax, and automation-first policy.
+      Authoritative source; .github/copilot-instructions.md mirrors this.
+    code_paths:
+      - pyproject.toml
+      - .vscode/settings.json
+      - agents/__init__.py
+      - Docs/DOC-INDEX.yaml
+    triggers:
+      - New hard rule established from a lesson learned
+      - Existing rule violated and a correction pattern established
+      - New tooling standard adopted (formatter, linter, pre-commit hook)
+      - DOC-INDEX.yaml schema changed (update §13 pointer)
+
+  Morphic-GAOS-Manager-Summary.md:
+    purpose: >
+      Executive summary — what the system does, current phase status,
+      key capabilities overview, and high-level metrics.
+    code_paths:
+      - README.md
+    triggers:
+      - Phase milestone completed
+      - Major new capability added or removed
+      - Test count changes significantly (>10%)
+
+  working-preferences.md:
+    purpose: >
+      Developer working preferences — editor setup, debug flows,
+      terminal conventions, and personal session rules.
+    code_paths: []
+    triggers:
+      - Working preferences or tooling setup changed at user request
+
+  brand-voice.md:
+    purpose: >
+      Brand voice and communication style guide for all GAOS-generated output.
+    code_paths: []
+    triggers:
+      - Communication style rules changed
+      - New tone or formatting convention established
+
+# ---------------------------------------------------------------------------
+# AGENT IDENTITY FILES  (Docs/agents/<name>.md)
+# ---------------------------------------------------------------------------
+# Each file covers one agent's identity, persona, constraints, and behavioral
+# guidelines. Update the relevant file whenever that agent changes.
+
+agent_identity_files:
+
+  beacon.md:
+    agent_dir: agents/beacon/
+    triggers:
+      - agents/beacon/orchestrator.py behaviour changed
+      - Beacon persona or identity updated
+
+  foreman.md:
+    agent_dir: agents/foreman/
+    triggers:
+      - agents/foreman/orchestrator.py behaviour changed
+      - Foreman persona or identity updated
+
+  ledger.md:
+    agent_dir: agents/ledger/
+    triggers:
+      - agents/ledger/orchestrator.py behaviour changed
+      - Ledger persona or identity updated
+
+  nexus-prime.md:
+    agent_dir: agents/nexus_prime/
+    triggers:
+      - agents/nexus_prime/orchestrator.py behaviour changed
+      - Nexus-Prime persona or identity updated
+      - OODA loop nodes changed
+
+  pursuit.md:
+    agent_dir: agents/pursuit/
+    triggers:
+      - agents/pursuit/orchestrator.py behaviour changed
+      - Pursuit persona or identity updated
+
+  scout.md:
+    agent_dir: agents/scout/
+    triggers:
+      - agents/scout/orchestrator.py behaviour changed
+      - Scout persona or identity updated
+
+  steward.md:
+    agent_dir: agents/steward/
+    triggers:
+      - agents/steward/orchestrator.py behaviour changed
+      - Steward persona or identity updated
+
+# ---------------------------------------------------------------------------
+# INVERSE INDEX — code path → documents to update
+# ---------------------------------------------------------------------------
+# Use this section for fast lookup: "I changed X, what docs do I update?"
+
+inverse_index:
+
+  "agents/":
+    - GAOS-Agent-Spec.md
+    - GAOS-Manager-Spec.md
+    - GAOS-Project-Glossary.md          # if new agent added
+    - "Docs/agents/<name>.md"           # identity file for the changed agent
+
+  "agents/__init__.py":
+    - GAOS-Agent-Spec.md
+    - GAOS-Security-Policy.md           # import allowlist, safety gates
+
+  "agents/nexus_prime/":
+    - GAOS-Nexus-Prime-Spec.md
+    - GAOS-Agent-Spec.md
+    - "Docs/agents/nexus-prime.md"
+
+  "tools/":
+    - GAOS-Tools-Spec.md
+    - GAOS-Manager-Spec.md              # if it affects system-level data flow
+    - GAOS-Privacy-Spec.md              # if a new data store is introduced
+
+  "tools/memory.py":
+    - GAOS-Memory-Spec.md
+    - GAOS-Tools-Spec.md
+
+  "tools/circuit_breaker.py":
+    - GAOS-Tools-Spec.md                # §19
+    - GAOS-Nexus-Prime-Spec.md          # wiring section
+
+  "tools/phoenix.py":
+    - GAOS-Tools-Spec.md                # §20
+    - GAOS-Nexus-Prime-Spec.md          # wiring section
+    - GAOS-Deploy-Spec.md               # agent_checkpoints BQ table
+
+  "tools/google_chat.py":
+    - GAOS-Chat-Dev-Reference.md
+    - GAOS-Chat-Implementation-Problems.md
+    - GAOS-Security-Policy.md           # JWT / HMAC
+
+  "tools/secrets.py":
+    - GAOS-Security-Policy.md
+    - GAOS-Tools-Spec.md
+
+  "tools/vertex_search.py":
+    - GAOS-Skill-Compliance-Spec.md
+    - GAOS-Tools-Spec.md
+
+  "apps_script/":
+    - GAOS-Chat-Dev-Reference.md
+    - GAOS-Skill-Compliance-Spec.md
+
+  "infra/":
+    - GAOS-Deploy-Spec.md
+
+  "Dockerfile":
+    - GAOS-Deploy-Spec.md
+
+  "scripts/bootstrap.py":
+    - GAOS-Deploy-Spec.md
+    - GAOS-Onboarding-Spec.md
+
+  "scripts/setup_*.py":
+    - GAOS-Onboarding-Spec.md
+    - GAOS-Deploy-Spec.md
+
+  "scripts/gaos_doctor.py":
+    - GAOS-Doctor.md
+
+  "main.py":
+    - GAOS-Agent-Spec.md
+    - GAOS-Manager-Spec.md
+    - GAOS-Deploy-Spec.md
+
+  "config/settings.yaml":
+    - GAOS-Manager-Spec.md
+    - GAOS-Deploy-Spec.md               # if a new secret or alias is added
+
+  "pyproject.toml":
+    - GAOS-Deploy-Spec.md
+    - GAOS-Onboarding-Spec.md
+    - AI-Autocoding-Rules.md            # if tooling standards change
+
+  "README.md":
+    - Morphic-GAOS-Manager-Summary.md
+
+  "Docs/brand-voice.md":
+    - GAOS-Persona-Spec.md
+
+  "Docs/AI-Autocoding-Rules.md":
+    - GAOS-Persona-Spec.md              # if Rule 15 changes
+    - ".github/copilot-instructions.md" # mirror — keep in sync
+
+  "Docs/DOC-INDEX.yaml":
+    - AI-Autocoding-Rules.md            # §13 pointer
+    - ".github/copilot-instructions.md" # §13 pointer

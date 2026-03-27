@@ -845,6 +845,82 @@ def utcnow_date() -> str:
     """Return current UTC date as YYYY-MM-DD string. Used in heartbeats."""
 ```
 
+### `AgentState` Enum
+
+Added in Phase 2 Chapter 8 (OpenClaw Paradigm). Formalises the agent OODA loop as a typed state machine.
+
+```python
+class AgentState(str, Enum):
+    """Named states for the agent OODA loop (str mixin for JSON serialisation)."""
+    INIT        = "INIT"
+    PLANNING    = "PLANNING"
+    EXECUTION   = "EXECUTION"
+    OBSERVATION = "OBSERVATION"
+    HEALING     = "HEALING"
+    SYNTHESIS   = "SYNTHESIS"
+    ESCALATION  = "ESCALATION"
+    IDLE        = "IDLE"
+    COMPLETED   = "COMPLETED"
+```
+
+### `log_state_transition()`
+
+Emits a structured `_log_cloud` entry whenever an agent transitions between OODA states. Designed to be called at node boundaries inside orchestrators.
+
+```python
+def log_state_transition(
+    agent_id: str,
+    project_id: str,
+    task_id: str,
+    from_state: AgentState,
+    to_state: AgentState,
+    reason: str = "",
+) -> None:
+    """
+    Emit a structured state-transition log entry.
+
+    Args:
+        agent_id:   Agent identifier (e.g. "nexus-prime").
+        project_id: Project namespace.
+        task_id:    Current task ID for correlation.
+        from_state: The state the agent is leaving.
+        to_state:   The state the agent is entering.
+        reason:     Optional human-readable reason string.
+    """
+```
+
+Log type is `"state_transition"`. Extra fields (`from_state`, `to_state`, `reason`) appear under `extra` in the structured log payload and are queryable in Cloud Logging.
+
+### `validate_output_coherence()`
+
+Offl-model semantic gate. Runs on `LOCAL_MODEL` (Ollama) and degrades gracefully when Ollama is unavailable. Added in Phase 2 Chapter 8.
+
+```python
+def validate_output_coherence(
+    goal: str,
+    output: str,
+    agent_id: str,
+    project_id: str,
+) -> dict[str, Any]:
+    """
+    Ask LOCAL_MODEL whether *output* coherently achieves *goal*.
+
+    Args:
+        goal:       The original task objective or instruction.
+        output:     The agent output to evaluate.
+        agent_id:   Calling agent identifier (for log correlation).
+        project_id: Project namespace.
+
+    Returns:
+        {"passed": bool, "confidence": float, "reason": str}
+        On Ollama unavailability, returns {"passed": True, "confidence": 0.0,
+        "reason": "coherence check skipped — Ollama unavailable"} so the
+        offline check never blocks the main execution path.
+    """
+```
+
+> ⚠️ **Only use with `LOCAL_MODEL`.** `web_access=True` is silently ignored and `validate_output_coherence` never receives it; the check is purely prompt-based and runs fully offline. Coherence failures emit a `WARNING` log — they are advisory, not a hard stop.
+
 ---
 
 ## 11. `tools/google_chat.py`
@@ -1017,6 +1093,9 @@ def web_search(query: str, max_results: int = 5) -> str:
 | Always propagate `project_id` into every tool call | There is no ambient project context — dropping it is a bug |
 | Catch tool errors at the agent level | Do not retry inside a tool call; the tool raises after its own backoff. The agent decides whether to escalate or park. |
 | Never call `httpx` or any Google SDK directly from an agent | Use the tool layer and `_call_model()` — direct SDK calls bypass scoping, error handling, and fallback logic. |
+| Wrap Sheets/BQ writes with `cb_check` / `cb_success` / `cb_failure` | At minimum, protect `append_row("Agent_Approvals")` and `insert_row("aos_logs.*")` calls — these are the highest-blast-radius failure points. |
+| Never call `cb_failure` inside a `CircuitOpenError` handler | The call was never attempted; recording a failure only delays HALF_OPEN recovery. |
+| `save_checkpoint` is best-effort — never block on it | `save_checkpoint` swallows all exceptions internally. Place it after a successful write, not before. |
 
 ---
 
@@ -1032,6 +1111,10 @@ def web_search(query: str, max_results: int = 5) -> str:
 | Sheets quota limits | `GAOS-Manager-Spec.md` §9.4 |
 | Memory layer schemas and self-learning loop | `GAOS-Memory-Spec.md` |
 | Agent boot sequence (tool call order) | `GAOS-Agent-Spec.md` §7 |
+| Circuit breaker full API | §19 (this doc) |
+| Phoenix recovery full API | §20 (this doc) |
+| `agent_checkpoints` BQ table creation | `GAOS-Deploy-Spec.md` §7 |
+| AgentState enum + log_state_transition | §10 (this doc) |
 | Project Registry tab schema | `GAOS-Manager-Spec.md` §2 |
 | Drive Knowledge/ folder structure | `GAOS-Memory-Spec.md` §7 |
 | Chat settings (`chat.owner_space`, `chat.service_account_key`) | `GAOS-Deploy-Spec.md` §10.3 |
@@ -1365,3 +1448,229 @@ docs:
 `sync_to_atlas()` is called exclusively from `knowledge_review` in Nexus-Prime's orchestrator, immediately after `write_approved_memory()`. It runs inside its own nested `try/except` — `MemoryMirrorError` is logged as a `WARNING` and never propagates. The Vertex AI write path is always primary.
 
 > ⚠️ **Pre-create the Atlas doc manually.** Do not set `knowledge_atlas_doc_id` to an empty string and expect auto-creation — `sync_to_atlas()` raises `MemoryMirrorError` immediately if the ID is missing. Auto-creation during cold start risks duplicate Atlas documents if multiple agents boot simultaneously. Create the doc once in Google Drive, note its document ID from the URL (`/d/<ID>/edit`), and paste it into `settings.yaml`.
+
+---
+
+## 19. `tools/circuit_breaker.py`
+
+In-process CLOSED → OPEN → HALF_OPEN state machine that prevents agents from hammering dead external dependencies. Added in Phase 2 Chapter 8 (OpenClaw Paradigm §8.3).
+
+> **Design rationale:** Cloud Run `workers=1` (single-process) — state is held in a module-level dict keyed by `(agent_id, resource_key)`. No cross-instance coordination is needed; state resets on cold start, which is acceptable (the circuit simply begins closed again and re-opens if the dependency is still dead).
+
+```python
+from tools.circuit_breaker import (
+    check as cb_check,
+    record_failure as cb_failure,
+    record_success as cb_success,
+    CircuitOpenError,
+)
+```
+
+### State Machine
+
+| State | Condition | Behaviour |
+|-------|-----------|-----------|
+| `CLOSED` | Default; failure count < threshold | Calls pass through normally |
+| `OPEN` | Failure count ≥ threshold | `check()` raises `CircuitOpenError` immediately; no call attempted |
+| `HALF_OPEN` | Cooldown period elapsed after OPEN | One probe call allowed; failure → back to OPEN, success → CLOSED |
+
+Default threshold: **3 failures**. Default cooldown: **300 seconds**. Both are configurable per call-site.
+
+### Public API
+
+```python
+def check(agent_id: str, resource_key: str) -> None:
+    """
+    Assert the circuit is CLOSED or HALF_OPEN for (agent_id, resource_key).
+
+    Raises:
+        CircuitOpenError: Circuit is OPEN and cooldown has not elapsed.
+    """
+
+def record_failure(agent_id: str, resource_key: str) -> None:
+    """
+    Record one failure for (agent_id, resource_key).
+    Increments the failure counter; transitions CLOSED → OPEN when threshold reached.
+    """
+
+def record_success(agent_id: str, resource_key: str) -> None:
+    """
+    Record a successful call for (agent_id, resource_key).
+    Resets failure counter; transitions HALF_OPEN → CLOSED.
+    """
+
+def get_state(agent_id: str, resource_key: str) -> str:
+    """Return the current state string: "CLOSED", "OPEN", or "HALF_OPEN"."""
+
+def reset(agent_id: str, resource_key: str) -> None:
+    """Manually reset the circuit to CLOSED. Useful in tests."""
+
+def reset_all() -> None:
+    """Reset all circuits to CLOSED. Intended for test teardown only."""
+```
+
+### Error Types
+
+```python
+class CircuitOpenError(Exception):
+    """
+    Raised by check() when the circuit is OPEN and the cooldown has not elapsed.
+    The caller should log a WARNING and skip the call — do not record a failure
+    (the call was never attempted).
+    """
+```
+
+### Canonical Usage Pattern
+
+```python
+from tools.circuit_breaker import check as cb_check, record_failure as cb_failure, \
+    record_success as cb_success, CircuitOpenError
+
+try:
+    cb_check("nexus-prime", "google-sheets")
+    append_row("Agent_Approvals", row, project_id)
+    cb_success("nexus-prime", "google-sheets")
+except CircuitOpenError:
+    _log_cloud(..., "Circuit open — call skipped", "WARNING")
+    # Do NOT call cb_failure here — the call was never made
+except Exception as exc:
+    cb_failure("nexus-prime", "google-sheets")
+    _log_cloud(..., f"Call failed: {exc}", "ERROR")
+```
+
+> ⚠️ **Do not call `cb_failure` on `CircuitOpenError`.** When the circuit is already OPEN, incrementing the failure counter is redundant and can cause the cooldown timer to reset, indefinitely deferring recovery. Only `record_failure` when the underlying API call was actually attempted and failed.
+
+### Current Wire-Up Points (Nexus-Prime)
+
+| Node | Resource Key | Call site |
+|------|-------------|-----------|
+| `propose_gate` | `"google-sheets"` | `append_row("Agent_Approvals", ...)` |
+| `record` | `"bigquery"` | `insert_row("aos_logs.task_outcomes", ...)` |
+
+---
+
+## 20. `tools/phoenix.py`
+
+Checkpoint and recovery for agent working state. Implements the Phoenix Pattern from OpenClaw Paradigm §8.11: when corrupted state is detected, the agent restores from the last known-good snapshot rather than attempting in-place repair. Added in Phase 2 Chapter 8.
+
+> **Persistence:** Checkpoints are written to BigQuery `aos_logs.agent_checkpoints` (30-day TTL, `timestamp` partition). See `GAOS-Deploy-Spec.md §7` for table creation. Writes are **best-effort and non-fatal** — a checkpoint failure never blocks the agent's main execution path.
+
+> **Security:** Every checkpoint row is SHA-256-pinned (`checkpoint_hash` = SHA-256 of the serialized state JSON). `load_checkpoint()` recomputes the hash for every candidate row and silently skips any row where `stored_hash ≠ computed_hash`. This prevents a tampered `Agent_Approvals`-style attack on the `state_json` column.
+
+```python
+from tools.phoenix import save_checkpoint, load_checkpoint, phoenix_recover, validate_state
+```
+
+### Public API
+
+```python
+def validate_state(state: dict[str, Any]) -> dict[str, Any]:
+    """
+    Check that *state* contains required fields and is within size limits.
+
+    Required fields: ``agent_id``, ``project_id``.
+    Size limit: 512 KB serialized.
+
+    Returns:
+        {"valid": bool, "reason": str}   # reason is empty on success
+    """
+
+def save_checkpoint(agent_id: str, project_id: str, state: dict[str, Any]) -> None:
+    """
+    Serialize, hash-pin, and write *state* to aos_logs.agent_checkpoints.
+
+    Best-effort — all exceptions are caught and logged as WARNING.
+    Never raises; never blocks the caller.
+
+    Args:
+        agent_id:   Agent identifier (used as the BQ row key).
+        project_id: Project namespace.
+        state:      Agent working state dict to snapshot.
+    """
+
+def load_checkpoint(
+    agent_id: str, project_id: str, *, limit: int = 5
+) -> dict[str, Any] | None:
+    """
+    Load and hash-verify the most recent valid checkpoint for *agent_id*.
+
+    Queries the last *limit* rows (default 5) ordered by timestamp DESC.
+    Skips any row whose SHA-256 hash does not match the stored ``checkpoint_hash``.
+
+    Returns:
+        The first hash-verified state dict, or None if no valid checkpoint exists.
+
+    Raises:
+        CheckpointCorruptedError: All candidate rows failed hash verification.
+    """
+
+def phoenix_recover(
+    agent_id: str,
+    project_id: str,
+    current_state: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Validate *current_state*; if invalid, restore from the last checkpoint.
+
+    Args:
+        agent_id:      Agent identifier.
+        project_id:    Project namespace.
+        current_state: The state dict to validate.
+
+    Returns:
+        *current_state* unchanged if valid, or the restored checkpoint dict.
+
+    Raises:
+        CheckpointCorruptedError: Current state is invalid AND no valid
+            checkpoint exists in BigQuery.
+    """
+```
+
+### Error Types
+
+```python
+class CheckpointCorruptedError(Exception):
+    """
+    Active state failed validation and no restorable checkpoint exists.
+    The caller must log CRITICAL, set hard_stop_triggered=True, and return state.
+    """
+
+class CheckpointSerializationError(Exception):
+    """State dict cannot be serialized to JSON. Raised only by internal helpers."""
+```
+
+### Canonical Usage Pattern
+
+```python
+from tools.phoenix import save_checkpoint
+
+# After a successful high-risk write — non-fatal, best-effort:
+try:
+    cb_check("nexus-prime", "bigquery")
+    insert_row("aos_logs.task_outcomes", outcome)
+    cb_success("nexus-prime", "bigquery")
+    save_checkpoint("nexus-prime", state.get("project_id", ""), dict(state))
+except CircuitOpenError:
+    _log_cloud(..., "BigQuery circuit open", "WARNING")
+except Exception:
+    cb_failure("nexus-prime", "bigquery")
+```
+
+### Current Wire-Up Points (Nexus-Prime)
+
+| Node | When | Behaviour |
+|------|------|-----------|
+| `record` | After successful `insert_row("aos_logs.task_outcomes", ...)` | Snapshots full working state; non-fatal |
+
+### Required BigQuery Table
+
+See `GAOS-Deploy-Spec.md §7` for the `agent_checkpoints` table creation script. Schema:
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `agent_id` | STRING | |
+| `project_id` | STRING | |
+| `timestamp` | TIMESTAMP | Partition key; 30-day TTL |
+| `state_json` | STRING | Serialized dict — never executed |
+| `checkpoint_hash` | STRING | SHA-256 of `state_json` |
+| `is_valid` | BOOL | Always `True` on write; hash mismatch rows skipped at load |

@@ -1165,6 +1165,58 @@ class TestArchiveJob:
         mock_delete.assert_not_called()
         assert result["archived"]["Logs"] == 0
 
+    def test_idempotency_guard_skips_on_recent_archive_row(self):
+        """handle_archive returns skipped=True if a nexus-prime ARCHIVE row exists within 4h."""
+        from agents.nexus_prime.orchestrator import handle_archive
+
+        recent_archive_row = {
+            "timestamp": (datetime.now(UTC) - timedelta(hours=1)).isoformat(),
+            "agent_id": "nexus-prime",
+            "level": "ARCHIVE",
+            "message": "NIGHTLY_ARCHIVE complete",
+            "project_id": "test-project",
+        }
+
+        with (
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+            patch("tools.google_sheets.get_all_records", return_value=[recent_archive_row]),
+            patch("tools.google_sheets.get_all_records_with_row_numbers") as mock_numbered,
+            patch("tools.google_sheets.append_row") as mock_append,
+            patch("tools.bigquery.insert_rows") as mock_bq,
+        ):
+            result = asyncio.run(handle_archive("test-project"))
+
+        assert result.get("skipped") is True
+        assert result.get("reason") == "archive already ran today"
+        mock_numbered.assert_not_called()
+        mock_bq.assert_not_called()
+        mock_append.assert_not_called()
+
+    def test_idempotency_guard_proceeds_when_archive_row_is_stale(self):
+        """handle_archive runs normally when the last ARCHIVE row is more than 4 hours old."""
+        from agents.nexus_prime.orchestrator import handle_archive
+
+        stale_archive_row = {
+            "timestamp": (datetime.now(UTC) - timedelta(hours=6)).isoformat(),
+            "agent_id": "nexus-prime",
+            "level": "ARCHIVE",
+            "message": "NIGHTLY_ARCHIVE complete",
+            "project_id": "test-project",
+        }
+
+        with (
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+            patch("tools.google_sheets.get_all_records", return_value=[stale_archive_row]),
+            patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
+            patch("tools.google_sheets.delete_rows"),
+            patch("tools.google_sheets.append_row"),
+            patch("tools.bigquery.insert_rows"),
+        ):
+            result = asyncio.run(handle_archive("test-project"))
+
+        assert result.get("skipped") is not True
+        assert "archived" in result
+
     # ── /archive endpoint tests ────────────────────────────────────────────────
 
     def test_archive_endpoint_returns_200_for_nexus_prime(self, monkeypatch):
@@ -1983,3 +2035,250 @@ class TestCodeQuality:
             "Rule 16 violation — public function missing return type annotation:\n"
             + "\n".join(violations)
         )
+
+
+# ── QP: Proposal coherence gate ───────────────────────────────────────────
+#
+# QP1  Structurally complete proposal passes without LLM call.
+# QP2  Empty issue description fails structural check.
+# QP3  Code present but stopping_constraint missing fails structural check.
+# QP4  LOCAL_MODEL returning coherent=false propagates reason and returns passed=False.
+# QP5  LOCAL_MODEL failure causes a warning entry and still passes (non-blocking).
+
+
+class TestQPProposalCoherence:
+    """Unit tests for _validate_proposal_coherence() — the pre-submission quality gate."""
+
+    _VALID_PROPOSAL_KWARGS: dict = {
+        "agent_id": "beacon",
+        "issue": "ROAS dropped below 1.0 for three consecutive days on campaign CAM-42.",
+        "trigger_reason": "EVOLUTION_REQUEST",
+        "stopping_constraint": "iteration_cap",
+        "proposed_code": "def fix(): pass",
+    }
+
+    def _make_proposal(self, **overrides):
+        from models import ApprovalProposal
+
+        kwargs = {**self._VALID_PROPOSAL_KWARGS, **overrides}
+        return ApprovalProposal(**kwargs)
+
+    def _mock_llm_coherent(self):
+        """Return a mock ModelResponse indicating coherence."""
+        mock_resp = MagicMock()
+        mock_resp.data = {"coherent": True, "reason": ""}
+        mock_resp.cost_usd = 0.0
+        mock_resp.tokens_used = 10
+        mock_resp.text = '{"coherent": true, "reason": ""}'
+        return mock_resp
+
+    def test_qp1_complete_proposal_passes(self):
+        """A well-formed proposal with non-trivial issue + stopping_constraint passes."""
+        from agents import _validate_proposal_coherence
+
+        proposal = self._make_proposal()
+        with patch("agents._call_model", return_value=self._mock_llm_coherent()):
+            result = _validate_proposal_coherence(proposal, "acme")
+
+        assert result["passed"] is True
+        assert result["reason"] == ""
+
+    def test_qp2_empty_issue_fails_structural_check(self):
+        """An issue description that is empty or trivially short fails before LLM is called."""
+        from agents import _validate_proposal_coherence
+
+        proposal = self._make_proposal(issue="too short")  # < _MIN_ISSUE_LENGTH
+        with patch("agents._call_model") as mock_llm:
+            result = _validate_proposal_coherence(proposal, "acme")
+
+        # LLM must not be called — structural check short-circuits
+        mock_llm.assert_not_called()
+        assert result["passed"] is False
+        assert "too short" in result["reason"].lower() or "chars" in result["reason"].lower()
+
+    def test_qp2_blank_issue_fails_structural_check(self):
+        """A blank issue field fails the structural check."""
+        from agents import _validate_proposal_coherence
+
+        proposal = self._make_proposal(issue="   ")
+        with patch("agents._call_model") as mock_llm:
+            result = _validate_proposal_coherence(proposal, "acme")
+
+        mock_llm.assert_not_called()
+        assert result["passed"] is False
+
+    def test_qp3_code_present_without_stopping_constraint_fails(self):
+        """proposed_code present but stopping_constraint empty → structural failure."""
+        from agents import _validate_proposal_coherence
+
+        proposal = self._make_proposal(stopping_constraint="")
+        with patch("agents._call_model") as mock_llm:
+            result = _validate_proposal_coherence(proposal, "acme")
+
+        mock_llm.assert_not_called()
+        assert result["passed"] is False
+        assert "stopping_constraint" in result["reason"]
+
+    def test_qp3_no_code_allows_empty_stopping_constraint(self):
+        """When proposed_code is empty, missing stopping_constraint is permitted."""
+        from agents import _validate_proposal_coherence
+
+        proposal = self._make_proposal(proposed_code="", stopping_constraint="")
+        with patch("agents._call_model", return_value=self._mock_llm_coherent()):
+            result = _validate_proposal_coherence(proposal, "acme")
+
+        assert result["passed"] is True
+
+    def test_qp4_llm_incoherence_returns_passed_false_with_reason(self):
+        """When LOCAL_MODEL judges the proposal incoherent, passed=False with LLM reason."""
+        from agents import _validate_proposal_coherence
+
+        mock_resp = MagicMock()
+        mock_resp.data = {"coherent": False, "reason": "Issue is too vague to act on."}
+        mock_resp.cost_usd = 0.0
+        mock_resp.tokens_used = 15
+        mock_resp.text = '{"coherent": false, "reason": "Issue is too vague to act on."}'
+
+        proposal = self._make_proposal()
+        with patch("agents._call_model", return_value=mock_resp):
+            result = _validate_proposal_coherence(proposal, "acme")
+
+        assert result["passed"] is False
+        assert "too vague" in result["reason"]
+
+    def test_qp5_llm_failure_is_non_blocking(self):
+        """If LOCAL_MODEL raises, passed=True with a warning entry — submission continues."""
+        from agents import _validate_proposal_coherence
+
+        proposal = self._make_proposal()
+        with patch("agents._call_model", side_effect=RuntimeError("ollama unavailable")):
+            result = _validate_proposal_coherence(proposal, "acme")
+
+        assert result["passed"] is True
+        assert any("ollama unavailable" in w for w in result["warnings"])
+
+
+class TestProgressiveDistillation:
+    """
+    PA1–PA4: Progressive episodic distillation step in handle_archive().
+
+    Verifies that agents with ≥ 5 recent log entries get a Pending_Knowledge row
+    surfaced via flush_observations(), that under-threshold agents are skipped,
+    that LLM failures are non-blocking, and that the report message reflects the
+    distilled count.
+    """
+
+    def _make_recent_log(self, agent_id: str, message: str = "task done") -> dict:
+        ts = (datetime.now(UTC) - timedelta(minutes=30)).isoformat()
+        return {
+            "timestamp": ts,
+            "agent_id": agent_id,
+            "level": "INFO",
+            "message": message,
+            "project_id": "test-project",
+        }
+
+    def _mock_resp(self, text: str = "• Lesson one\n• Lesson two") -> MagicMock:
+        resp = MagicMock()
+        resp.text = text
+        resp.cost_usd = 0.001
+        return resp
+
+    def test_pa1_agent_with_five_plus_logs_triggers_flush(self):
+        """An agent with ≥ 5 recent log entries gets a Pending_Knowledge row via flush_observations."""
+        from agents.nexus_prime.orchestrator import handle_archive
+
+        logs = [self._make_recent_log("beacon", f"task {i}") for i in range(6)]
+
+        with (
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+            patch("tools.google_sheets.get_all_records", return_value=logs),
+            patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
+            patch("tools.google_sheets.delete_rows"),
+            patch("tools.google_sheets.append_row"),
+            patch("tools.bigquery.insert_rows"),
+            patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
+            patch("tools.memory.flush_observations") as mock_flush,
+        ):
+            asyncio.run(handle_archive("test-project"))
+
+        mock_flush.assert_called()
+        obs = mock_flush.call_args[0][0][0]
+        assert obs["agent_id"] == "beacon"
+        assert obs["domain"] == "marketing"
+        assert obs["knowledge_type"] == "pattern"
+        assert obs["status"] == "Buffered"
+        assert obs["confidence"] == pytest.approx(0.25)
+
+    def test_pa2_agent_with_fewer_than_five_logs_skipped(self):
+        """An agent with < 5 recent log entries does not trigger distillation."""
+        from agents.nexus_prime.orchestrator import handle_archive
+
+        logs = [self._make_recent_log("ledger", f"entry {i}") for i in range(4)]
+
+        with (
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+            patch("tools.google_sheets.get_all_records", return_value=logs),
+            patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
+            patch("tools.google_sheets.delete_rows"),
+            patch("tools.google_sheets.append_row"),
+            patch("tools.bigquery.insert_rows"),
+            patch("agents.nexus_prime.orchestrator._call_model"),
+            patch("tools.memory.flush_observations") as mock_flush,
+        ):
+            asyncio.run(handle_archive("test-project"))
+
+        mock_flush.assert_not_called()
+
+    def test_pa3_llm_failure_is_non_blocking(self):
+        """If LOCAL_MODEL raises during distillation, the archive still completes with a WARNING log."""
+        from agents.nexus_prime.orchestrator import handle_archive
+
+        logs = [self._make_recent_log("scout", f"entry {i}") for i in range(6)]
+
+        with (
+            patch("agents.nexus_prime.orchestrator._log_cloud") as mock_log,
+            patch("tools.google_sheets.get_all_records", return_value=logs),
+            patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
+            patch("tools.google_sheets.delete_rows"),
+            patch("tools.google_sheets.append_row"),
+            patch("tools.bigquery.insert_rows"),
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                side_effect=RuntimeError("ollama down"),
+            ),
+            patch("tools.memory.flush_observations") as mock_flush,
+        ):
+            result = asyncio.run(handle_archive("test-project"))
+
+        assert "total" in result
+        mock_flush.assert_not_called()
+        warning_calls = [
+            c
+            for c in mock_log.call_args_list
+            if "distillation" in " ".join(str(a) for a in c[0]).lower()
+        ]
+        assert len(warning_calls) >= 1
+
+    def test_pa4_report_message_includes_distilled_count(self):
+        """The nightly archive report message includes 'N agents distilled'."""
+        from agents.nexus_prime.orchestrator import handle_archive
+
+        logs = [self._make_recent_log("steward", f"op {i}") for i in range(6)]
+
+        with (
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+            patch("tools.google_sheets.get_all_records", return_value=logs),
+            patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
+            patch("tools.google_sheets.delete_rows"),
+            patch("tools.google_sheets.append_row") as mock_append,
+            patch("tools.bigquery.insert_rows"),
+            patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
+            patch("tools.memory.flush_observations"),
+        ):
+            asyncio.run(handle_archive("test-project"))
+
+        logs_appends = [c for c in mock_append.call_args_list if c[0][0] == "Logs"]
+        summary = logs_appends[-1][0][1]
+        assert "agents distilled" in summary["message"]
+        assert "1 agents distilled" in summary["message"]
