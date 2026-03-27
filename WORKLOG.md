@@ -5,6 +5,46 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-27T02:29-07:00 — Phase 5 doc accuracy sweep — committed and pushed
+
+### What was done
+
+Systematic accuracy pass across all major spec and reference documents, correcting stale data accumulated during Phase 1–5 implementation. 10 documents corrected; 1 verified already accurate (GAOS-Doctor.md).
+
+**Corrections applied:**
+- **Test count:** 408 → 496 across 6 documents
+- **Phase status:** Phase 5 "Future" → "Complete" in 4 documents; all 5 phases now marked complete
+- **Vertex AI Memory Bank cost:** `$2.50` → `~$0.55/month` in 3 documents ($2.50 was the budget *ceiling*, not the actual cost)
+- **Language:** "cost ceiling" / "$2.50/month cap" → "the Low Expenses Standard" at 5 locations
+- **Model aliases:** `gemini-2.0-flash`, `gemini-1.5-pro`, `llama3.1` → `gemini-2.5-flash`, `gemini-2.5-pro`, `ollama/llama3` to match current `settings.yaml`
+- **`tests/test_nexus_prime.py`:** Removed non-existent file reference in GAOS-Nexus-Prime-Spec.md; corrected to `test_reactive_routing.py` + `test_agents.py`
+- **Cross-ref fix:** GAOS-Skill-Compliance-Spec.md §6 → §7 boot sequence reference
+- **Security Policy:** Provenance markers → "open post-Phase 5 hardening debt"
+- **Tools Spec:** Added `count_active_entries()` to §8; updated `load_domain_memory()` boot-budget docs; fixed `cost_usd=0.0` description
+- **AI-Autocoding-Rules.md:** Forbidden version strings updated to current aliases; Rule 10 Phase 4 → "active development"; Rule 17 debt note; footer date updated
+
+### Files changed
+- `README.md`, `Docs/Morphic-GAOS-Manager-Summary.md`, `Docs/GAOS-Manager-Spec.md` — phase/test/cost corrections
+- `Docs/GAOS-Nexus-Prime-Spec.md` — test file reference corrected
+- `Docs/GAOS-Onboarding-Spec.md` — $2.50 → $0.55 in three locations
+- `Docs/GAOS-Security-Policy.md` — provenance markers status updated
+- `Docs/GAOS-Tools-Spec.md` — `count_active_entries()` added, `load_domain_memory()` docs updated
+- `Docs/GAOS-Skill-Compliance-Spec.md` — cross-ref §6 → §7
+- `Docs/GAOS-Agent-Spec.md` — model versions, `cost_usd` description
+- `Docs/AI-Autocoding-Rules.md` — forbidden strings, phase refs, footer date
+- Commit `49515be` — 22 files, 631 insertions(+), 56 deletions(-), pushed to `master`
+
+### Lessons captured
+- **Pre-commit ruff two-pass commit:** When `ruff check --fix` modifies files, the hook exits with code 1 and the commit fails (fixes staged but not committed). Must `git add -A` and retry — second attempt passes. Expected behavior, not a bug.
+- **`tests/test_nexus_prime.py` does not exist.** Coverage for Nexus-Prime lives in `test_reactive_routing.py`, `test_agents.py`, and tool-specific test files. Do not create this file — it would duplicate existing coverage.
+
+### What's next
+- `Docs/GAOS-Deploy-Spec.md` — not reviewed this session; Phase 5 exit checklist may still have open items
+- `Docs/GAOS-Privacy-Spec.md`, `Docs/GAOS-Persona-Spec.md`, `Docs/agents/` identity files — not yet reviewed for Phase 5 accuracy
+- Phase 4 backlog: `.pre-commit-config.yaml` with `ruff check --fix` + `ruff format` (Rule 16 tracked task)
+
+---
+
 ## 2026-03-27T01:15-03:00 — OpenClaw §6 Memory Patterns — Implemented and verified
 
 ### What was done
