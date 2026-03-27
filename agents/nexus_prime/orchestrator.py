@@ -1182,7 +1182,9 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         cb_failure("nexus-prime", "bigquery")
     else:
         try:
-            save_checkpoint("nexus-prime", state.get("project_id", ""), dict(state))
+            checkpoint_state = dict(state)
+            checkpoint_state.setdefault("agent_id", "nexus-prime")
+            save_checkpoint("nexus-prime", state.get("project_id", ""), checkpoint_state)
         except Exception as _cp_exc:
             _log_cloud(
                 "nexus-prime",

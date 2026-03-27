@@ -43,7 +43,7 @@ Seven verification findings addressed. One feature addition (circuit breaker thu
 
 ---
 
-## 2026-03-27T24:00-03:00 — Post-commit cleanup: doc consolidation, BQ idempotency, spec accuracy pass — complete
+## 2026-03-28T00:00-03:00 — Post-commit cleanup: doc consolidation, BQ idempotency, spec accuracy pass — complete
 
 ### What was done
 
