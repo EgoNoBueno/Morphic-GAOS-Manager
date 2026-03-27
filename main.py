@@ -89,25 +89,31 @@ async def _warm_jwt_cache() -> None:
 
 _AGENT_NAME: str = os.environ.get("AGENT_NAME", "nexus-prime")
 
-_AGENT_REGISTRY: dict[str, str] = {
-    "nexus-prime": "agents.nexus_prime.orchestrator",
-    "ledger": "agents.ledger.orchestrator",
-    "beacon": "agents.beacon.orchestrator",
-    "pursuit": "agents.pursuit.orchestrator",
-    "foreman": "agents.foreman.orchestrator",
-    "steward": "agents.steward.orchestrator",
-    "scout": "agents.scout.orchestrator",
-}
 
-_AGENT_CLASS: dict[str, str] = {
-    "nexus-prime": "NexusPrimeAgent",
-    "ledger": "LedgerAgent",
-    "beacon": "BeaconAgent",
-    "pursuit": "PursuitAgent",
-    "foreman": "ForemanAgent",
-    "steward": "StewardAgent",
-    "scout": "ScoutAgent",
-}
+def _build_registry() -> tuple[dict[str, str], dict[str, str]]:
+    """Discover agents by scanning agents/ subdirs that contain orchestrator.py.
+
+    Convention: directory name ``my_agent`` → slug ``my-agent`` → class ``MyAgent``.
+    No manual registration required when a new agent directory is added.
+    """
+    from pathlib import Path
+
+    registry: dict[str, str] = {}
+    classes: dict[str, str] = {}
+    agents_dir = Path(__file__).parent / "agents"
+    for p in sorted(agents_dir.iterdir()):
+        if not p.is_dir() or p.name.startswith("_"):
+            continue
+        if not (p / "orchestrator.py").exists():
+            continue
+        slug = p.name.replace("_", "-")
+        class_name = "".join(w.title() for w in p.name.split("_")) + "Agent"
+        registry[slug] = f"agents.{p.name}.orchestrator"
+        classes[slug] = class_name
+    return registry, classes
+
+
+_AGENT_REGISTRY, _AGENT_CLASS = _build_registry()
 
 _agent_instance: Any = None
 

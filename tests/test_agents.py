@@ -55,15 +55,7 @@ projects:
 _REPO_ROOT = Path(__file__).parent.parent
 _AGENTS_DIR = _REPO_ROOT / "agents"
 
-_ORCHESTRATORS = [
-    _AGENTS_DIR / "beacon" / "orchestrator.py",
-    _AGENTS_DIR / "foreman" / "orchestrator.py",
-    _AGENTS_DIR / "ledger" / "orchestrator.py",
-    _AGENTS_DIR / "nexus_prime" / "orchestrator.py",
-    _AGENTS_DIR / "pursuit" / "orchestrator.py",
-    _AGENTS_DIR / "scout" / "orchestrator.py",
-    _AGENTS_DIR / "steward" / "orchestrator.py",
-]
+_ORCHESTRATORS = sorted(_AGENTS_DIR.glob("*/orchestrator.py"))
 
 # Pattern for hardcoded LLM version strings (not settings aliases)
 _VERSION_RE = re.compile(r"gemini-\d|gemini-pro|llama3\.\d+|llama-\d|ollama/")

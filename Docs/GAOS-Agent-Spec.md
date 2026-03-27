@@ -6,7 +6,7 @@
 >
 > **Importing external agents or tools?** Before applying this checklist, the skill must first pass all required gates in `GAOS-Skill-Compliance-Spec.md`. That document defines the security, supply chain, and integration review process for code sourced outside this repository. The §8 checklists below are the *final* step — not the first.
 >
-> **Identity files** (per-agent persona, goal, guardrails) follow the template in `GAOS-Manager-Spec.md` §18.2 and live in `Docs/agents/<name>.md`. This document covers the *engineering* requirements — how an agent is built, wired, and tested.
+> **Identity files** (per-agent persona, back story, goal, desired result, guardrails) follow the template in `GAOS-Manager-Spec.md` §18.2 and live in `Docs/agents/<name>.md`. This document covers the *engineering* requirements — how an agent is built, wired, and tested.
 
 ---
 
@@ -47,7 +47,7 @@ class MyAgent(Agent):
     name: str = "agent_name"          # lowercase snake_case, unique across the system
     description: str = "..."          # one sentence; shown in ADK registry
     model: str                        # resolved from settings.yaml — never hardcoded
-    instruction: str                  # system prompt = identity file contents + task context
+    instruction: str                  # system prompt = identity file contents + task context + result desired
     tools: list                       # explicit list — no wildcard tool access
 ```
 
