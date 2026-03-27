@@ -1854,3 +1854,88 @@ See `scripts/bootstrap.py` docstring for full prerequisites and arg reference.
 
 - **Gap 5 (pre-built image):** Publish `gaos-agent:latest` to a public or
   customer-accessible registry in the CI/CD apply job. Depends on Gap 1 (done).
+
+---
+
+## 22. Post-Launch Optimization Queue
+
+Deferred improvements that require real production traffic data before
+implementation. **Do not start any item below until the data gate is met.**
+All three items depend on §22.1 (CPMA panel) being live first.
+
+### 22.1 CPMA Panel — Prerequisite for Everything Else
+
+**What:** A BigQuery view + Grafana panel computing Cost Per Meaningful Action
+(`SUM(cost_usd) / COUNT(*)`) grouped by `(task_type, task_subtype)` and
+`project_id`. Uses the existing `aos_logs.task_outcomes` table.
+
+**Data gate:** ≥ 50 completed rows per `message_type` in `task_outcomes`.
+Run this query to check readiness:
+
+```sql
+SELECT message_type, COUNT(*) AS n
+FROM aos_logs.task_outcomes
+GROUP BY 1
+ORDER BY 2 DESC
+```
+
+Proceed when every message type you care about is ≥ 50 and the p95 cost has
+been stable (< 20% week-over-week change) for two consecutive weeks. Expected
+timeline: 2 weeks post-launch with 3+ active projects.
+
+**Implementation notes:**
+- Partition the view with `WHERE log_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)` — Grafana must never scan the full unbounded table.
+- Add a `cost_estimated: bool` column to `task_outcomes` before launch; set it `True` whenever the pricing lookup in `_call_model` falls back to a default. CPMA panels must filter or flag estimated rows.
+- Group by `(task_type, task_subtype)` not just `task_type` — `task_type` maps to `message_type.value` (a protocol concept). `task_subtype` carries the business-action granularity needed for a meaningful CPMA.
+
+---
+
+### 22.2 Per-Task Spend Guard
+
+**What:** A hard budget check before each `_call_model` call in
+`agents/nexus_prime/orchestrator.py` (and any other orchestrator that
+multi-steps LLM calls). Raises a typed exception when accumulated
+`cost_usd` for the current task exceeds a per-message-type threshold,
+then calls `record()` before exiting to guarantee a `task_outcomes` row
+with `status="budget_exceeded"`.
+
+**Data gate:** CPMA panel live (§22.1) + at least 5 observed runs of the
+most expensive message type (`EVOLUTION_REQUEST` with full Write-Test-Refine
+cycles) under real production load. Set thresholds at 3× the observed p95
+per message type. Do not guess thresholds — a flat threshold fires constantly
+on expensive tasks and never on cheap ones.
+
+**Implementation notes:**
+- Track spend at the `_call_model` wrapper level, not in `think()` state. The in-process counter must increment regardless of call success or failure — a zero-cost error return must not blind the guard.
+- `settings.budget.per_task_usd` must be a `dict[str, float]` keyed by `MessageType.value` with a `"default"` fallback, matching the existing pattern of `settings.memory.max_active_entries`.
+- On guard trigger: call `record(state)` before raising so the task completes with a terminal row. Never leave the agent in a state that appears permanently stuck to monitoring.
+
+---
+
+### 22.3 Anthropic Prompt Caching
+
+**What:** Structure the `think()` system prompt as two explicit blocks —
+`[STATIC: identity + rules]` and `[DYNAMIC: context trio]` — and mark the
+static block with `cache_control` for the 90% cache-read discount on
+repeated Claude calls (5-minute TTL, refreshed on hit). Write premium is
+25% on the first call; subsequent reads cost $0.30/1M vs $3.00/1M standard.
+
+**Data gate:** Average daily Anthropic-model calls > 200 (≈ 1 per 7 minutes,
+creating enough 5-minute windows with 2+ calls to make the math work). Check:
+
+```sql
+SELECT COUNT(*) AS daily_anthropic_calls
+FROM aos_logs.task_outcomes
+WHERE log_date = CURRENT_DATE()
+  AND model_alias LIKE '%claude%'  -- or however model alias is logged
+```
+
+Also gate on static prompt token count: measure with `tiktoken` before any
+implementation. If the static block is under ~2,000 tokens, the 25% write
+surcharge exceeds the 90% read discount at GAOS's call volume — skip caching
+entirely until volume justifies it.
+
+**Implementation notes:**
+- Prompt architecture change must precede any code change: static block first, dynamic Context Trio second. This separation is a prerequisite regardless of caching.
+- Add `_supports_prompt_caching(model_alias: str) -> bool` helper — returns `True` only for aliases resolving to Anthropic models. Gate `cache_control` injection on this check; Gemini and Ollama calls are unaffected.
+- The 5-minute TTL covers a single `think()` call comfortably. Multi-node tasks with inter-node gaps > 4 minutes will miss the cache on subsequent calls — accept this and note that caching only helps `think()` (the highest-cost call), not the full OODA chain.
