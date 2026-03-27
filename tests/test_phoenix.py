@@ -1,11 +1,13 @@
 """tests/test_phoenix.py — Unit tests for tools/phoenix.py"""
 
+from datetime import UTC
 from unittest.mock import patch
 
 import pytest
 
 from tools.phoenix import (
     CheckpointCorruptedError,
+    CheckpointSerializationError,
     _compute_hash,
     _serialize_state,
     load_checkpoint,
@@ -229,3 +231,84 @@ class TestPhoenixRecover:
         with patch("tools.phoenix.load_checkpoint", return_value=None):
             with pytest.raises(CheckpointCorruptedError, match=_AGENT_ID):
                 phoenix_recover(_AGENT_ID, _PROJECT_ID, corrupted)
+
+
+# ── _serialize_state / _json_default ─────────────────────────────────────────
+
+
+class TestSerializeState:
+    def test_plain_dict_round_trips(self):
+        state = {**_VALID_STATE, "count": 3, "flag": True, "ratio": 1.5}
+        import json
+
+        assert json.loads(_serialize_state(state)) == state
+
+    def test_datetime_serialized_as_isoformat(self):
+        import json
+        from datetime import datetime as dt_class
+
+        dt = dt_class(2026, 3, 27, 12, 0, 0, tzinfo=UTC)
+        state = {**_VALID_STATE, "ts": dt}
+        result = json.loads(_serialize_state(state))
+        assert result["ts"] == dt.isoformat()
+
+    def test_date_serialized_as_isoformat(self):
+        import json
+        from datetime import date
+
+        d = date(2026, 3, 27)
+        state = {**_VALID_STATE, "day": d}
+        result = json.loads(_serialize_state(state))
+        assert result["day"] == "2026-03-27"
+
+    def test_enum_serialized_as_value(self):
+        import json
+        from enum import Enum
+
+        class Color(Enum):
+            RED = "red"
+
+        state = {**_VALID_STATE, "color": Color.RED}
+        result = json.loads(_serialize_state(state))
+        assert result["color"] == "red"
+
+    def test_pydantic_model_serialized_as_dict(self):
+        import json
+
+        from models import A2AMessage, MessageType
+
+        msg = A2AMessage(
+            source_agent="beacon",
+            target_agent="nexus-prime",
+            project_id=_PROJECT_ID,
+            task_id="t1",
+            message_type=MessageType.STATUS_UPDATE,
+            priority=3,
+        )
+        state = {**_VALID_STATE, "msg": msg}
+        result = json.loads(_serialize_state(state))
+        assert isinstance(result["msg"], dict)
+        assert result["msg"]["source_agent"] == "beacon"
+
+    def test_unsupported_type_raises_checkpoint_serialization_error(self):
+        state = {**_VALID_STATE, "bad": object()}
+        with pytest.raises(CheckpointSerializationError, match="object"):
+            _serialize_state(state)
+
+    def test_unsupported_type_does_not_silently_stringify(self):
+        """Confirm str() fallback is gone — complex types must not become '<object …>'."""
+
+        class _Opaque:
+            pass
+
+        state = {**_VALID_STATE, "opaque": _Opaque()}
+        with pytest.raises(CheckpointSerializationError):
+            _serialize_state(state)
+
+    def test_output_is_deterministic_for_same_input(self):
+        import json
+
+        s1 = _serialize_state(_VALID_STATE)
+        s2 = _serialize_state(_VALID_STATE)
+        assert s1 == s2
+        assert json.loads(s1) == _VALID_STATE

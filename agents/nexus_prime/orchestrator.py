@@ -1169,7 +1169,6 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         cb_check("nexus-prime", "bigquery")
         insert_row("aos_logs.task_outcomes", outcome)
         cb_success("nexus-prime", "bigquery")
-        save_checkpoint("nexus-prime", state.get("project_id", ""), dict(state))
     except CircuitOpenError:
         _log_cloud(
             "nexus-prime",
@@ -1181,6 +1180,18 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         )
     except Exception:
         cb_failure("nexus-prime", "bigquery")
+    else:
+        try:
+            save_checkpoint("nexus-prime", state.get("project_id", ""), dict(state))
+        except Exception as _cp_exc:
+            _log_cloud(
+                "nexus-prime",
+                state.get("project_id", ""),
+                "task",
+                state.get("task_id", ""),
+                f"record: checkpoint skipped (invalid state): {_cp_exc}",
+                "WARNING",
+            )
 
     # When APPROVAL_RESULT (status=Rejected) arrives via the Chat card-click path,
     # the Sheet row has not been touched yet (unlike the Apps Script path where the

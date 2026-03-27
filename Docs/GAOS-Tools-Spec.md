@@ -1095,7 +1095,7 @@ def web_search(query: str, max_results: int = 5) -> str:
 | Never call `httpx` or any Google SDK directly from an agent | Use the tool layer and `_call_model()` — direct SDK calls bypass scoping, error handling, and fallback logic. |
 | Wrap Sheets/BQ writes with `cb_check` / `cb_success` / `cb_failure` | At minimum, protect `append_row("Agent_Approvals")` and `insert_row("aos_logs.*")` calls — these are the highest-blast-radius failure points. |
 | Never call `cb_failure` inside a `CircuitOpenError` handler | The call was never attempted; recording a failure only delays HALF_OPEN recovery. |
-| `save_checkpoint` is best-effort — never block on it | `save_checkpoint` swallows all exceptions internally. Place it after a successful write, not before. |
+| `save_checkpoint` is best-effort on writes — never block on it | The BQ write inside `save_checkpoint` is swallowed (logged as WARNING). However, validation and serialization failures still raise — call it **outside** the circuit-breaker try block so a bad state dict does not trigger `cb_failure` on a write that succeeded. |
 
 ---
 
@@ -1575,33 +1575,40 @@ def validate_state(state: dict[str, Any]) -> dict[str, Any]:
         {"valid": bool, "reason": str}   # reason is empty on success
     """
 
-def save_checkpoint(agent_id: str, project_id: str, state: dict[str, Any]) -> None:
+def save_checkpoint(agent_id: str, project_id: str, state: dict[str, Any]) -> str:
     """
-    Serialize, hash-pin, and write *state* to aos_logs.agent_checkpoints.
+    Validate, serialize, hash-pin, and write *state* to aos_logs.agent_checkpoints.
 
-    Best-effort — all exceptions are caught and logged as WARNING.
-    Never raises; never blocks the caller.
+    The BQ write is best-effort — a write failure is caught internally and logged
+    as WARNING without re-raising. Validation and serialization failures, however,
+    do raise — callers must handle them separately from the surrounding circuit-
+    breaker try block.
 
     Args:
         agent_id:   Agent identifier (used as the BQ row key).
         project_id: Project namespace.
         state:      Agent working state dict to snapshot.
+
+    Returns:
+        The SHA-256 hexdigest of the serialized state.
+
+    Raises:
+        CheckpointCorruptedError:     State failed validation — not saved.
+        CheckpointSerializationError: State is not JSON-serializable.
     """
 
-def load_checkpoint(
-    agent_id: str, project_id: str, *, limit: int = 5
-) -> dict[str, Any] | None:
+def load_checkpoint(agent_id: str, project_id: str) -> dict[str, Any] | None:
     """
     Load and hash-verify the most recent valid checkpoint for *agent_id*.
 
-    Queries the last *limit* rows (default 5) ordered by timestamp DESC.
-    Skips any row whose SHA-256 hash does not match the stored ``checkpoint_hash``.
+    Queries the 5 most recent rows ordered by timestamp DESC. Rows with a
+    SHA-256 hash mismatch or malformed JSON are silently skipped (logged as
+    WARNING). A BQ query failure is also swallowed and returns None.
+    This function never raises.
 
     Returns:
-        The first hash-verified state dict, or None if no valid checkpoint exists.
-
-    Raises:
-        CheckpointCorruptedError: All candidate rows failed hash verification.
+        The first hash-verified state dict, or None if no valid checkpoint
+        exists (all rows skipped, BQ unreachable, or no rows found).
     """
 
 def phoenix_recover(
@@ -1642,18 +1649,26 @@ class CheckpointSerializationError(Exception):
 ### Canonical Usage Pattern
 
 ```python
-from tools.phoenix import save_checkpoint
+from tools.phoenix import save_checkpoint, CheckpointCorruptedError, CheckpointSerializationError
 
-# After a successful high-risk write — non-fatal, best-effort:
+# save_checkpoint must be called OUTSIDE the circuit-breaker try block.
+# Its BQ write is internally swallowed, but validation/serialization errors
+# still raise — having it inside except Exception would trigger cb_failure
+# even when the BQ write it's checkpointing succeeded.
 try:
     cb_check("nexus-prime", "bigquery")
     insert_row("aos_logs.task_outcomes", outcome)
     cb_success("nexus-prime", "bigquery")
-    save_checkpoint("nexus-prime", state.get("project_id", ""), dict(state))
 except CircuitOpenError:
     _log_cloud(..., "BigQuery circuit open", "WARNING")
 except Exception:
     cb_failure("nexus-prime", "bigquery")
+else:
+    # Only checkpoint if the write succeeded.
+    try:
+        save_checkpoint("nexus-prime", state.get("project_id", ""), dict(state))
+    except (CheckpointCorruptedError, CheckpointSerializationError) as exc:
+        _log_cloud(..., f"Checkpoint skipped (invalid state): {exc}", "WARNING")
 ```
 
 ### Current Wire-Up Points (Nexus-Prime)

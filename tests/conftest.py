@@ -21,3 +21,18 @@ def _mock_init_sheets_client():
     """
     with patch("tools.google_sheets.init_sheets_client", return_value=None):
         yield
+
+
+@pytest.fixture(autouse=True)
+def _mock_agents_log_cloud():
+    """
+    Prevent _log_cloud in agents/__init__.py from making real Cloud Logging
+    API calls during unit tests.  The function itself has ``except Exception:
+    pass``, but the Google Cloud retry layer issues ``time.sleep()`` calls
+    *before* the final exception is raised, causing tests to hang for minutes
+    without this patch.  Unit tests verify behaviour via individual per-test
+    mocks of ``_log_cloud``; this fixture ensures no test inadvertently reaches
+    the live API.
+    """
+    with patch("agents._log_cloud"):
+        yield

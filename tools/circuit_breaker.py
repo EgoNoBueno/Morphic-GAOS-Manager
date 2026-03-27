@@ -52,6 +52,7 @@ class _Breaker:
         "last_failure_ts",
         "failure_threshold",
         "cooldown_seconds",
+        "probe_in_flight",
     )
 
     def __init__(self, failure_threshold: int, cooldown_seconds: float) -> None:
@@ -60,6 +61,7 @@ class _Breaker:
         self.last_failure_ts: float = 0.0
         self.failure_threshold: int = failure_threshold
         self.cooldown_seconds: float = cooldown_seconds
+        self.probe_in_flight: bool = False
 
 
 _breakers: dict[tuple[str, str], _Breaker] = {}
@@ -109,11 +111,16 @@ def check(
             elapsed = time.monotonic() - breaker.last_failure_ts
             if elapsed >= breaker.cooldown_seconds:
                 breaker.state = CircuitState.HALF_OPEN
+                breaker.probe_in_flight = True
             else:
                 remaining = round(breaker.cooldown_seconds - elapsed)
                 raise CircuitOpenError(
                     f"Circuit OPEN for {agent_id}/{resource_key}. Cooldown: {remaining}s remaining."
                 )
+        elif breaker.state is CircuitState.HALF_OPEN and breaker.probe_in_flight:
+            raise CircuitOpenError(
+                f"Circuit HALF_OPEN for {agent_id}/{resource_key}: probe already in flight."
+            )
 
 
 def record_success(agent_id: str, resource_key: str) -> None:
@@ -130,6 +137,7 @@ def record_success(agent_id: str, resource_key: str) -> None:
         if breaker is not None:
             breaker.state = CircuitState.CLOSED
             breaker.failure_count = 0
+            breaker.probe_in_flight = False
 
 
 def record_failure(
@@ -156,6 +164,7 @@ def record_failure(
     with _lock:
         breaker.failure_count += 1
         breaker.last_failure_ts = time.monotonic()
+        breaker.probe_in_flight = False
         if (
             breaker.state is CircuitState.HALF_OPEN
             or breaker.failure_count >= breaker.failure_threshold

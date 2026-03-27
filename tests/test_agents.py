@@ -1206,6 +1206,7 @@ class TestArchiveJob:
 
         with (
             patch("agents.nexus_prime.orchestrator._log_cloud"),
+            patch("agents.nexus_prime.orchestrator._call_model"),
             patch("tools.google_sheets.get_all_records", return_value=[stale_archive_row]),
             patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
             patch("tools.google_sheets.delete_rows"),
@@ -1338,6 +1339,7 @@ class TestNexusPrimeRecord:
             patch("tools.pubsub.publish"),
             patch("agents.nexus_prime.orchestrator._write_heartbeat"),
             patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value="idle"),
+            patch("agents.nexus_prime.orchestrator.save_checkpoint"),
             patch("tools.google_sheets.update_row") as mock_update,
         ):
             record(state)
@@ -1363,6 +1365,7 @@ class TestNexusPrimeRecord:
             patch("tools.pubsub.publish"),
             patch("agents.nexus_prime.orchestrator._write_heartbeat"),
             patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value="idle"),
+            patch("agents.nexus_prime.orchestrator.save_checkpoint"),
             patch("tools.google_sheets.update_row") as mock_update,
         ):
             record(state)
@@ -1383,6 +1386,7 @@ class TestNexusPrimeRecord:
             patch("tools.pubsub.publish"),
             patch("agents.nexus_prime.orchestrator._write_heartbeat"),
             patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value="idle"),
+            patch("agents.nexus_prime.orchestrator.save_checkpoint"),
             patch("tools.google_sheets.update_row") as mock_update,
         ):
             record(state)
@@ -1403,6 +1407,7 @@ class TestNexusPrimeRecord:
             patch("tools.pubsub.publish"),
             patch("agents.nexus_prime.orchestrator._write_heartbeat"),
             patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value="idle"),
+            patch("agents.nexus_prime.orchestrator.save_checkpoint"),
             patch("tools.google_sheets.update_row", side_effect=RuntimeError("Sheets 503")),
             patch("agents.nexus_prime.orchestrator._log_cloud") as mock_log,
         ):

@@ -146,7 +146,7 @@ def upsert_job(
     parent: str,
     job_id: str,
     body: dict,
-) -> None:
+) -> bool:
     """Create or update a Cloud Scheduler job idempotently.
 
     If the job already exists it is patched with an updateMask covering
@@ -158,6 +158,10 @@ def upsert_job(
         parent: Parent resource path (``projects/{p}/locations/{l}``).
         job_id: Short job identifier, e.g. ``gaos-archive``.
         body: Job resource dict from :func:`build_job_body`.
+
+    Returns:
+        True on success (job created or patched). False on any HttpError —
+        the error is printed but not re-raised so other jobs can still run.
     """
     full_name = f"{parent}/jobs/{job_id}"
     body_with_name = {**body, "name": full_name}
@@ -171,7 +175,7 @@ def upsert_job(
             job_exists = False
         else:
             print(f"  ERROR checking {job_id}: {exc}")
-            return
+            return False
 
     if job_exists:
         try:
@@ -183,6 +187,7 @@ def upsert_job(
             print(f"  PATCHED  {job_id}  ({body['schedule']} {TIMEZONE})")
         except HttpError as exc:
             print(f"  ERROR patching {job_id}: {exc}")
+            return False
     else:
         try:
             scheduler_client.projects().locations().jobs().create(
@@ -192,6 +197,9 @@ def upsert_job(
             print(f"  CREATED  {job_id}  ({body['schedule']} {TIMEZONE})")
         except HttpError as exc:
             print(f"  ERROR creating {job_id}: {exc}")
+            return False
+
+    return True
 
 
 def ensure_invoker_iam(run_client, project_id: str, region: str, sa_email: str) -> None:
@@ -278,11 +286,17 @@ def main() -> None:
     print()
 
     print("Upserting Cloud Scheduler jobs...")
+    failures: list[str] = []
     for job in JOBS:
         body = build_job_body(job, nexus_url, sa_email)
-        upsert_job(scheduler_client, parent, job["id"], body)
+        ok = upsert_job(scheduler_client, parent, job["id"], body)
+        if not ok:
+            failures.append(job["id"])
 
     print()
+    if failures:
+        print(f"ERROR: {len(failures)} job(s) failed to upsert: {', '.join(failures)}")
+        sys.exit(1)
     print("Done. Verify in the GCP console:")
     print(f"  https://console.cloud.google.com/cloudscheduler?project={project_id}")
 

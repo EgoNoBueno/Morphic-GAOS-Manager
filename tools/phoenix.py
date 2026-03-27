@@ -21,8 +21,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from enum import Enum
 from typing import Any
+
+from pydantic import BaseModel
 
 from tools.bigquery import insert_row, query_rows
 
@@ -53,6 +56,36 @@ class CheckpointSerializationError(Exception):
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 
+def _json_default(obj: Any) -> Any:
+    """Custom JSON serializer for types not natively handled by json.dumps.
+
+    Handles Pydantic models, datetime/date, and Enum instances losslessly.
+    Raises CheckpointSerializationError for any other unsupported type so
+    silent data loss via str() is never silently introduced.
+
+    Args:
+        obj: The object that json.dumps could not serialize.
+
+    Returns:
+        A JSON-safe representation of *obj*.
+
+    Raises:
+        CheckpointSerializationError: *obj* is of an unsupported type.
+    """
+    if isinstance(obj, BaseModel):
+        return obj.model_dump()
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, date):
+        return obj.isoformat()
+    if isinstance(obj, Enum):
+        return obj.value
+    raise CheckpointSerializationError(
+        f"State contains a value of type '{type(obj).__name__}' that cannot be "
+        f"checkpoint-serialized. Convert it to a JSON-safe type before saving."
+    )
+
+
 def _serialize_state(state: dict[str, Any]) -> str:
     """Serialize *state* to a deterministic JSON string.
 
@@ -63,10 +96,13 @@ def _serialize_state(state: dict[str, Any]) -> str:
         Canonical JSON string (sorted keys, no extra whitespace).
 
     Raises:
-        CheckpointSerializationError: If the dict is not JSON-serializable.
+        CheckpointSerializationError: If the dict contains an unsupported type
+            or is otherwise not JSON-serializable.
     """
     try:
-        return json.dumps(state, sort_keys=True, default=str)
+        return json.dumps(state, sort_keys=True, default=_json_default)
+    except CheckpointSerializationError:
+        raise
     except (TypeError, ValueError) as exc:
         raise CheckpointSerializationError(f"State is not JSON-serializable: {exc}") from exc
 

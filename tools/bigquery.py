@@ -152,7 +152,8 @@ def query_rows(
 
     Args:
         sql:        Standard SQL. Use @param_name syntax for named parameters.
-        project_id: Unused; GCP project is always read from settings.GCP_PROJECT_ID.
+        project_id: GCP project to query against. Defaults to ``settings.GCP_PROJECT_ID``
+            when empty or omitted.
         params:     Optional named query parameters. Values must be str, int, float, or bool.
 
     Returns:
@@ -162,7 +163,7 @@ def query_rows(
         BigQueryInsertError: Query failed due to an API or network error.
     """
     settings = get_settings()
-    gcp_project = settings.GCP_PROJECT_ID
+    gcp_project = project_id if project_id else settings.GCP_PROJECT_ID
     client = _get_client(gcp_project)
 
     bq_params: list[bigquery.ScalarQueryParameter] = []

@@ -150,6 +150,28 @@ class TestCooldownTransition:
         with pytest.raises(CircuitOpenError):
             check(_AGENT, _RESOURCE, cooldown_seconds=60)
 
+    def test_second_concurrent_check_rejected_while_probe_in_flight(self):
+        """Only ONE caller gets through HALF_OPEN; the rest must get CircuitOpenError."""
+        for _ in range(3):
+            record_failure(_AGENT, _RESOURCE, failure_threshold=3, cooldown_seconds=0.01)
+        time.sleep(0.02)
+        # First check: OPEN → HALF_OPEN, probe claimed.
+        check(_AGENT, _RESOURCE, cooldown_seconds=0.01)
+        # Second check while probe is in flight must be rejected.
+        with pytest.raises(CircuitOpenError, match="probe already in flight"):
+            check(_AGENT, _RESOURCE, cooldown_seconds=0.01)
+
+    def test_probe_slot_released_on_record_failure(self):
+        """After record_failure clears probe_in_flight, cooldown starts fresh (OPEN)."""
+        for _ in range(3):
+            record_failure(_AGENT, _RESOURCE, failure_threshold=3, cooldown_seconds=0.01)
+        time.sleep(0.02)
+        check(_AGENT, _RESOURCE, cooldown_seconds=0.01)  # → HALF_OPEN, probe claimed
+        record_failure(_AGENT, _RESOURCE, cooldown_seconds=0.01)  # probe released, → OPEN
+        # Circuit is OPEN again — check should raise (cooldown just reset).
+        with pytest.raises(CircuitOpenError):
+            check(_AGENT, _RESOURCE, cooldown_seconds=60)
+
 
 # ── Reset ─────────────────────────────────────────────────────────────────────
 
