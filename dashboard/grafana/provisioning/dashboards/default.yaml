@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: default
+    orgId: 1
+    type: file
+    # Grafana polls this directory every 60 seconds and reloads changed JSON.
+    # disableDeletion: true prevents the UI "Delete" button from removing
+    # provisioned dashboards — they can only be removed by editing this repo.
+    disableDeletion: true
+    updateIntervalSeconds: 60
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards

@@ -141,3 +141,93 @@ output "nexus_prime_url" {
   description = "Nexus-Prime Cloud Run service URL. Used to wire CLOUD_RUN_URL env var post-apply."
   value       = google_cloud_run_v2_service.agent["nexus-prime"].uri
 }
+
+# ── Grafana CEO Dashboard ─────────────────────────────────────────────────────
+# Separate service account for Grafana. Granted BigQuery read-only access so
+# the dashboard can query aos_logs.* tables. No agent credentials are shared.
+
+resource "google_service_account" "grafana" {
+  account_id   = "grafana-sa"
+  display_name = "Grafana CEO Dashboard"
+  project      = var.project_id
+}
+
+resource "google_project_iam_member" "grafana_bq_viewer" {
+  project = var.project_id
+  role    = "roles/bigquery.dataViewer"
+  member  = "serviceAccount:${google_service_account.grafana.email}"
+}
+
+resource "google_project_iam_member" "grafana_bq_job_user" {
+  project = var.project_id
+  role    = "roles/bigquery.jobUser"
+  member  = "serviceAccount:${google_service_account.grafana.email}"
+}
+
+resource "google_secret_manager_secret_iam_member" "grafana_admin_pw" {
+  secret_id = "GRAFANA_ADMIN_PASSWORD"
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.grafana.email}"
+}
+
+resource "google_cloud_run_v2_service" "grafana" {
+  name     = "grafana"
+  location = local.region
+  # allUsers access is intentional — Grafana's own login screen is the auth gate.
+  # Upgrade to IAP in a future phase if SSO is required.
+  ingress = "INGRESS_TRAFFIC_ALL"
+
+  template {
+    service_account = google_service_account.grafana.email
+
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 1
+    }
+
+    containers {
+      image = "us-central1-docker.pkg.dev/${var.project_id}/cloud-run-source-deploy/grafana:latest"
+
+      ports {
+        container_port = 3000
+      }
+
+      resources {
+        limits = {
+          memory = "512Mi"
+          cpu    = "1"
+        }
+      }
+
+      env {
+        name  = "GF_DATABASE_TYPE"
+        value = "sqlite3"
+      }
+
+      env {
+        name = "GF_SECURITY_ADMIN_PASSWORD"
+        value_source {
+          secret_key_ref {
+            secret  = "GRAFANA_ADMIN_PASSWORD"  # pragma: allowlist secret
+            version = "latest"
+          }
+        }
+      }
+    }
+
+    max_instance_request_concurrency = 10
+    timeout                          = "30s"
+  }
+}
+
+resource "google_cloud_run_v2_service_iam_member" "grafana_public" {
+  name     = google_cloud_run_v2_service.grafana.name
+  location = local.region
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+output "grafana_url" {
+  description = "Grafana CEO dashboard Cloud Run URL."
+  value       = google_cloud_run_v2_service.grafana.uri
+}

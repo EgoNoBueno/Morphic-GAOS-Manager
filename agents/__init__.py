@@ -581,23 +581,29 @@ def _write_heartbeat(
     tab: str,
 ) -> None:
     """
-    Write a status row to the agent's designated Sheet tab.
-    Must be called at the end of every work cycle (within 60 seconds).
-    Silently swallows Sheet errors so a transient API failure does not
-    crash the agent loop.
+    Write a status row to the agent's designated Sheet tab and BigQuery
+    ``aos_logs.status_snapshots``. Must be called at the end of every work
+    cycle (within 60 seconds). Silently swallows all errors so a transient
+    API failure does not crash the agent loop.
     """
+    row = {
+        "timestamp": utcnow_iso(),
+        "agent_id": agent_id,
+        "project_id": project_id,
+        "status": status,
+        "current_objective": objective[:255],
+        "open_proposals": open_proposals,
+        "last_error": (last_error or "")[:512],
+    }
     try:
         from tools.google_sheets import append_row
 
-        row = {
-            "timestamp": utcnow_iso(),
-            "agent_id": agent_id,
-            "project_id": project_id,
-            "status": status,
-            "current_objective": objective[:255],
-            "open_proposals": open_proposals,
-            "last_error": (last_error or "")[:512],
-        }
         append_row(tab, row, project_id)
+    except Exception:
+        pass
+    try:
+        from tools.bigquery import insert_row as _bq_insert
+
+        _bq_insert("aos_logs.status_snapshots", row, project_id)
     except Exception:
         pass

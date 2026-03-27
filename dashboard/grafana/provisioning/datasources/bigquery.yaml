@@ -1,0 +1,18 @@
+apiVersion: 1
+
+datasources:
+  - name: BigQuery
+    type: grafana-bigquery-datasource
+    uid: bigquery-morphic-gaos
+    access: proxy
+    isDefault: true
+    # authenticationType: gce uses the Cloud Run service account (grafana-sa)
+    # via Application Default Credentials. No JSON key needed — IAM bindings
+    # on grafana-sa (roles/bigquery.dataViewer + roles/bigquery.jobUser) are
+    # the sole auth mechanism.
+    jsonData:
+      authenticationType: gce
+      defaultProject: morphic-gaos-prod
+      processingLocation: US
+    version: 1
+    editable: false
