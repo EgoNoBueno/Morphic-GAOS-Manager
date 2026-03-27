@@ -101,6 +101,11 @@ def _build_registry() -> tuple[dict[str, str], dict[str, str]]:
     registry: dict[str, str] = {}
     classes: dict[str, str] = {}
     agents_dir = Path(__file__).parent / "agents"
+    if not agents_dir.exists():
+        raise FileNotFoundError(
+            f"Agent directory not found: {agents_dir}. "
+            "Ensure the 'agents/' package is present alongside main.py."
+        )
     for p in sorted(agents_dir.iterdir()):
         if not p.is_dir() or p.name.startswith("_"):
             continue
@@ -131,6 +136,12 @@ def _get_agent() -> Any:
         import importlib
 
         module = importlib.import_module(module_path)
+        if not hasattr(module, class_name):
+            raise ImportError(
+                f"Module '{module_path}' has no class '{class_name}'. "
+                "Check that the orchestrator file defines a class matching the "
+                "directory-name convention: 'agents/<dir>/orchestrator.py' → '<TitleCase>Agent'."
+            )
         cls = getattr(module, class_name)
         _agent_instance = cls()
         log.info("Agent '%s' initialised.", _AGENT_NAME)
