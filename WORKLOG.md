@@ -5,6 +5,44 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-27T21:00-03:00 — Code quality and correctness batch — complete
+
+### What was done
+
+Seven verification findings addressed. One feature addition (circuit breaker thundering herd). One hidden regression discovered during pre-commit (Cloud Logging retry hang in unit tests).
+
+**Code changes:**
+- `tools/phoenix.py` — Replaced `json.dumps(…, default=str)` with strict `_json_default()` serializer that handles `BaseModel` → `.model_dump()`, `datetime`/`date` → `.isoformat()`, `Enum` → `.value`, and raises `CheckpointSerializationError` on unknown types. Added `date`, `Enum`, `BaseModel` imports.
+- `tools/circuit_breaker.py` — Added `probe_in_flight: bool = False` to `_Breaker.__slots__`. `check()` atomically sets the flag on OPEN→HALF_OPEN transition; second concurrent caller raises `CircuitOpenError("probe already in flight")`. `record_success()` and `record_failure()` both clear the flag.
+- `tools/bigquery.py` — `query_rows()` now prefers caller-supplied `project_id` over `settings.GCP_PROJECT_ID`; param was previously dead code ("Unused" in docstring).
+- `agents/nexus_prime/orchestrator.py` — `save_checkpoint()` moved from inside `try: … except Exception: cb_failure()` to the `else:` block with its own `try/except`. BQ circuit breaker no longer penalised for state serialization errors.
+- `scripts/provision_schedulers.py` — `upsert_job()` now returns `bool`; all three error paths return `False`. `main()` collects failures and calls `sys.exit(1)` if any job failed.
+- `tests/conftest.py` — Added `_mock_agents_log_cloud` autouse fixture that patches `agents._log_cloud` globally. Without this, `log_state_transition()` → `agents.__init__._log_cloud` makes real Cloud Logging gRPC calls; the Google SDK retry layer calls `time.sleep()` before the final `except Exception: pass` fires, causing tests to hang for minutes.
+- `tests/test_agents.py` — Patched `save_checkpoint` in all four `TestNexusPrimeRecord` tests (previously unpatched after the `else:` block refactor). Patched `_call_model` in `test_idempotency_guard_proceeds_when_archive_row_is_stale` to prevent Monday flakiness.
+- `tests/test_phoenix.py` — Added `CheckpointSerializationError` to imports. Added `TestSerializeState` class (8 tests covering plain dict, datetime, date, Enum, Pydantic model, unsupported type raises, no-silent-stringify, determinism).
+- `tests/test_circuit_breaker.py` — Added `test_second_concurrent_check_rejected_while_probe_in_flight` and `test_probe_slot_released_on_record_failure` (2 new tests).
+
+**Spec changes:**
+- `Docs/GAOS-Tools-Spec.md` — Fixed `save_checkpoint` API docs: `-> None` → `-> str`, added `Raises` section, moved `save_checkpoint` to `else:` block in canonical usage example. Fixed `load_checkpoint`: removed spurious `*, limit: int = 5` param, corrected "Never raises" claim.
+
+### Files changed
+`tools/phoenix.py`, `tools/circuit_breaker.py`, `tools/bigquery.py`, `agents/nexus_prime/orchestrator.py`, `scripts/provision_schedulers.py`, `tests/conftest.py`, `tests/test_agents.py`, `tests/test_phoenix.py`, `tests/test_circuit_breaker.py`, `Docs/GAOS-Tools-Spec.md`, `WORKLOG.md`
+
+### Tests
+568/568 passed (142s). +10 new tests vs prior commit (8 phoenix, 2 circuit_breaker).
+
+### Lessons learned
+- `agents._log_cloud` is not patchable by name from `conftest.py` for submodule-cached bindings — but a global autouse patch of `agents._log_cloud` **does** prevent `agents/__init__.py`'s own `_log_cloud` from hitting the network (the call in `log_state_transition()` uses the `agents` package scope, not a locally imported binding). See `GAOS-Agent-Spec.md §9` warning.
+
+### Commit
+`a2fcd5e` — pushed to `master`
+
+### What's next
+- Phase 4 pre-commit hook (`.pre-commit-config.yaml` + ruff auto-fix) — tracked task
+- Backfill docstrings on existing `tools/` public functions (Rule 17 tech debt)
+
+---
+
 ## 2026-03-27T24:00-03:00 — Post-commit cleanup: doc consolidation, BQ idempotency, spec accuracy pass — complete
 
 ### What was done

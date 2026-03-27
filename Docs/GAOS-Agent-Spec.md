@@ -369,6 +369,8 @@ An agent is **not complete** until every item below is checked. This checklist m
 
 All agents must pass the following tests before they are considered deployable.
 
+> ⚠️ **Warning — Cloud Logging retry hangs in unit tests:** `log_state_transition()` and any other function that calls `_log_cloud` from `agents/__init__.py` will attempt real Cloud Logging gRPC calls during tests. The Google Cloud SDK retry layer invokes `time.sleep()` *before* the final `except Exception: pass` fires, causing individual tests to hang for 2–5 minutes. The per-test pattern of `patch("agents.nexus_prime.orchestrator._log_cloud")` does **not** cover calls that originate from `agents/__init__.py`'s own scope (e.g., inside `log_state_transition()`). Fix: add `_mock_agents_log_cloud` as a global `autouse=True` fixture in `tests/conftest.py` that patches `agents._log_cloud`. This covers all calls that go through the `agents` package namespace. Calls through locally-cached submodule bindings (`from agents import _log_cloud` at the top of a submodule) still require per-test patches — see the existing pattern in `test_daily_sync.py`.
+
 ### 9.1 Unit Tests (All Tiers)
 
 | # | Test | Pass Condition |
