@@ -1,7 +1,8 @@
 """
 scripts/gaos_doctor.py — GAOS-Doctor health check runbook.
 
-Verifies all health conditions listed in GAOS-Deploy-Spec.md §19 Phase 4f:
+Verifies all health conditions listed in GAOS-Deploy-Spec.md §19 (Phase 4 exit criteria,
+current system health):
   - Sheet connectivity (read Project Registry tab)
   - Pub/Sub topics exist + all subscriptions active
   - Secret Manager access for all required secrets
@@ -226,7 +227,7 @@ def check_vertex_corpora() -> None:
 def main() -> int:
     """Run all health checks and print a summary."""
     print("=" * 60)
-    print("  GAOS-Doctor — Phase 4f Health Check")
+    print("  GAOS-Doctor — System Health Check")
     print(f"  Project: {PROJECT}")
     print("=" * 60)
 

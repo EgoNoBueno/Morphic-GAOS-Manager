@@ -47,7 +47,7 @@ OWNER_EMAIL=your-aos-account@gmail.com
 3. Project name: `Morphic GAOS` (display name)
 4. Project ID: `morphic-gaos-prod` (or any globally unique ID — you cannot change this later)
 5. Click **Create**.
-6. Enable billing: **Billing → Link a billing account**. A credit card is required even though estimated monthly cost is ≈ $2.50. GCP will not charge you until you exceed the free tier.
+6. Enable billing: **Billing → Link a billing account**. A credit card is required even though estimated monthly cost is ≈ $0.55. GCP will not charge you until you exceed the free tier.
 7. Navigate to **APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID**
    - Application type: **Desktop app**
    - Download the JSON file as `oauth-client.json` (stored locally, never committed)
@@ -64,7 +64,7 @@ GCP_REGION=us-central1          # or europe-west1 for EU data residency
 BILLING_ACCOUNT_ID=             # from: gcloud billing accounts list
 ```
 
-**Cost:** Free to create; pay-as-you-go billing. See `GAOS-Manager-Spec.md §9.4` for the ≈ $2.50/month estimate.
+**Cost:** Free to create; pay-as-you-go billing. See `GAOS-Manager-Spec.md §9.4` for the ≈ $0.55/month estimate.
 
 ---
 
@@ -334,7 +334,7 @@ def collect_config(state: dict) -> dict:
 
     print()
     info("Privacy topology options (see GAOS-Privacy-Spec.md):")
-    info("  standard    — Gemini cloud LLM for complex reasoning (default, ≈$2.50/month)")
+    info("  standard    — Gemini cloud LLM for complex reasoning (default, ≈$0.55/month)")
     info("  local-first — All LLM inference on local Ollama (requires 48GB+ VRAM)")
     cfg["privacy_topology"]  = ask("Privacy topology", "standard")
 

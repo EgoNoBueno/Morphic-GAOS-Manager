@@ -86,6 +86,8 @@ class AgentWorkingMemory(TypedDict):
 - `observation_buffer` accumulates candidate learnings during the session. On invocation end, the agent calls `flush_observations()` which appends new observations to the `Pending_Knowledge` Sheet tab (de-duplicated by `content_hash`). Confidence incrementing and proposal triggering run as a separate nightly job, not inline during `flush_observations()`.
 - Working memory is **lost on invocation end**. State that must survive restarts (parked proposals, open task IDs) is persisted to the `Agent_Approvals` Sheet and LangGraph's external checkpoint store before the invocation exits.
 
+> ⚠️ **Warning — Observation loss on invocation crash:** `flush_observations()` runs at invocation end. A container OOM, SIGKILL, or timeout causes permanent loss of that session's `observation_buffer`. This is an **accepted design constraint, not a bug to engineer around**. Mid-task eager flushes add Sheets API latency and introduce a new failure point inside the critical task path — the cost exceeds the benefit. The confidence threshold (≥ 0.70, requiring ~5 independent task invocations) already provides the mitigation: a pattern corroborated across 5 invocations loses at most one invocation's worth of evidence on crash, not the knowledge itself.
+
 ---
 
 ## 4. Layer 2 — Episodic Memory (Cloud Logging / BigQuery)
@@ -141,6 +143,24 @@ def query_episodic(agent_id: str, project_id: str,
     )
     return [dict(row) for row in client.query(sql, job_config=job_config)]
 ```
+
+---
+
+### §4.1 Episodic Summarization — Planned, Not Yet Implemented
+
+> **Status: Deferred to Phase 4.** The system launched 2026-03-21; the `task_outcomes` BigQuery table has insufficient history (<7 days) to make pattern clustering meaningful. Multi-project scoping also requires design work before implementation.
+
+**Planned design (Sweep 0):**
+
+A nightly pre-sweep will run before the existing three sweeps in `nightly_knowledge_promotion.py`. It will:
+
+1. Query `aos_logs.task_outcomes` grouped by `agent_id + task_type + error_fingerprint`.
+2. Any cluster with **≥ 5 outcomes** triggers a synthetic `Pending_Knowledge` row with `confidence` pre-seeded at `0.58` (3 prior observations equivalent — enough to surface the pattern without bypassing the approval gate).
+3. The synthetic row uses `knowledge_type = "pattern"` and includes the cluster's `task_id`s as `evidence`.
+
+**Blocked by:** Sweep 0 must accept an explicit `project_id` at all BigQuery and Sheets call sites. Cross-project contamination is a hard failure mode — without scoping, pattern clusters from different clients could be mixed. A `bq_query_tool` wrapper in `tools/bigquery.py` is also required (currently only `insert_row()` is implemented).
+
+**Re-evaluate in Phase 4** when ≥ 30 days of task history is available and the multi-project scoping design is complete.
 
 ---
 
@@ -318,6 +338,58 @@ If two orchestrators hold contradictory memories about the same stated fact (e.g
 1. The **domain-owning agent** takes precedence (Ledger owns vendor payment terms).
 2. The conflicting entry from the non-owner agent is automatically flagged with `active = FALSE` and a `MEMORY_CONFLICT` security event is logged.
 3. Nexus-Prime publishes a Priority-3 `ALERT` so the owner can adjudicate.
+
+---
+
+### §6.1 Memory Bank Size Discipline
+
+Each agent's Layer 4 active entries are capped to prevent unbounded growth. The cap is configurable per agent in `settings.yaml` under `memory.max_active_entries.<agent-id>`.
+
+**Default values:**
+
+| Agent | Max active entries |
+|-------|--------------------|
+| `nexus-prime` | 200 |
+| `ledger` | 200 |
+| `beacon` | 150 |
+| `pursuit` | 150 |
+| `foreman` | 150 |
+| `steward` | 100 |
+| `scout` | 100 |
+| _(any unlisted agent)_ | 150 (fallback) |
+
+**Enforcement point:** `scripts/nightly_knowledge_promotion.py` — Sweep 3 (Promotion). Before calling `write_approved_memory()` for any Approved entry, the sweep:
+
+1. Reads `settings.memory.max_active_entries.get(agent_id, 150)` to get the applicable cap.
+2. Calls `count_active_entries(agent_id, project_id)` (see `tools/memory.py`) to get the current live count.
+3. If at or above cap, lists same-`knowledge_type` active entries for that agent and deactivates the first one (`active = False`) using `MemoryBankClient.update()`.
+4. Logs the deactivation before writing the new entry.
+
+**What is not enforced:** There is no cap on _inactive_ (`active = False`) entries — those are kept indefinitely for audit. The per-agent cap applies only to the `active = True` entries that are loaded at boot.
+
+**Tooling:** `tools.memory.count_active_entries(agent_id, project_id) -> int` — calls `MemoryBankClient.list()` with `active=True` filter and returns `len(entries)`.
+
+> **Note on density variation:** Domain-heavy agents (Ledger, Nexus-Prime) accumulate knowledge faster than lightweight agents (Scout) and therefore have higher default caps. If a domain's knowledge density grows beyond the default, update `settings.yaml` rather than changing the fallback constant.
+
+### §6.2 Boot Context Token Budget
+
+`load_domain_memory()` must not return more than ~8,000 estimated tokens (~32,000 characters total content) to avoid inflating every agent's boot prompt cost.
+
+**Behaviour on budget excess:**
+
+- Entries are trimmed in priority order: **facts** (highest, kept first) → **preferences** → **patterns** → **rules** (lowest, trimmed first).
+- No recency sort is applied — `MemoryBankClient.list()` returns no timestamps. Trimming is arbitrary within each bucket.
+- The returned dict always includes two metadata keys alongside the normal buckets:
+  - `_truncated: bool` — `True` if any entries were dropped.
+  - `_dropped_count: int` — Number of entries that did not fit within the budget.
+- `warnings.warn(..., RuntimeWarning)` is fired when truncated (compliant with Rule 18 — no `print()`).
+- Existing callers that iterate `ctx["fact"]`, `ctx["rule"]`, etc. are unaffected by the metadata keys.
+
+**Configurable constant:** `settings.memory.max_boot_chars` (default `32_000`). Override in `settings.yaml` if prompt window size changes.
+
+> ⚠️ **Warning — Type hint change:** `load_domain_memory()` return type is `dict[str, Any]` (not `dict[str, list[dict]]`) to accommodate the metadata keys. Callers that passed the return value to a strictly typed function may need to adjust.
+
+> **Accepted limitation:** There is no recency-based eviction — low-priority buckets are trimmed wholesale when budget is exceeded. If rule density grows beyond budget, either raise `max_boot_chars` or lower another agent's cap in settings.
 
 ---
 
@@ -897,3 +969,35 @@ Memory operations have a direct cost impact via Vertex AI Memory Bank. The follo
 | LangGraph state machine pattern | `GAOS-Agent-Spec.md` §3.2 |
 | Model selection rules | `GAOS-Agent-Spec.md` §3.7 |
 | Cloud Logging label standard | `GAOS-Manager-Spec.md` §13.2 |
+
+---
+
+## 19. Memory Quick Reference
+
+Ten rules every agent developer must internalize. Deeper rationale for each is in the section cited.
+
+| # | Rule | Where |
+|---|------|--------|
+| 1 | Load memory **once at boot** — never re-query mid-task | §6 Boot-Time Memory Load |
+| 2 | Only **Nexus-Prime** may call `write_approved_memory()` | §14 Write Permissions |
+| 3 | Every memory read and write **must include `project_id`** — no global defaults | §1 Design Principles |
+| 4 | `flush_observations()` runs **at invocation end** — not inline during tasks | §3 Rules, §9 |
+| 5 | Confidence gate is **≥ 0.70 (~5 corroborations)** before a proposal is triggered — never bypassed | §5 Confidence Increment Rule |
+| 6 | Tier 3 sub-agents **do not write to memory** — they return observations in `AgentOutput` | §1 Design Principles |
+| 7 | Superseded entries are **marked `active = FALSE`**, never deleted — history is immutable | §1 Design Principles |
+| 8 | Boot context is capped at **~32,000 chars** — facts keep first, rules trim last | §6.2 Boot Context Token Budget |
+| 9 | Active entries per agent are capped (150 default) — enforced by Sweep 3 | §6.1 Memory Bank Size Discipline |
+| 10 | Observation loss on crash is **accepted** — confidence threshold provides the real mitigation | §3 Warning |
+
+### Layer Decision Matrix
+
+When deciding where a piece of information belongs:
+
+| Question | If YES → Layer |
+|----------|---------------|
+| Is this needed only for the current task, right now? | **Layer 1** — Working Memory |
+| Is this a task outcome / error fingerprint to learn from later? | **Layer 2** — Episodic (BigQuery) |
+| Is this a candidate pattern that needs more corroboration? | **Layer 3** — Observation Buffer |
+| Is this approved, persistent knowledge (fact / rule / pattern / preference)? | **Layer 4** — Semantic Memory Bank |
+| Is this a step-by-step workflow, policy, or procedure? | **Layer 5** — Procedural (Drive) |
+| Is this a one-off semantic search (mid-task context enrichment)? | **Layer 5b** — Vertex AI Search |

@@ -611,7 +611,44 @@ def flush_observations(observations: list[dict],
 
 # Layer 4 — Semantic Memory
 def load_domain_memory(agent_id: str, project_id: str) -> dict:
-    """Full implementation in GAOS-Memory-Spec.md §6."""
+    """
+    Batch-fetch all active memory entries for this agent's domain from the
+    Vertex AI Memory Bank. Called once per agent boot.
+
+    Returns a dict grouped by knowledge_type:
+    ``{"fact": [...], "pattern": [...], "rule": [...], "preference": []}``,
+    plus two metadata keys:
+
+    - ``_truncated`` (bool): True if the 32,000-character boot budget was exceeded.
+    - ``_dropped_count`` (int): Number of entries dropped to fit the budget.
+
+    When truncation occurs, entries are dropped in reverse-priority order:
+    facts are kept first, then preferences, then patterns, then rules.
+    ``warnings.warn`` (RuntimeWarning) is fired on truncation.
+
+    Full design: GAOS-Memory-Spec.md §6 and §6.2.
+
+    Raises:
+        MemoryBankError: Vertex AI API failure.
+    """
+
+def count_active_entries(agent_id: str, project_id: str) -> int:
+    """
+    Return the number of active Memory Bank entries for this agent.
+
+    Used by the nightly promotion sweep to enforce per-agent size caps
+    before each write (see GAOS-Memory-Spec.md §6.1).
+
+    Args:
+        agent_id:   The orchestrator whose entries are counted.
+        project_id: GCP project that owns the Memory Bank.
+
+    Returns:
+        Count of entries where ``active = True`` for this agent.
+
+    Raises:
+        MemoryBankError: Vertex AI API failure.
+    """
 
 def write_approved_memory(entry: "MemoryEntry",
                            project_id: str) -> str:
@@ -633,6 +670,7 @@ class MemoryBankError(Exception):
 | `query_episodic` | ✅ | ✅ | ✗ |
 | `flush_observations` | ✅ | ✅ | ✗ (returns observations in AgentOutput; orchestrator flushes) |
 | `load_domain_memory` | ✅ | ✅ | ✗ |
+| `count_active_entries` | ✅ (Nexus-Prime / nightly sweep) | ✗ | ✗ |
 | `write_approved_memory` | ✅ (Nexus-Prime only) | ✗ | ✗ |
 | `query_memory_bank` | ✅ (Nexus-Prime only) | ✗ | ✗ |
 
@@ -754,7 +792,7 @@ When `web_access=True` and the model is an `ollama/` alias, `_call_model` prepen
 @dataclass
 class ModelResponse:
     text: str           # raw response text
-    cost_usd: float     # always 0.0 — both Ollama (free local) and Gemini (AI Studio free tier) carry no per-call charge
+    cost_usd: float     # always 0.0 — per-call cost calculation is not implemented; actual spend is tracked via GCP billing (see GAOS-Manager-Spec.md §9.4)
     tokens_used: int    # total tokens from usage_metadata (0 for Ollama); tracked for usage monitoring
     data: dict          # parsed JSON if parse_json=True, else {}
 ```

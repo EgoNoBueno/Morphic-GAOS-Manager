@@ -123,7 +123,7 @@ The following tools return potentially injected content. They MUST include a pro
 | `tools/google_docs.py` | Human-authored Doc content | `[DOC_CONTENT]` prefix |
 | `tools/vertex_search.py` | RAG corpus content | `[CORPUS_CONTENT]` prefix |
 
-> **Current status:** Provenance markers are a SHOULD for Phase 4, required by Phase 5. Track as a known hardening gap.
+> **Current status:** Provenance markers are a known open hardening item. Phases 1–5 are complete but this has not yet been implemented. Track as post-Phase 5 hardening debt — required before any public multi-tenant deployment.
 
 ### 2.3 Monitoring for Injection Signals
 

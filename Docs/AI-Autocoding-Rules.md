@@ -6,7 +6,7 @@ Hard rules for all development work on this codebase. These apply to human contr
 
 ## 1. Model Aliases — Never Hardcode Version Strings
 
-**Rule:** Use `settings.models.*` aliases in all Python code. Never write `"gemini-2.0-flash"`, `"ollama/llama3.1"`, `"gemini-pro"`, or any other version string directly in source files.
+**Rule:** Use `settings.models.*` aliases in all Python code. Never write `"gemini-2.5-flash"`, `"ollama/llama3"`, `"gemini-pro"`, or any other version string directly in source files.
 
 **Why:** Model versions change. A hardcoded string in an orchestrator means a find-and-replace across 7 files when the model is upgraded. Aliases mean one edit in `settings.yaml`.
 
@@ -14,7 +14,7 @@ Hard rules for all development work on this codebase. These apply to human contr
 
 ```python
 # ❌ Wrong
-response = _call_model(prompt, model="gemini-2.0-flash")
+response = _call_model(prompt, model="gemini-2.5-flash")
 
 # ✅ Correct
 from config import get_settings
@@ -138,7 +138,7 @@ Do not reorder steps. Do not skip steps. Do not catch and swallow the `sys.exit(
 
 ## 10. No Version Bumps During Active Development
 
-**Rule:** Do not bump `version` in `pyproject.toml` during Phase 2–4 development. Version bumps are a release-time decision, not a PR-level one. The current version (`0.1.0`) stays until Phase 4 exit criteria are met.
+**Rule:** Do not bump `version` in `pyproject.toml` during active development. Version bumps are a release-time decision, not a PR-level one. The current version (`0.1.0`) stays until a formal release is cut.
 
 ---
 
@@ -319,7 +319,7 @@ Private helpers (`_parse_ts`, `_log_cloud`, etc.) are exempt but encouraged.
 
 > ⚠️ **Exception — high-traffic private functions:** `_log_cloud` is called from every orchestrator and behaves as a public contract despite its underscore prefix. It **must** have a full docstring. Apply the same standard to any private function called from four or more distinct modules.
 
-> ⚠️ **Tech debt:** Existing public functions in `tools/` were written before this rule. Docstrings are required on all *new* public functions immediately. Backfilling existing functions is a known debt item tracked for Phase 4.
+> ⚠️ **Tech debt:** Existing public functions in `tools/` were written before this rule. Docstrings are required on all *new* public functions immediately. Backfilling existing functions is open post-Phase 5 tech debt.
 
 ---
 
@@ -486,4 +486,4 @@ If an abstraction already exists, it **must** be used — not re-implemented inl
 
 ---
 
-_Last updated: 2026-03-20_
+_Last updated: 2026-03-27_

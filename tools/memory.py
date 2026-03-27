@@ -14,6 +14,7 @@ Spec: GAOS-Tools-Spec.md §8 + GAOS-Memory-Spec.md
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING, Any
 
 from config import get_settings
@@ -119,15 +120,23 @@ def flush_observations(observations: list[dict[str, Any]], project_id: str) -> N
 # ── Layer 4 — Semantic Memory (Vertex AI Memory Bank) ────────────────────────
 
 
-def load_domain_memory(agent_id: str, project_id: str) -> dict[str, list[dict[str, Any]]]:
+def load_domain_memory(agent_id: str, project_id: str) -> dict[str, Any]:
     """
     Batch-fetch all active memory entries for this agent's domain from the
     Vertex AI Memory Bank. Called once per agent boot.
 
     Returns a dict grouped by knowledge_type:
-    ``{"fact": [...], "pattern": [...], "rule": [...], "preference": [...]}``.
+    ``{"fact": [...], "pattern": [...], "rule": [...], "preference": [...]}``,
+    plus two metadata keys:
 
-    Full implementation: GAOS-Memory-Spec.md §6.
+    - ``_truncated`` (bool): True if the token budget was exceeded.
+    - ``_dropped_count`` (int): Number of entries dropped to fit the budget.
+
+    When truncation occurs, entries are dropped in reverse-priority order:
+    facts are kept first, then preferences, then patterns, then rules.
+    ``warnings.warn`` (RuntimeWarning) is fired on truncation.
+
+    Full implementation: GAOS-Memory-Spec.md §6 and §6.2.
 
     Raises:
         MemoryBankError: Vertex AI API failure.
@@ -149,7 +158,7 @@ def load_domain_memory(agent_id: str, project_id: str) -> dict[str, list[dict[st
                 "project_id": project_id,
             }
         )
-        context: dict[str, list[dict[str, Any]]] = {
+        context: dict[str, Any] = {
             "fact": [],
             "pattern": [],
             "rule": [],
@@ -164,9 +173,78 @@ def load_domain_memory(agent_id: str, project_id: str) -> dict[str, list[dict[st
                     "tags": e.tags,
                 }
             )
+
+        # ── Token budget guard (§6.2) ─────────────────────────────────────
+        max_boot_chars: int = get_settings().memory.max_boot_chars
+        priority_order = ["fact", "preference", "pattern", "rule"]
+        extra_keys = [k for k in context if k not in priority_order]
+        ordered_keys = priority_order + extra_keys
+
+        chars_used = 0
+        dropped = 0
+        for bucket_key in ordered_keys:
+            kept: list[dict[str, Any]] = []
+            for entry in context.get(bucket_key, []):
+                entry_chars = len(entry.get("content", ""))
+                if chars_used + entry_chars <= max_boot_chars:
+                    chars_used += entry_chars
+                    kept.append(entry)
+                else:
+                    dropped += 1
+            context[bucket_key] = kept
+
+        context["_truncated"] = dropped > 0
+        context["_dropped_count"] = dropped
+        if dropped > 0:
+            warnings.warn(
+                f"load_domain_memory: context truncated, {dropped} entries dropped "
+                f"(budget: {max_boot_chars} chars, agent_id: {agent_id})",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
         return context
     except Exception as exc:
         raise MemoryBankError(f"load_domain_memory failed: {exc}") from exc
+
+
+def count_active_entries(agent_id: str, project_id: str) -> int:
+    """
+    Return the number of active Memory Bank entries for this agent.
+
+    Used by the nightly promotion sweep to enforce per-agent size caps
+    (see GAOS-Memory-Spec.md §6.1).
+
+    Args:
+        agent_id:   The orchestrator whose entries are counted.
+        project_id: GCP project that owns the Memory Bank.
+
+    Returns:
+        Count of entries where ``active = True`` for this agent.
+
+    Raises:
+        MemoryBankError: Vertex AI API failure.
+    """
+    try:
+        from vertexai.preview.memory import MemoryBankClient  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise MemoryBankError(
+            "vertexai.preview.memory is not available. "
+            "Install google-cloud-aiplatform with the preview extras."
+        ) from exc
+
+    try:
+        client = MemoryBankClient(project=project_id)
+        entries = client.list(
+            filters={
+                "agent_id": agent_id,
+                "active": True,
+                "project_id": project_id,
+            }
+        )
+        return len(entries)
+    except Exception as exc:
+        raise MemoryBankError(f"count_active_entries failed: {exc}") from exc
 
 
 def write_approved_memory(entry: MemoryEntry, project_id: str) -> str:

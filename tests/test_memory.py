@@ -7,6 +7,7 @@ import pytest
 
 from tools.memory import (
     MemoryBankError,
+    count_active_entries,
     flush_observations,
     load_domain_memory,
     query_episodic,
@@ -219,7 +220,12 @@ class TestLoadDomainMemory:
 
         ctx = load_domain_memory("beacon", "test-project")
 
-        assert ctx == {"fact": [], "pattern": [], "rule": [], "preference": []}
+        assert ctx["fact"] == []
+        assert ctx["pattern"] == []
+        assert ctx["rule"] == []
+        assert ctx["preference"] == []
+        assert ctx["_truncated"] is False
+        assert ctx["_dropped_count"] == 0
 
     def test_raises_memory_bank_error_on_api_failure(self, mock_memory_bank):
         mock_cls, mock_instance = mock_memory_bank
@@ -284,3 +290,99 @@ class TestWriteApprovedMemory:
 
         with pytest.raises(MemoryBankError, match="write_approved_memory"):
             write_approved_memory(self._make_entry(), "test-project")
+
+
+# ── count_active_entries ───────────────────────────────────────────────────
+
+
+class TestCountActiveEntries:
+    def test_returns_count_of_active_entries(self, mock_memory_bank):
+        mock_cls, mock_instance = mock_memory_bank
+        mock_instance.list.return_value = [MagicMock() for _ in range(7)]
+
+        result = count_active_entries("ledger", "test-project")
+
+        assert result == 7
+
+    def test_empty_bank_returns_zero(self, mock_memory_bank):
+        mock_cls, mock_instance = mock_memory_bank
+        mock_instance.list.return_value = []
+
+        result = count_active_entries("scout", "test-project")
+
+        assert result == 0
+
+    def test_raises_memory_bank_error_on_api_failure(self, mock_memory_bank):
+        mock_cls, mock_instance = mock_memory_bank
+        mock_instance.list.side_effect = Exception("Vertex API error")
+
+        with pytest.raises(MemoryBankError, match="count_active_entries"):
+            count_active_entries("ledger", "test-project")
+
+    def test_passes_active_filter_to_memory_bank(self, mock_memory_bank):
+        mock_cls, mock_instance = mock_memory_bank
+        mock_instance.list.return_value = []
+
+        count_active_entries("beacon", "test-project")
+
+        call_kwargs = mock_instance.list.call_args[1]
+        filters = call_kwargs.get("filters") or mock_instance.list.call_args[0][0]
+        assert filters["agent_id"] == "beacon"
+        assert filters["active"] is True
+
+
+# ── load_domain_memory — token budget ─────────────────────────────────────
+
+
+class TestLoadDomainMemoryTokenBudget:
+    def test_no_truncation_when_entries_fit_budget(self, mock_memory_bank):
+        mock_cls, mock_instance = mock_memory_bank
+        # 5 entries × 100 chars = 500 chars — well under 32,000
+        mock_instance.list.return_value = [_make_entry("fact", "x" * 100) for _ in range(5)]
+
+        ctx = load_domain_memory("ledger", "test-project")
+
+        assert ctx["_truncated"] is False
+        assert ctx["_dropped_count"] == 0
+        assert len(ctx["fact"]) == 5
+
+    def test_truncation_when_entries_exceed_budget(self, mock_memory_bank):
+        mock_cls, mock_instance = mock_memory_bank
+        # 40 entries × 1,000 chars = 40,000 chars — exceeds 32,000 budget
+        mock_instance.list.return_value = [_make_entry("fact", "x" * 1000) for _ in range(40)]
+
+        import warnings as _warnings
+
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            ctx = load_domain_memory("ledger", "test-project")
+
+        assert ctx["_truncated"] is True
+        assert ctx["_dropped_count"] > 0
+        # Total content chars must not exceed budget
+        total_chars = sum(
+            len(e["content"])
+            for bucket_key in ["fact", "preference", "pattern", "rule"]
+            for e in ctx.get(bucket_key, [])
+        )
+        assert total_chars <= 32_000
+        # Warning should have been fired
+        assert any(issubclass(w.category, RuntimeWarning) for w in caught)
+
+    def test_priority_order_facts_kept_before_rules(self, mock_memory_bank):
+        """Facts must survive truncation; rules must be trimmed first."""
+        mock_cls, mock_instance = mock_memory_bank
+        # 20 facts × 1,000 chars + 20 rules × 1,000 chars = 40,000 chars total
+        facts = [_make_entry("fact", "F" * 1000) for _ in range(20)]
+        rules = [_make_entry("rule", "R" * 1000) for _ in range(20)]
+        mock_instance.list.return_value = facts + rules
+
+        import warnings as _warnings
+
+        with _warnings.catch_warnings(record=True):
+            _warnings.simplefilter("always")
+            ctx = load_domain_memory("ledger", "test-project")
+
+        # All facts must be present; some rules must be dropped
+        assert len(ctx["fact"]) == 20
+        assert len(ctx["rule"]) < 20

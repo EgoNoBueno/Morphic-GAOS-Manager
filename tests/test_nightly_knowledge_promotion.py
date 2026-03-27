@@ -9,7 +9,7 @@ Covers all three sweeps and the helper functions.  All GCP calls
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -516,3 +516,57 @@ class TestRunPromotionSweep:
 
         assert promoted == 2
         assert mock_update.call_count == 2
+
+    def test_promotion_sweep_enforces_cap(self):
+        """When at cap, oldest same-type entry is deactivated before write."""
+        import sys
+
+        rows = [_approved_row(knowledge_id="kid-cap")]
+        # _approved_row uses agent_id="foreman", knowledge_type="pattern"
+        # Default cap for foreman (absent from test settings) = 150.
+        # count_active_entries returns 200 >= 150 → triggers eviction.
+
+        lru_entry = MagicMock()
+        lru_entry.memory_id = "mem-lru-001"
+
+        fake_client_instance = MagicMock()
+        fake_client_instance.list.return_value = [lru_entry]
+        fake_client_cls = MagicMock(return_value=fake_client_instance)
+        fake_vertexai = MagicMock()
+        fake_vertexai.MemoryBankClient = fake_client_cls
+
+        with (
+            patch(
+                "scripts.nightly_knowledge_promotion.count_active_entries",
+                return_value=200,
+            ),
+            patch.dict(sys.modules, {"vertexai.preview.memory": fake_vertexai}),
+            patch(
+                "scripts.nightly_knowledge_promotion.write_approved_memory",
+                return_value="mem-new-001",
+            ) as mock_write,
+            patch("scripts.nightly_knowledge_promotion.update_row"),
+        ):
+            promoted = run_promotion_sweep(rows, PROJECT)
+
+        assert promoted == 1
+        # Oldest entry was deactivated before the new write
+        fake_client_instance.update.assert_called_once_with("mem-lru-001", {"active": False})
+        mock_write.assert_called_once()
+
+    def test_promotion_sweep_skips_cap_on_dry_run(self):
+        """Cap enforcement is skipped entirely when dry_run=True."""
+        rows = [_approved_row(knowledge_id="kid-drycap")]
+
+        with (
+            patch(
+                "scripts.nightly_knowledge_promotion.count_active_entries",
+            ) as mock_count,
+            patch("scripts.nightly_knowledge_promotion.write_approved_memory") as mock_write,
+            patch("scripts.nightly_knowledge_promotion.update_row"),
+        ):
+            promoted = run_promotion_sweep(rows, PROJECT, dry_run=True)
+
+        assert promoted == 1
+        mock_count.assert_not_called()
+        mock_write.assert_not_called()

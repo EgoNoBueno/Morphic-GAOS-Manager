@@ -81,6 +81,11 @@ class GoogleSearchConfig(BaseModel):
     max_queries_per_mandate: int = 15  # Hard cap on queries per RESEARCH_MANDATE
 
 
+class MemoryConfig(BaseModel):
+    max_active_entries: dict[str, int] = Field(default_factory=dict)
+    max_boot_chars: int = 32_000
+
+
 class Settings(BaseModel):
     gcp: GCPConfig
     sheet: SheetConfig
@@ -93,6 +98,7 @@ class Settings(BaseModel):
     vertex_search: VertexSearchConfig = Field(default_factory=VertexSearchConfig)
     docs: DocsConfig = Field(default_factory=DocsConfig)
     google_search: GoogleSearchConfig = Field(default_factory=GoogleSearchConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
 
     @property
     def GCP_PROJECT_ID(self) -> str:

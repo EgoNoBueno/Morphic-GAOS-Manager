@@ -36,7 +36,7 @@ from tools.google_sheets import (
     init_sheets_client,
     update_row,
 )
-from tools.memory import MemoryBankError, write_approved_memory
+from tools.memory import MemoryBankError, count_active_entries, write_approved_memory
 from tools.secrets import get_secret
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -278,7 +278,42 @@ def run_promotion_sweep(
             continue  # already promoted in a previous run
 
         knowledge_id = str(row.get("knowledge_id", ""))
+        agent_id = str(row.get("agent_id", ""))
+        knowledge_type = str(row.get("knowledge_type", "fact"))
         print(f"  [promotion] Promoting {knowledge_id[:12]}…")
+
+        # ── Cap enforcement (§6.1) ────────────────────────────────────────
+        if not dry_run:
+            cap = get_settings().memory.max_active_entries.get(agent_id, 150)
+            try:
+                current_count = count_active_entries(agent_id, project_id)
+            except MemoryBankError as exc:
+                print(f"  [promotion] WARNING — cap check failed for {agent_id}: {exc}")
+                current_count = 0  # proceed with write if cap check unavailable
+            if current_count >= cap:
+                try:
+                    from vertexai.preview.memory import (
+                        MemoryBankClient,  # type: ignore[import-not-found]
+                    )
+
+                    cap_client = MemoryBankClient(project=project_id)
+                    same_type = cap_client.list(
+                        filters={
+                            "agent_id": agent_id,
+                            "active": True,
+                            "knowledge_type": knowledge_type,
+                            "project_id": project_id,
+                        }
+                    )
+                    if same_type:
+                        oldest = same_type[0]
+                        cap_client.update(oldest.memory_id, {"active": False})
+                        print(
+                            f"  [promotion] Cap ({cap}) reached for {agent_id}: "
+                            f"deactivated {oldest.memory_id}"
+                        )
+                except Exception as exc:
+                    print(f"  [promotion] WARNING — cap enforcement failed for {agent_id}: {exc}")
 
         try:
             confidence = float(row.get("confidence", 0.0))
@@ -289,8 +324,8 @@ def run_promotion_sweep(
 
         entry = MemoryEntry(
             project_id=project_id,
-            agent_id=str(row.get("agent_id", "")),
-            knowledge_type=str(row.get("knowledge_type", "fact")),
+            agent_id=agent_id,
+            knowledge_type=knowledge_type,
             domain=str(row.get("domain", "global")),
             content=str(row.get("content", "")),
             evidence=[s for t in str(row.get("evidence", "")).split(",") if (s := t.strip())],

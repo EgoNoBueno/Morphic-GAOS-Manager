@@ -465,7 +465,9 @@ After clicking Allow, the web app is live and `WEBHOOK_URL` is in Secret Manager
 > editor consent, or re-auth. Do not spend time debugging this; the three Phase 2
 > tasks must always be completed manually in the Apps Script editor.
 
-**Step 1 — Set Script Properties** (Apps Script editor → Project Settings → Script Properties):
+**Step 1 — Set Script Properties**
+Note: The URLs mentioned in this section are dynamically generated based on the specific Google Cloud project and deployment configuration. They will differ for each new deployment.
+ (Apps Script editor → Project Settings → Script Properties):
 
 | Key | Value |
 |-----|-------|
@@ -586,7 +588,7 @@ gcloud projects add-iam-policy-binding $PROJECT \
 ```
 
 **Step D — Create all 22 subscriptions:**
-
+Note: The URLs mentioned in this section are dynamically generated based on the specific Google Cloud project and deployment configuration. They will differ for each new deployment.
 ```bash
 PROJECT=morphic-gaos-prod
 BASE="projects/${PROJECT}/topics"
@@ -619,7 +621,7 @@ for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
     --push-auth-service-account=$PUSH_SA \
     --ack-deadline=60 --project=$PROJECT
 done
-
+#Note: The URLs mentioned in this section are dynamically generated based on the specific Google Cloud project and deployment configuration. They will differ for each new deployment.
 # Cross-domain subscriptions
 for sub_agent_topic in \
   "pursuit.sub.ledger:pursuit:agent.ledger.events" \
@@ -1139,7 +1141,7 @@ for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
   echo "${agent}: ${URL}"
 done
 ```
-
+Note: The URLs mentioned in this section are dynamically generated based on the specific Google Cloud project and deployment configuration. They will differ for each new deployment.
 Actual URLs for this deployment:
 
 | Service | URL |
@@ -1249,6 +1251,7 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 - [x] `GET /health` returns HTTP 200 for all 7 services — verified 2026-03-21 with OIDC token
 
 ### 4c — Production Wiring
+Note: The URLs mentioned in this section are dynamically generated based on the specific Google Cloud project and deployment configuration. They will differ for each new deployment.
 
 - [x] All Pub/Sub push subscriptions confirmed: 22 subscriptions exist with OIDC push auth; `pubsub-push-sa` has `roles/run.invoker` on all 7 services; Pub/Sub service agent granted `roles/iam.serviceAccountTokenCreator` — 2026-03-21. URLs use `*-975461050387.us-central1.run.app` (confirmed valid alias per `run.googleapis.com/urls` annotation — both URL formats work)
 - [ ] `VERTEX_AGENT_ENDPOINT` Script Property in Apps Script updated via Apps Script editor → Project Settings → Script Properties → `https://nexus-prime-7bu22bxlda-uc.a.run.app/sync`
@@ -1575,7 +1578,7 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [x] **[Phase 2.5]** Cloud Scheduler `daily-kickoff` job created (6 AM daily, `POST /daily-sync`, returns HTTP 200)
 - [x] **[Phase 2.5]** Cloud Scheduler `doc-comment-poll` job created (every 5 minutes, `POST /poll-comments`, returns HTTP 200)
 - [x] **[Phase 2.5]** `POST /chat` endpoint returns HTTP 200; Nexus-Prime responds in Chat thread within 10 seconds
-- [ ] **[Phase 2.5]** Approval Gate Chat-path validated end-to-end: Chat card Approve tap → `APPROVAL_RESULT` published → Nexus-Prime resumes parked task → Sheet audit row written
+- [ ] **[Phase 2.5]** Approval Gate Chat-path validated end-to-end: Chat card button tap → `APPROVAL_RESULT` published to Pub/Sub → Nexus-Prime resumes the parked task → `Agent_Approvals` row updated + audit row written to Logs tab (see §14 unchecked item)
 - [x] All webhook smoke tests passing: `python scripts/smoke_test_6_7.py` prints `8/8 tests passed` ✅ (2026-03-18)
 - [x] All 8 individual webhook test cases from `GAOS-Manager-Spec.md §14` confirmed via smoke_test_6_7.py output ✅ (2026-03-18)
 - [x] `setupProtections()` has been run; Status/Code/Hash columns are locked to owner

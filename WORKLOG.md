@@ -5,6 +5,149 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-27T01:15-03:00 — OpenClaw §6 Memory Patterns — Implemented and verified
+
+### What was done
+
+Evaluated OpenClaw chapter-06 (memory architecture patterns) against the GAOS memory system. Five applicable patterns identified; four shipped in this session; one (Sweep 0 episodic summarization) deferred to Phase 4.
+
+**Dynamic URL clarification (carried from prior session):**
+Added `> ⚠️ Note:` callout to four files clarifying that Cloud Run and Vertex AI URLs embed a project number and region that change with every new GCP project deployment. Files: `GAOS-Deploy-Spec.md`, `.github/workflows/deploy.yml`, `apps_script/syncSkillsToVertex.gs`, `infra/main.tf`.
+
+**Spec additions to `Docs/GAOS-Memory-Spec.md`:**
+- **§3 warning:** Observation loss on invocation crash is an accepted design constraint — eager flush adds latency and a new failure point; confidence threshold provides the mitigation.
+- **§4.1:** "Episodic Summarization — Planned, Not Yet Implemented." Design note with blocking conditions (insufficient BQ history, multi-project scoping unresolved). Deferred to Phase 4.
+- **§6.1:** "Memory Bank Size Discipline." Per-agent active-entry cap; default table; enforcement point (Sweep 3); fallback of 150 for unlisted agents.
+- **§6.2:** "Boot Context Token Budget." 32,000-char cap; priority order (facts → preferences → patterns → rules); `_truncated`/`_dropped_count` metadata; accepted limitations (no recency sort).
+- **§19 (new):** "Memory Quick Reference." 10-rule distillation + layer decision matrix.
+
+**Config (`config/__init__.py` + `config/settings.yaml`):**
+- Added `MemoryConfig(max_active_entries: dict[str, int], max_boot_chars: int)` model.
+- Added `memory` field to `Settings`.
+- Added `memory.max_boot_chars: 32000` and per-agent caps to `settings.yaml`.
+
+**`tools/memory.py`:**
+- Added `import warnings`.
+- Updated `load_domain_memory()`: return type `dict[str, Any]`; token budget guard with priority-bucket trimming; `_truncated`/`_dropped_count` metadata keys; `warnings.warn(RuntimeWarning)` on truncation; reads cap from `get_settings().memory.max_boot_chars`.
+- Added new public function `count_active_entries(agent_id, project_id) → int`.
+
+**`scripts/nightly_knowledge_promotion.py`:**
+- Imported `count_active_entries`.
+- Sweep 3 (`run_promotion_sweep`): before `write_approved_memory()`, reads per-agent cap from settings, calls `count_active_entries()`, deactivates LRU same-type entry if at cap, logs deactivation.
+
+**Tests (496/496 passing, +9 new):**
+- `tests/test_memory.py`: fixed `test_empty_memory_bank_returns_empty_buckets` for new return contract; added `TestCountActiveEntries` (4 cases); added `TestLoadDomainMemoryTokenBudget` (3 cases, including priority-order proof).
+- `tests/test_nightly_knowledge_promotion.py`: added `MagicMock` to module import; added `TestRunPromotionSweep.test_promotion_sweep_enforces_cap`; added `test_promotion_sweep_skips_cap_on_dry_run`.
+
+### Files changed
+- `Docs/GAOS-Memory-Spec.md` — §§3 warning, 4.1, 6.1, 6.2, 19 added
+- `config/__init__.py` — `MemoryConfig` model + `memory` field on `Settings`
+- `config/settings.yaml` — `memory` block with per-agent caps
+- `tools/memory.py` — `count_active_entries()` + token budget guard in `load_domain_memory()`
+- `scripts/nightly_knowledge_promotion.py` — cap enforcement in Sweep 3
+- `tests/test_memory.py` — 3 new test classes / fixes
+- `tests/test_nightly_knowledge_promotion.py` — 2 new tests + `MagicMock` import fix
+
+### Lessons captured
+- `load_domain_memory()` return type is now `dict[str, Any]` — bucket iterators work; strict annotations need update. See `GAOS-Memory-Spec.md §6.2`.
+- `MemoryBankClient.list()` returns no timestamps — recency eviction is impossible; use priority buckets. See `GAOS-Memory-Spec.md §6.2` accepted limitation.
+- Per-agent cap keys use hyphenated agent-ids (`"nexus-prime"`) — access via `.get(agent_id, 150)`. See `GAOS-Memory-Spec.md §6.1`.
+- All three lessons added to `/memories/repo/gotchas.md`.
+
+### What's next
+- Commit this work block to `master` (Rule 21 — doc + code in same commit)
+- Phase 4 backlog: Sweep 0 (episodic summarization) — re-evaluate when ≥ 30 days BQ history available
+- Phase 4 backlog: backfill `load_domain_memory()` callers that have strict type annotations on return value
+- Phase 4 task: add `.pre-commit-config.yaml` with `ruff check --fix` + `ruff format` (Rule 16)
+
+---
+
+## 2026-03-26T23:55-03:00 — Grafana CEO Dashboard — fully verified, lessons captured
+
+### What was done
+
+1. **Fixed BigQuery plugin loading (React error #130).** `GF_INSTALL_PLUGINS` env-var approach downloads
+   the plugin at container startup — Cloud Run's startup probe timed out before download finished, leaving
+   the plugin component as `undefined`. Fixed by installing with `grafana-cli plugins install` in a
+   Dockerfile `RUN` step (bracketed by `USER root` / `USER grafana`). Plugin version `3.1.3` baked in.
+
+2. **Fixed secret trailing-newline auth failure.** PowerShell pipe (`$pw | ... --data-file=-`) appends
+   `\n` to the secret value. Grafana stored the hash of `password+newline`, causing "invalid password"
+   on every login despite the correct string. Fixed by writing with
+   `[System.IO.File]::WriteAllText(path, $pw)` (no newline) then uploading version 3 from file.
+
+3. **Verified end-to-end.** Dashboard live at `https://grafana-7bu22bxlda-uc.a.run.app`.
+   CEO Overview panel "Tasks completed in last 24h" shows **624** — real BigQuery data confirmed.
+
+### Files changed
+- `dashboard/grafana/Dockerfile` — plugin install moved to build time (commit `0cfae6d`)
+
+### Lessons captured
+- `GF_INSTALL_PLUGINS` is unreliable on Cloud Run → always bake Grafana plugins into image
+- PowerShell pipe adds `\n` to Secret Manager values → use `WriteAllText` + `--data-file`
+- `bq` CLI crashes on Python 3.13 → use Python SDK
+- `docker`/`tofu`/`terraform` not installed → use Cloud Build + gcloud CLI
+
+### What's next
+- Dashboard is live — no further Grafana work needed unless panels need tuning
+- Grafana URL and credentials should be saved to a secure location (1Password etc.)
+- Next planned work: per session plan, remaining Phase tasks
+
+---
+
+## 2026-03-26T23:22-03:00 — Grafana CEO Dashboard — GCP deployment complete
+
+### What was done
+
+1. **Re-authenticated gcloud** (`gcloud auth login --update-adc`) after session resumed with
+   stale ADC credentials. Active account: `dhess@sl10repairtechs.com`, project: `morphic-gaos-prod`.
+
+2. **Created `aos_logs.status_snapshots` BigQuery table** via Python SDK (bq CLI has a Python 3.13
+   incompatibility on this machine). Schema: `timestamp STRING, agent_id STRING, project_id STRING,
+   status STRING, current_objective STRING, open_proposals INTEGER, last_error STRING`.
+
+3. **Created `GRAFANA_ADMIN_PASSWORD` secret** in Secret Manager (version 1). Password generated
+   with `secrets.token_urlsafe(24)` and stored in Secret Manager — never in code.
+
+4. **Built Grafana Docker image via Cloud Build** (`gcloud builds submit`) — Docker Desktop is not
+   installed locally; Cloud Build handled the build + push to Artifact Registry:
+   `us-central1-docker.pkg.dev/morphic-gaos-prod/cloud-run-source-deploy/grafana:latest`
+
+5. **Created `grafana-sa` service account** and granted:
+   - `roles/bigquery.dataViewer` (project-level)
+   - `roles/bigquery.jobUser` (project-level)
+   - `roles/secretmanager.secretAccessor` (secret-level, `GRAFANA_ADMIN_PASSWORD`)
+
+6. **Deployed to Cloud Run** (`gcloud run deploy`) — min 0, max 1 instance, 512Mi, port 3000,
+   GF_SECURITY_ADMIN_PASSWORD sourced from Secret Manager at startup.
+
+7. **Set public invoker** (`allUsers` → `roles/run.invoker`). Grafana's own login page handles
+   authentication; Cloud Run IAM is not the auth layer here.
+
+8. **Health verified** — All three Cloud Run conditions `True` (Ready, ConfigurationsReady, RoutesReady).
+
+### Grafana URL
+`https://grafana-7bu22bxlda-uc.a.run.app`
+Login: admin / (from Secret Manager `GRAFANA_ADMIN_PASSWORD`, version 1)
+
+### Files changed
+- None this session (all code was committed in previous sessions `dfd6399`, `254cf29`, `84edf2a`)
+- GCP resources created: BQ table, Secret Manager secret, SA, IAM bindings, Cloud Run service
+
+### Lessons learned
+- `bq` CLI on this machine crashes with Python 3.13 import error — use Python SDK instead
+- `docker` is not installed — use `gcloud builds submit` for all image builds
+- `tofu` / `terraform` not installed — use `gcloud` CLI to provision resources manually
+  (SA, IAM, Cloud Run) when IaC binary is unavailable
+
+### What's next
+- Open `https://grafana-7bu22bxlda-uc.a.run.app` and verify the CEO Overview dashboard loads
+- Check that BigQuery datasource connects (GCE auth should work via `grafana-sa`)
+- Optional: install Grafana BigQuery plugin confirmation in container logs
+- Remaining Phase 1 tasks per plan: none for Grafana — dashboard is live
+
+---
+
 ## 2026-03-26T17:49-03:00 — Harden registry boot + CARD_CLICKED ack fix, commit and push
 
 ### What was done

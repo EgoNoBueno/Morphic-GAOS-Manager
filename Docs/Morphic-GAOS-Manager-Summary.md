@@ -28,7 +28,7 @@ The system is designed to run at **minimal operating cost** by routing routine w
 
 6. **Layered Memory** — Scratchpad → BigQuery (episodic) → Sheets staging buffer → Vertex AI Memory Bank (long-term). Agents propose learnings; Nexus-Prime promotes them to permanent memory only after owner approval.
 
-**Current State (Phases 1–3 complete, Phase 4 in progress):** All 7 orchestrators, the full tool layer (14 modules including `google_chat.py`, `vertex_search.py`, `google_docs.py`, and `google_search.py`), and a **483-test suite** are built and passing. Phases 1 through 3 are complete: all 7 Cloud Run services are deployed, the Approval Gate Chat-path E2E is validated (5 live approval proposals delivered via Google Chat), and the `think` node, vision hub, full approval loop, and two Phase 3 reactive routing nodes (`market_watchdog`, `roi_optimizer`) are live. Phase 4 — production bootstrap validation — is in progress; cost/security verification and the GAOS-Doctor checklist remain.
+**Current State (Phases 1–4 complete, Phase 5 complete):** All 7 orchestrators, the full tool layer (14 modules including `google_chat.py`, `vertex_search.py`, `google_docs.py`, and `google_search.py`), and a **496-test suite** are built and passing. Phases 1 through 4 are complete: all 7 Cloud Run services are deployed, the Approval Gate Chat-path E2E is validated (5 live approval proposals delivered via Google Chat), and the `think` node, vision hub, full approval loop, and two Phase 3 reactive routing nodes (`market_watchdog`, `roi_optimizer`) are live. Phase 4 is exiting — cost/security verification and the GAOS-Doctor checklist are the remaining tasks. Phase 5 — Grafana CEO dashboard — is complete: Grafana live on Cloud Run. Vertex Agent Engine remains future scope.
 
 ---
 
@@ -122,7 +122,7 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 
 #### Development Roadmap (5 Phases)
 **What it is:** A phased build plan. **Phase 1 is complete** — all 7 orchestrators, the `main.py` Cloud Run entry point, the core tool layer (`bigquery`, `webhook_sender`, `memory`, `project_registry`, `google_sheets`, `pubsub`, `secrets`), and a baseline test suite covering U1–U5 unit specs and S1–S4 static analysis gate.
-**Phase 2.5 Steps 1–6 are complete (483 tests passing after Phase 3 additions):**
+**Phase 2.5 Steps 1–6 are complete (496 tests passing after Phase 3–4 additions):**
 - Step 1: `tools/google_chat.py` + `POST /chat` (25 tests; commit `551f0ca`)
 - Step 2: `handle_daily_sync()` + `POST /daily-sync` + `ChatConfig` (13 tests; commit `ed6140b`)
 - Step 3: `tools/vertex_search.py` + Playbook schema + `write_playbook` node (22 tests; commit `d0f05b1`)
@@ -130,7 +130,7 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 - Step 5: AppSheet Vision Hub + `VISION_SUBMITTED` handler + `doc-comment-poll` Scheduler job (30 tests; commit `a62c6cc`)
 - Step 6: `tools/google_search.py` + Scout `_discover` recursive node + `KNOWLEDGE_INJECTION` protocol (24 tests; commit `7def85c`)
 
-Step 7 (`ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow) remains. Phase 2 (Ollama observability) and Phase 3 (think node, multimodal vision, full approval loop, Chat E2E) are **complete**. Phase 4 (production bootstrap, exit criteria validation, cost verification) is **in progress**. Phase 5 (Grafana CEO dashboard) is future. Three **Context Trio** files (`Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`) were added and integrated into `_load_identity_file()` in `agents/__init__.py` — all 7 agents now automatically receive owner business context, brand voice, and operating rules appended to their system prompt at boot, with zero per-orchestrator changes required.
+Step 7 (`ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow) remains. Phase 2 (Ollama observability) and Phase 3 (think node, multimodal vision, full approval loop, Chat E2E) are **complete**. Phase 4 (production bootstrap, exit criteria validation, cost verification) is **complete** — exiting; cost/security verification and GAOS-Doctor checklist are the remaining tasks. Phase 5 (Grafana CEO dashboard) is **complete** — Grafana live on Cloud Run; Vertex Agent Engine is future scope. Three **Context Trio** files (`Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`) were added and integrated into `_load_identity_file()` in `agents/__init__.py` — all 7 agents now automatically receive owner business context, brand voice, and operating rules appended to their system prompt at boot, with zero per-orchestrator changes required.
 **Why it exists:** Building everything at once is how you end up with a broken system that is impossible to debug. Each phase has explicit exit criteria that must all be true before moving to the next.
 **Resources required:** Phases 1–4: Cloud Run, Cloud Pub/Sub, Sheets, Ollama, Gemini. Phase 5 (future): Grafana on Cloud Run, Vertex AI Agent Engine (optional upgrade).
 
@@ -245,8 +245,8 @@ This document defines the public interface for fourteen tool modules. The design
 **Resources required:** Google Sheets (Project Registry tab).
 
 #### `tools/memory.py`
-**What it does:** Reads from and writes to Vertex AI Memory Bank for each agent's domain context. Agents batch-read at boot; individual writes go through Nexus-Prime post-approval only.
-**Why it exists:** Centralizes all long-term memory I/O so access patterns (batch reads at boot, approved writes only) are enforced consistently across every orchestrator.
+**What it does:** Reads from and writes to Vertex AI Memory Bank for each agent's domain context. Agents batch-read at boot via `load_domain_memory()`, which applies a 32,000-character priority-ordered token budget guard (facts → preferences → patterns → rules) before returning context; `_truncated` and `_dropped_count` metadata keys are set if entries were dropped. `count_active_entries(agent_id, project_id)` returns the live count of active Memory Bank entries for an agent — used by `nightly_knowledge_promotion.py` to enforce per-agent entry caps before each write. Individual writes go through Nexus-Prime post-approval only.
+**Why it exists:** Centralizes all long-term memory I/O so access patterns (boot budget guard, per-agent caps, approved writes only) are enforced consistently across every orchestrator.
 **Resources required:** Vertex AI Memory Bank, `roles/aiplatform.user` IAM role.
 
 #### `tools/bigquery.py`
@@ -467,7 +467,7 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 | `Docs/AI-Autocoding-Rules.md` | Coding rules enforced during AI-assisted development sessions | ~250 lines |
 | `Docs/about-me.md` | Context Trio — owner business context, priorities, and KPIs (The Compass) | ~67 lines |
 | `Docs/brand-voice.md` | Context Trio — Transparent Champion brand voice standard (The Persona) | ~66 lines |
-| `Docs/working-preferences.md` | Context Trio — operational rules of engagement, cost ceiling, workflow policies (The Constitution) | ~69 lines |
+| `Docs/working-preferences.md` | Context Trio — operational rules of engagement, the Low Expenses Standard, workflow policies (The Constitution) | ~69 lines |
 | `Docs/agents/nexus-prime.md` | Identity file — Nexus-Prime (Root Orchestrator / General Manager) | — |
 | `Docs/agents/ledger.md` | Identity file — Ledger (Accounting Agent) | — |
 | `Docs/agents/beacon.md` | Identity file — Beacon (Marketing Agent) | — |
@@ -476,7 +476,7 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 | `Docs/agents/steward.md` | Identity file — Steward (Admin & HR Agent) | — |
 | `Docs/agents/scout.md` | Identity file — Scout (Research Agent) | — |
 | `main.py` | Cloud Run HTTP entry point — all 7 agents, selected by `AGENT_NAME` env var | — |
-| `tests/` | 483-test suite — U1–U5 unit specs + S1–S4 static analysis + tool modules + Phases 2–3 + Phase 3 reactive routing | — |
+| `tests/` | 496-test suite — U1–U5 unit specs + S1–S4 static analysis + tool modules + Phases 2–3 + Phase 3 reactive routing + memory cap enforcement | — |
 
 ---
 

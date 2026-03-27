@@ -338,11 +338,11 @@ This workspace uses a **Context Trio** of three Markdown files in `Docs/` that a
 
 ### Why These Files Exist
 
-Without these files, AI agents default to generic assistant behavior — technically correct but contextually wrong. A sales sequence written by a generic assistant sounds like a press release. A campaign budget proposed without cost awareness ignores the $2.50/month ceiling. The Context Trio prevents this:
+Without these files, AI agents default to generic assistant behavior — technically correct but contextually wrong. A sales sequence written by a generic assistant sounds like a press release. A campaign budget proposed without cost awareness violates the Low Expenses Standard that governs every agent decision. The Context Trio prevents this:
 
 - **`about-me.md`** ensures agents understand the business philosophy before they act — every suggestion is filtered through *"does this solve a specific pain point?"* and *"does this deliver measurable value?"*
 - **`brand-voice.md`** prevents the system from defaulting to corporate jargon. The Transparent Champion persona (Slack-plain, Oatly-honest, Nike-motivated) is applied to every deliverable.
-- **`working-preferences.md`** overrides generic AI defaults with architectural discipline — modular construction, $2.50/month cost ceiling, and approval-gate policy for high-risk actions.
+- **`working-preferences.md`** overrides generic AI defaults with architectural discipline — modular construction, the Low Expenses Standard (lean operations, math-backed cost tradeoffs, no idle compute), and approval-gate policy for high-risk actions.
 
 ### How to Use & Modify
 
@@ -363,12 +363,12 @@ At the start of every work session, agents read all three files as standing orde
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| **Phase 1** | All 7 orchestrators, `main.py` Cloud Run entry point, full tool layer, 408-test suite, all smoke tests passing | **Complete** |
+| **Phase 1** | All 7 orchestrators, `main.py` Cloud Run entry point, full tool layer, 496-test suite, all smoke tests passing | **Complete** |
 | **Phase 2** | Ollama observability loop, Knowledge Atlas (Memory Mirror) | **Complete** |
 | **Phase 2.5** | Google Chat integration, Vertex AI Search, Google Custom Search, Cloud Scheduler daily-kickoff and poll-comments jobs, Apps Script webhook + approval gate, skill-request flow | **Complete** |
 | **Phase 3** | `think` node (Strategic Architect), multimodal vision, `iterate_plan`, memory mirror, Chat Interactive Hub (JWT + approval cards + CARD_CLICKED routing), OpenTofu IaC + WIF CI/CD | **Complete** |
 | **Phase 4** | Production bootstrap (OpenTofu deploy), Approval Gate Chat-path E2E live validation, exit criteria, cost verification | **In progress** — Chat E2E validated (5 live approval proposals); cost/security verification and GAOS-Doctor checklist remaining |
-| **Phase 5** | CEO dashboard (Grafana + Cloud Run), optional Vertex Agent Engine | Future |
+| **Phase 5** | CEO dashboard (Grafana + Cloud Run) | **Complete** — Grafana dashboard live on Cloud Run. Vertex Agent Engine remains future scope. |
 
 <div align="center">
 <img src="Docs/assets/Phase-Roadmap-Timeline.png" alt="Phase Roadmap Timeline" width="90%"/>
@@ -408,7 +408,7 @@ Infrastructure as Code powered by [OpenTofu](https://opentofu.org) — an open-s
 | Cloud Run (scale-to-zero) | ~$0.01 | 7 services, event-driven only |
 | Gemini Flash (`FAST_MODEL`) | ~$0.10 | Routing, Scout synthesis, fallback |
 | Gemini Pro (`DEEP_MODEL`) | ~$2.00 | Approvals, think node, diagnostics, weekly review |
-| Vertex AI Memory Bank | ~$2.50 | 7-agent boot reads + knowledge writes |
+| Vertex AI Memory Bank | ~$0.55 | 7-agent boot reads + knowledge writes (~100 reads + ~20 queries + ~10 writes/month) |
 | Vertex AI Code Execution | ~$0.01 | ~10 evolution task sessions/month |
 | Everything else (Pub/Sub, Scheduler, Logging, BigQuery) | Free tier | Within Google quotas |
 | **Total** | **≈ $5/month** | Worst-case, Phase 1–4 load |
@@ -424,6 +424,6 @@ Infrastructure as Code powered by [OpenTofu](https://opentofu.org) — an open-s
 <div align="center">
 
 *Built entirely on Google's cloud ecosystem.*
-*Phases 1–3 complete. 408 tests green. Phase 4: E2E validated, final steps in progress.*
+*Phases 1–4 complete. 496 tests green. Phase 4: exiting — cost/security verification and GAOS-Doctor checklist remaining.*
 
 </div>

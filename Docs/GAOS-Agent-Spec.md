@@ -100,7 +100,7 @@ Local (`LOCAL_MODEL`) agents produce a plain-text summary line in addition to th
 
 ### 2.5 Cost Tracking
 
-Every agent must accumulate `cost_usd` for each model call made during a task and return the total in `AgentOutput`. All three model aliases (`LOCAL_MODEL`, `FAST_MODEL`, and `DEEP_MODEL`) currently return `cost_usd = 0.0` — Ollama is free (local), and Gemini calls go through the AI Studio free tier via `GEMINI_API_KEY`. `tokens_used` is still tracked in `ModelResponse` for usage monitoring even though no charge is incurred. Re-evaluate if the system moves to a paid Vertex AI or Gemini API quota.
+Every agent must accumulate `cost_usd` for each model call made during a task and return the total in `AgentOutput`. All three model aliases (`LOCAL_MODEL`, `FAST_MODEL`, and `DEEP_MODEL`) currently return `cost_usd = 0.0` — per-call cost calculation is not implemented. Ollama is free (local); Gemini charges are tracked at the GCP billing level (see `GAOS-Manager-Spec.md` §9.4) rather than per-call. `tokens_used` is still tracked in `ModelResponse` for usage monitoring. Re-evaluate per-call tracking if finer-grained cost attribution is needed.
 
 ---
 
@@ -280,9 +280,9 @@ Every agent selects its model via a `settings.yaml` alias — never a hardcoded 
 
 | Alias | Default value | When to use |
 |-------|--------------|-------------|
-| `LOCAL_MODEL` | `ollama/llama3.1` | Logging, formatting, summarisation, data classification — any task where cloud LLM quality is not required. Zero API cost. |
-| `FAST_MODEL` | `gemini-2.0-flash` | Routing decisions, structured data extraction, tasks needing current knowledge but not deep reasoning. Low cost. |
-| `DEEP_MODEL` | `gemini-2.0-pro` | Complex multi-step reasoning, cross-domain synthesis, final approval gate analysis. Higher cost — use sparingly. |
+| `LOCAL_MODEL` | `ollama/llama3` | Logging, formatting, summarisation, data classification — any task where cloud LLM quality is not required. Zero API cost. |
+| `FAST_MODEL` | `gemini-2.5-flash` | Routing decisions, structured data extraction, tasks needing current knowledge but not deep reasoning. Low cost. |
+| `DEEP_MODEL` | `gemini-2.5-pro` | Complex multi-step reasoning, cross-domain synthesis, final approval gate analysis. Higher cost — use sparingly. |
 
 **Tier defaults** (from the obligations table in §1):
 - Tier 1 (Nexus-Prime): `DEEP_MODEL`
@@ -291,7 +291,7 @@ Every agent selects its model via a `settings.yaml` alias — never a hardcoded 
 
 **`LOCAL_MODEL` with web access:** Pass `web_access=True` to `_call_model()` when the task references real-world current data (prices, events, competitor activity) and Gemini-quality reasoning is not required. See `GAOS-Tools-Spec.md` §10 for the full design. Do not use `web_access=True` with `FAST_MODEL` or `DEEP_MODEL`.
 
-**Fallback behaviour:** If Ollama is unreachable, `_call_model()` automatically falls back to `LOCAL_MODEL_FALLBACK` (`gemini-2.0-flash`). Agents do not need to handle this — it is transparent.
+**Fallback behaviour:** If Ollama is unreachable, `_call_model()` automatically falls back to `LOCAL_MODEL_FALLBACK` (`gemini-2.5-flash`). Agents do not need to handle this — it is transparent.
 
 ---
 

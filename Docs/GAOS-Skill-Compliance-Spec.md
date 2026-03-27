@@ -229,7 +229,7 @@ Any import not on the allowlist is an automatic **Gate 1 failure** until the all
 - [ ] `task_id` and `project_id` present in both input and output schemas
 - [ ] `cost_usd` tracked per model call and returned in `AgentOutput`
 - [ ] Cloud Logging labels applied: `agent_id`, `project_id`, `log_type`, `task_id`
-- [ ] Boot sequence (`GAOS-Agent-Spec.md §6`) implemented if this is a long-running agent
+- [ ] Boot sequence (`GAOS-Agent-Spec.md §7`) implemented if this is a long-running agent
 
 ### 7.2 Tier 3 Sub-Agent (`GAOS-Agent-Spec.md §4`)
 

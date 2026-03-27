@@ -231,3 +231,5 @@ output "grafana_url" {
   description = "Grafana CEO dashboard Cloud Run URL."
   value       = google_cloud_run_v2_service.grafana.uri
 }
+
+# Note: The URLs mentioned in this section are dynamically generated based on the specific Google Cloud project and deployment configuration. They will differ for each new deployment.

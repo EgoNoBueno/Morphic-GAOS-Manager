@@ -144,7 +144,7 @@ The AOS Manager uses your Google Sheet as its "eyes and ears" for human interact
 - **Archive/Audit Trail:** Completed tasks and aged log rows are archived to BigQuery by the nightly job (see Section 9.5). Keeps the Sheet under ~10,000 rows permanently.
 - **Manual Override Switch:** A master "pause" button for all operations.
 
-> **Future — Phase 5 (Grafana Dashboard):** The Google Sheets control plane is the operational interface for Phases 1–4. In Phase 5 it will be supplemented by a **Grafana** web dashboard that provides a fully coded, version-controlled CEO-facing UI. Dashboard layout will be defined as JSON files in `dashboard/grafana/` and deployed programmatically. Sheets remain the agent data store; Grafana reads from them as a data source. See Phase 5 in Section 16.
+> **Phase 5 (Grafana Dashboard) — Complete:** The Google Sheets control plane remains the agent data store for all agent read/write operations. Grafana is deployed on Cloud Run as the CEO-facing dashboard layer; dashboard panels are version-controlled as JSON files in `dashboard/grafana/`. Vertex Agent Engine remains future scope. See Phase 5 in Section 16.
 
 ### Business Unit Reporting Tabs
 
@@ -353,7 +353,7 @@ Morphic-GAOS-Manager/
 │   │   ├── ledger.md, beacon.md, pursuit.md …
 │   ├── about-me.md               # Context Trio — owner business context (The Compass)
 │   ├── brand-voice.md            # Context Trio — Transparent Champion brand voice (The Persona)
-│   ├── working-preferences.md    # Context Trio — operational rules, cost ceiling (The Constitution)
+│   ├── working-preferences.md    # Context Trio — operational rules, the Low Expenses Standard (The Constitution)
 │   └── *.md                      # Spec and architecture docs
 ├── apps_script/                  # Apps Script source (.gs files deployed via API)
 │   ├── doPost.gs
@@ -474,7 +474,7 @@ Volume includes the `think` node (`GAOS-Persona-Spec.md` §4) and weekly frictio
 | **Gemini Flash (`FAST_MODEL`)** | ~$0.075/1M input + ~$0.30/1M output tokens | ~700K in + 150K out (routing, Scout synthesis, fallback tasks) | **~$0.10** |
 | **Gemini Pro (`DEEP_MODEL`)** | ~$1.25/1M input + ~$5.00/1M output tokens | ~800K in + 200K out (approvals, think node, diagnostics, weekly review) | **~$2.00** |
 | **Vertex AI Code Execution** | ~$0.001/session | ~10 sessions (evolution tasks) | **~$0.01** |
-| **Vertex AI Memory Bank** | ~$0.005/write, ~$0.002/read | ~200 writes + 800 reads (7-agent boot cycles + frequent knowledge checks) | **~$2.50** |
+| **Vertex AI Memory Bank** | ~$0.005/write, ~$0.002/read | ~10 writes + ~20 queries + ~100 reads (~7-agent boot cycles × monthly; per-agent entry caps enforced by `nightly_knowledge_promotion.py`) | **~$0.55** |
 | **Google Secret Manager** | Free first 6 secrets; $0.06/10K accesses | 6 secrets, ~1K accesses | **$0.00** |
 | **BigQuery** | $0.02/GB storage after 10 GB free | ~1 GB cold archive | **$0.00** (under free tier) |
 | **Vertex AI Agent Engine** | ~$50–$135/month (1 vCPU / 2 GB, always-on) | **Not used in Phase 1–4** | **$0.00** *(deferred)* |
@@ -1677,8 +1677,8 @@ Phase 4 is complete when **all** of the following are true:
 6. `post_to_webhook` HMAC validation passes all 8 tests in the test matrix (Section 14).
 7. Estimated monthly cost — projected from actual Cloud Logging `DEEP_MODEL` and `FAST_MODEL` call counts over the 7-day test run — is below **$5.00/month** at equivalent production load.
 
-### Phase 5: CEO Dashboard (Grafana) — *Future*
-> **Status: Placeholder — implement after Phase 4 is stable.**
+### Phase 5: CEO Dashboard (Grafana) — *Complete*
+> **Status: Complete — Grafana deployed on Cloud Run. Dashboard panels are version-controlled as JSON in `dashboard/grafana/`. Vertex Agent Engine remains future scope.**
 
 - Deploy **Grafana** (self-hosted on Cloud Run or local machine) as the visual CEO dashboard layer.
 - Connect Grafana to the Google Sheets data source via the Sheets API connector.

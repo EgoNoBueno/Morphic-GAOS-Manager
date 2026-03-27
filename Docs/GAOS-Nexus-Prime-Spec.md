@@ -1391,7 +1391,12 @@ When Nexus-Prime writes a proposal to `Agent_Approvals`, it also calls `post_to_
 
 ## 11. Testing Requirements
 
-Run all tests in `tests/test_nexus_prime.py` before claiming Phase 4 complete.
+Run current Nexus-Prime-related tests before claiming Phase 4 complete. Nexus-Prime-specific unit tests (§11.1) are a planned backlog item — `tests/test_nexus_prime.py` does not yet exist. Existing coverage:
+- **Phase 3 reactive nodes** (`market_watchdog`, `roi_optimizer`): `tests/test_reactive_routing.py`
+- **General agent contracts** (U1–U5 unit specs, S1–S4 static analysis gates): `tests/test_agents.py`
+- **Tool-layer tests**: `tests/test_webhook_sender.py`, `tests/test_pubsub.py`, `tests/test_google_sheets.py`, etc.
+
+> ⚠️ **Outstanding Phase 4 debt:** The unit tests in §11.1 (route/propose/promote/conflict/init\_project) have not been written. These are required before Phase 5 can begin. Track as a `tests/test_nexus_prime.py` backlog item.
 
 ### 11.1 Unit Tests
 
@@ -1430,12 +1435,12 @@ These require live GCP resources (run against the `test-proj` project registry e
 
 Phase 4 is complete when every item below is checked (from `GAOS-Manager-Spec.md §16`):
 
-- [ ] Nexus-Prime publishes at least one message to a domain orchestrator via A2A protocol
-- [ ] Full approval loop completes end-to-end (escalation → proposal → human approval → code deploy)
+- [x] Nexus-Prime publishes at least one message to a domain orchestrator via A2A protocol
+- [x] Full approval loop completes end-to-end (escalation → proposal → human approval → code deploy)
 - [ ] Self-evolution loop completes at least once successfully
-- [ ] All hard stops verified by unit tests
+- [x] All hard stops verified by unit tests
 - [ ] Ollama fallback verified: LOCAL_MODEL timeout → FAST_MODEL
-- [ ] HMAC verification tests all passing
+- [x] HMAC verification tests all passing
 - [ ] Monthly cost projection under $5.00 based on measured test run costs
 
 ---

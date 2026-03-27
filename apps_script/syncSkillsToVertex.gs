@@ -113,6 +113,8 @@ function staticAnalysis_(code, patterns, allowedImports) {
   return null;
 }
 
+// Note: The URLs mentioned in this section are dynamically generated based on the specific Google Cloud project and deployment configuration. They will differ for each new deployment.
+
 // Register the custom menu so users can trigger sync from the Sheet UI
 function onOpen() {
   SpreadsheetApp.getUi()
