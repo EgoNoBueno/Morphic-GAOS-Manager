@@ -26,13 +26,17 @@ def _mock_init_sheets_client():
 @pytest.fixture(autouse=True)
 def _mock_agents_log_cloud():
     """
-    Prevent _log_cloud in agents/__init__.py from making real Cloud Logging
-    API calls during unit tests.  The function itself has ``except Exception:
-    pass``, but the Google Cloud retry layer issues ``time.sleep()`` calls
-    *before* the final exception is raised, causing tests to hang for minutes
-    without this patch.  Unit tests verify behaviour via individual per-test
-    mocks of ``_log_cloud``; this fixture ensures no test inadvertently reaches
-    the live API.
+    Prevent _log_cloud from making real Cloud Logging API calls during unit
+    tests.  The function itself has ``except Exception: pass``, but the Google
+    Cloud retry layer issues ``time.sleep()`` calls *before* the final
+    exception is raised, causing tests to hang for minutes without this patch.
+
+    Two patch targets are required:
+    - ``agents._log_cloud`` — patches the canonical definition.
+    - ``agents.nexus_prime.orchestrator._log_cloud`` — patches the module-local
+      name created by ``from agents import _log_cloud`` in orchestrator.py.
+      Without this second patch the orchestrator's local binding still points
+      to the live function and Cloud Logging calls escape the mock.
     """
-    with patch("agents._log_cloud"):
+    with patch("agents._log_cloud"), patch("agents.nexus_prime.orchestrator._log_cloud"):
         yield
