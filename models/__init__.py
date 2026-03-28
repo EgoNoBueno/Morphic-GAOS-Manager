@@ -48,6 +48,9 @@ class MessageType(StrEnum):
     # ── Phase 3 — Reactive cross-domain routing ────────────────────────────
     STOCK_INSUFFICIENT = "STOCK_INSUFFICIENT"  # Foreman: stockout detected → Nexus-Prime dispatches Scout sourcing pivot
     DEAL_CLOSED = "DEAL_CLOSED"  # Pursuit: deal closed → Nexus-Prime checks margin → dispatches Beacon ROI analysis
+    # ── Infrastructure Provisioner (Infra Provisioner §20) ─────────────────
+    INFRA_PROVISION_APPROVED = "INFRA_PROVISION_APPROVED"  # Owner approved infra change card
+    INFRA_PROVISION_REJECTED = "INFRA_PROVISION_REJECTED"  # Owner rejected infra change card
 
 
 # ── A2AMessage ─────────────────────────────────────────────────────────────

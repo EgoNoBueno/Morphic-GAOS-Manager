@@ -486,6 +486,104 @@ def send_skill_import_card(
     return send_card(space_name, card)
 
 
+def send_infra_proposal_card(
+    space_name: str,
+    proposal_id: str,
+    change_lines: list[str],
+    irreversible_warning: str = "",
+) -> dict:
+    """Post an infrastructure change proposal card for owner approval.
+
+    Designed for non-technical readers — uses plain language throughout.
+    Button clicks deliver ``actionMethodName: "infra_approve"`` or
+    ``"infra_reject"`` to ``POST /chat``.
+
+    Args:
+        space_name:           Chat space resource name.
+        proposal_id:          Manifest proposal_id (stored in Agent_Approvals).
+        change_lines:         Human-readable list of proposed changes (one per entry).
+        irreversible_warning: Non-empty string triggers a ⚠️ warning section.
+            Should concisely explain what cannot be undone automatically.
+
+    Returns:
+        The Chat API Message resource dict.
+
+    Raises:
+        ChatConfigError:   space_name or proposal_id is empty.
+        ChatDeliveryError: Chat API returned an error.
+    """
+    if not space_name:
+        raise ChatConfigError("space_name must not be empty.")
+    if not proposal_id:
+        raise ChatConfigError("proposal_id must not be empty.")
+
+    sections: list[dict] = []
+
+    # ── Section 1 — What will happen ─────────────────────────────────────────
+    change_text = "<br>".join(
+        f"• {html.escape(line)}" for line in (change_lines or ["No changes needed."])
+    )
+    sections.append(
+        {
+            "header": "What will happen if you approve",
+            "widgets": [{"textParagraph": {"text": change_text}}],
+        }
+    )
+
+    # ── Section 2 — Irreversible warning (conditional) ───────────────────────
+    if irreversible_warning:
+        sections.append(
+            {
+                "header": "⚠️  Warning — cannot be undone automatically",
+                "widgets": [{"textParagraph": {"text": html.escape(irreversible_warning)}}],
+            }
+        )
+
+    # ── Section 3 — Rollback assurance + decision buttons ────────────────────
+    assurance = (
+        "If you approve, GAOS will verify that everything worked. "
+        "If any step fails, it will undo the changes automatically."
+    )
+    buttons = [
+        {
+            "text": "✅ Approve Changes",
+            "onClick": {
+                "action": {
+                    "actionMethodName": "infra_approve",
+                    "parameters": [{"key": "proposal_id", "value": proposal_id}],
+                }
+            },
+        },
+        {
+            "text": "❌ Reject",
+            "onClick": {
+                "action": {
+                    "actionMethodName": "infra_reject",
+                    "parameters": [{"key": "proposal_id", "value": proposal_id}],
+                }
+            },
+        },
+    ]
+    sections.append(
+        {
+            "widgets": [
+                {"textParagraph": {"text": assurance}},
+                {"buttonList": {"buttons": buttons}},
+            ]
+        }
+    )
+
+    card: dict = {
+        "cardId": f"infra-proposal-{proposal_id}",
+        "header": {
+            "title": "🔧 GAOS wants to make infrastructure changes",
+            "subtitle": f"Proposal {proposal_id[:8]}…",
+        },
+        "sections": sections,
+    }
+    return send_card(space_name, card)
+
+
 def parse_chat_event(body: dict) -> dict:
     """
     Validate and normalise an inbound Google Chat push event.

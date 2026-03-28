@@ -13,8 +13,9 @@ Endpoints:
   POST /sheets-sync   Cloud Scheduler 5-min Sheets → BigQuery staging sync (Nexus-Prime only)
   POST /chat          Google Chat push events — text messages and card callbacks
   POST /vision        Owner vision submission → Blueprint Doc generator (Nexus-Prime only)
-  POST /poll-comments Cloud Scheduler 5-min doc-comment poll (Nexus-Prime only)
-  GET  /health        Cloud Run health check (always 200)
+  POST /poll-comments    Cloud Scheduler 5-min doc-comment poll (Nexus-Prime only)
+  POST /infra-provision  Trigger infrastructure diff + proposal card (Nexus-Prime only)
+  GET  /health           Cloud Run health check (always 200)
 
 All POST endpoints verify the OIDC token in the Authorization header before
 dispatching. This is safe because Cloud Run is deployed --no-allow-unauthenticated;
@@ -712,6 +713,18 @@ async def chat(request: Request) -> JSONResponse:
             "space_name": event["space_name"],
             "message_name": event["message_name"],
         }
+    elif event_type == "CARD_CLICKED" and action_name in ("infra_approve", "infra_reject"):
+        msg_type = (
+            MessageType.INFRA_PROVISION_APPROVED
+            if action_name == "infra_approve"
+            else MessageType.INFRA_PROVISION_REJECTED
+        )
+        payload = {
+            "proposal_id": event["parameters"].get("proposal_id", ""),
+            "approved_by": event["sender_email"],
+            "space_name": event["space_name"],
+            "message_name": event["message_name"],
+        }
     elif event_type == "MESSAGE":
         attachments = event.get("attachments", [])
         image_att = next(
@@ -862,6 +875,13 @@ async def chat(request: Request) -> JSONResponse:
             ack_text = "✅ Skill import request received; agent will be notified."
         elif action_name == "skill_reject":
             ack_text = "❌ Skill import denial received."
+        elif action_name == "infra_approve":
+            ack_text = (
+                "✅ Infrastructure changes approved; applying now. "
+                "You will be notified when complete."
+            )
+        elif action_name == "infra_reject":
+            ack_text = "❌ Infrastructure changes rejected. No changes have been made."
         else:
             ack_text = "Processing..."
     else:
@@ -985,6 +1005,59 @@ async def poll_comments(request: Request) -> JSONResponse:
         )
     except Exception as exc:
         log.exception("poll-comments handler failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return JSONResponse(content={"status": "ok", **result})
+
+
+@app.post("/infra-provision")
+async def infra_provision(request: Request) -> JSONResponse:
+    """
+    Trigger an infrastructure diff and send a plain-language proposal card to the owner.
+
+    Called by ``scripts/provision_infra.py`` when running in CI/CD or locally.
+    The endpoint builds the diff manifest, writes it to Agent_Approvals, and sends
+    a Chat card with Approve / Reject buttons.  The actual apply step is triggered
+    by the owner tapping Approve — handled via CARD_CLICKED → INFRA_PROVISION_APPROVED
+    routed to handle_infra_provision().
+
+    Expected body (all optional):
+    {
+        "project_id": "morphic-gaos-prod",   // falls back to env var
+        "space_name":  "spaces/XXXXXXX"       // falls back to settings.chat.owner_space
+    }
+
+    Returns 200 with proposal_id and change count on success.
+    Nexus-Prime only.
+
+    Spec: GAOS-Deploy-Spec.md §20 (Infra Provisioner)
+    """
+    _verify_pubsub_audience(request)
+
+    if _AGENT_NAME != "nexus-prime":
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{_AGENT_NAME}' does not support /infra-provision.",
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    from agents.nexus_prime.orchestrator import handle_infra_plan
+
+    project_id = body.get("project_id") or _get_project_id()
+    space_name: str = body.get("space_name", "")
+    try:
+        result = await handle_infra_plan(project_id, space_name=space_name)
+        log.info(
+            "infra-provision plan complete: proposal_id=%s changes=%d",
+            result.get("proposal_id", ""),
+            result.get("change_count", 0),
+        )
+    except Exception as exc:
+        log.exception("infra-provision plan failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return JSONResponse(content={"status": "ok", **result})

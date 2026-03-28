@@ -633,6 +633,8 @@ def route(state: NexusPrimeWorkingMemory) -> str:
         MessageType.SKILL_REQUEST: "handle_skill_request",
         MessageType.STOCK_INSUFFICIENT: "market_watchdog",
         MessageType.DEAL_CLOSED: "roi_optimizer",
+        MessageType.INFRA_PROVISION_APPROVED: "handle_infra_provision",
+        MessageType.INFRA_PROVISION_REJECTED: "handle_infra_provision",
     }
     return routing_table.get(msg.message_type, "record")
 
@@ -3035,6 +3037,49 @@ def roi_optimizer(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 # ── Graph assembly ────────────────────────────────────────────────────────────
 
 
+def _infra_provision_node(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    """LangGraph node adapter for handle_infra_provision().
+
+    Extracts proposal_id, approved flag, and space_name from the incoming
+    message payload and calls the async handler synchronously via asyncio.
+    """
+    import asyncio
+
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+
+    from models import MessageType
+
+    payload = msg.payload or {}
+    proposal_id: str = payload.get("proposal_id", "")
+    approved: bool = msg.message_type == MessageType.INFRA_PROVISION_APPROVED
+    approved_by: str = payload.get("approved_by", "")
+    space_name: str = payload.get("space_name", "")
+    project_id: str = state.get("project_id", "")
+
+    try:
+        asyncio.get_event_loop().run_until_complete(
+            handle_infra_provision(
+                project_id=project_id,
+                proposal_id=proposal_id,
+                approved=approved,
+                approved_by=approved_by,
+                space_name=space_name,
+            )
+        )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            proposal_id or "infra-provision",
+            f"_infra_provision_node failed: {exc}",
+            "ERROR",
+        )
+    return state
+
+
 def build_nexus_prime_graph() -> Any:
     """
     Assemble and compile the Nexus-Prime StateGraph per
@@ -3060,6 +3105,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_node("handle_skill_request", handle_skill_request)
     graph.add_node("market_watchdog", market_watchdog)
     graph.add_node("roi_optimizer", roi_optimizer)
+    graph.add_node("handle_infra_provision", _infra_provision_node)
 
     graph.set_entry_point("boot")
     graph.add_edge("boot", "monitor")
@@ -3081,6 +3127,7 @@ def build_nexus_prime_graph() -> Any:
             "vision_blueprint": "vision_blueprint",
             "iterate_plan": "iterate_plan",
             "handle_skill_request": "handle_skill_request",
+            "handle_infra_provision": "handle_infra_provision",
         },
     )
 
@@ -3108,6 +3155,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_edge("vision_blueprint", "record")
     graph.add_edge("iterate_plan", "record")
     graph.add_edge("handle_skill_request", "record")
+    graph.add_edge("handle_infra_provision", "record")
     graph.add_edge("market_watchdog", "record")
     graph.add_edge("roi_optimizer", "record")
     graph.add_edge("record", END)
@@ -3287,3 +3335,327 @@ else:
 
 # Module-level compiled graph (used directly in Cloud Run handler if not via ADK)
 nexus_prime_graph = build_nexus_prime_graph()
+
+
+# ── handle_infra_plan ─────────────────────────────────────────────────────────
+
+
+async def handle_infra_plan(
+    project_id: str,
+    space_name: str = "",
+) -> dict[str, Any]:
+    """Build an infrastructure diff manifest and send a Chat approval card.
+
+    Called by ``POST /infra-provision`` (CLI trigger or CI/CD pipeline).
+    Not a graph node — runs outside the LangGraph state machine.
+
+    Steps:
+      1. Resolve nexus-prime Cloud Run URL and SA email.
+      2. Build the diff manifest via ``build_manifest()``.
+      3. If no changes: send a plain-text "nothing to do" message and return.
+      4. Write an ApprovalProposal row to Agent_Approvals (status=INFRA_PENDING).
+      5. Send the infra proposal Chat card to the owner's space.
+
+    Args:
+        project_id: Active GAOS project ID.
+        space_name: Override Chat space. Falls back to settings.chat.owner_space.
+
+    Returns:
+        Dict with ``proposal_id``, ``change_count``, and ``has_changes``.
+    """
+    import google.auth
+    from googleapiclient.discovery import build as gapi_build
+
+    from config import get_settings
+    from tools.google_chat import send_infra_proposal_card, send_message
+    from tools.google_sheets import append_row, init_sheets_client
+    from tools.infra_provision import build_manifest
+
+    settings = get_settings()
+    owner_space = space_name or settings.chat.owner_space
+
+    region = settings.gcp.region
+    sa_email = f"nexus-prime-sa@{project_id}.iam.gserviceaccount.com"
+
+    # Resolve the live Cloud Run URL for nexus-prime.
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    run_client = gapi_build("run", "v2", credentials=creds)
+    svc_name = f"projects/{project_id}/locations/{region}/services/nexus-prime"
+    try:
+        svc = run_client.projects().locations().services().get(name=svc_name).execute()
+        nexus_url = svc.get("uri", "")
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            "infra-plan",
+            f"Could not resolve nexus-prime URL: {exc}",
+            "WARNING",
+        )
+        nexus_url = ""
+
+    task_id = str(uuid.uuid4())
+    manifest = build_manifest(
+        project_id=project_id,
+        region=region,
+        nexus_url=nexus_url,
+        sa_email=sa_email,
+    )
+
+    if not manifest.has_changes:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            "infra-plan: no changes needed — all resources already up to date.",
+        )
+        if owner_space:
+            send_message(owner_space, "✅ Infrastructure check complete — nothing to change.")
+        return {"proposal_id": None, "change_count": 0, "has_changes": False}
+
+    # Write proposal row to Agent_Approvals.
+    init_sheets_client(project_id)
+    from models import ApprovalProposal, ApprovalStatus
+
+    proposal = ApprovalProposal(
+        id=manifest.proposal_id,
+        agent_id="infra-provisioner",
+        issue="Infrastructure changes required — scheduler jobs, BQ tables, or secrets.",
+        trigger_reason="Infra diff detected uncommitted resources",
+        proposed_code=manifest.to_json(),  # manifest stored in proposed_code for retrieval
+        status=ApprovalStatus.PENDING,
+    )
+    row = proposal.to_sheet_row()
+    append_row("Agent_Approvals", list(row.values()), project_id)
+
+    # Build human-readable change lines for the card.
+    change_lines = [e.human_description for e in manifest.actionable]
+    irreversible_warning = ""
+    if manifest.has_irreversible:
+        irreversible_warning = (
+            "Creating BigQuery tables is permanent storage. "
+            "New tables cannot be auto-deleted if they already contain data. "
+            "If in doubt, reject and review the proposal_id in Agent_Approvals."
+        )
+
+    if owner_space:
+        send_infra_proposal_card(
+            space_name=owner_space,
+            proposal_id=manifest.proposal_id,
+            change_lines=change_lines,
+            irreversible_warning=irreversible_warning,
+        )
+
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"infra-plan: card sent for proposal {manifest.proposal_id} "
+        f"({len(manifest.actionable)} changes).",
+    )
+    return {
+        "proposal_id": manifest.proposal_id,
+        "change_count": len(manifest.actionable),
+        "has_changes": True,
+    }
+
+
+# ── handle_infra_provision ────────────────────────────────────────────────────
+
+
+async def handle_infra_provision(
+    project_id: str,
+    proposal_id: str,
+    approved: bool,
+    approved_by: str = "",
+    space_name: str = "",
+) -> dict[str, Any]:
+    """Apply or reject an infrastructure change proposal.
+
+    Called when the owner taps Approve or Reject on the infra proposal Chat card.
+    Triggered via INFRA_PROVISION_APPROVED / INFRA_PROVISION_REJECTED MessageType
+    routed from ``nexus_prime_route()`` in the graph.
+
+    Approval path:
+      1. Read manifest JSON from Agent_Approvals.proposed_code.
+      2. Apply changes: secrets → BQ tables → scheduler jobs.
+      3. Run targeted health checks on changed resources.
+      4. If health check fails: rollback applied changes, send failure card.
+      5. Update Agent_Approvals row status (Approved or Rejected).
+      6. Send plain-language result card to owner.
+
+    Rejection path:
+      1. Update Agent_Approvals row status to Rejected.
+      2. Send confirmation message to owner.
+
+    Args:
+        project_id:  Active GAOS project ID.
+        proposal_id: UUID matching the row in Agent_Approvals.
+        approved:    True if the owner approved; False if rejected.
+        approved_by: Owner's email address from the Chat callback.
+        space_name:  Chat space to send result card to.
+
+    Returns:
+        Dict with ``status``, ``proposal_id``, and optional ``rollback_notes``.
+    """
+    from config import get_settings
+    from tools.google_chat import send_message
+    from tools.google_sheets import get_all_records, init_sheets_client, update_row
+    from tools.infra_provision import (
+        InfraManifest,
+        apply_manifest,
+        rollback_manifest,
+        run_health_checks,
+    )
+
+    settings = get_settings()
+    owner_space = space_name or settings.chat.owner_space
+    task_id = str(uuid.uuid4())
+    init_sheets_client(project_id)
+
+    # ── Find the proposal row ─────────────────────────────────────────────────
+    rows = get_all_records("Agent_Approvals", project_id)
+    proposal_row: dict[str, Any] | None = None
+    row_number: int | None = None
+    for i, row in enumerate(rows, start=2):  # row 1 = header
+        if str(row.get("ID", "")) == proposal_id:
+            proposal_row = row
+            row_number = i
+            break
+
+    if proposal_row is None:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"handle_infra_provision: proposal {proposal_id} not found in Agent_Approvals",
+            "ERROR",
+        )
+        if owner_space:
+            send_message(
+                owner_space,
+                f"⚠️ Could not find infrastructure proposal {proposal_id[:8]}… "
+                "It may have expired. Run the provisioner again.",
+            )
+        return {"status": "error", "proposal_id": proposal_id}
+
+    # ── Rejection path ────────────────────────────────────────────────────────
+    if not approved:
+        if row_number is not None:
+            update_row(
+                "Agent_Approvals",
+                row_number,
+                {"Status": "Rejected", "Approved By": approved_by},
+                project_id,
+            )
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"infra-provision rejected by {approved_by}: proposal {proposal_id}",
+        )
+        if owner_space:
+            send_message(
+                owner_space,
+                "❌ Infrastructure changes rejected. No changes have been made.",
+            )
+        return {"status": "rejected", "proposal_id": proposal_id}
+
+    # ── Approval path — parse manifest ────────────────────────────────────────
+    raw_manifest = proposal_row.get("Proposed Code", "") or proposal_row.get("proposed_code", "")
+    try:
+        manifest = InfraManifest.from_json(raw_manifest)
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"handle_infra_provision: could not parse manifest JSON: {exc}",
+            "ERROR",
+        )
+        if owner_space:
+            send_message(
+                owner_space,
+                "⚠️ Could not read the infrastructure change details. "
+                "The proposal may be malformed. No changes were made.",
+            )
+        return {"status": "error", "proposal_id": proposal_id}
+
+    # Mark in-progress.
+    if row_number is not None:
+        update_row(
+            "Agent_Approvals",
+            row_number,
+            {"Status": "Approved", "Approved By": approved_by},
+            project_id,
+        )
+
+    # ── Apply ─────────────────────────────────────────────────────────────────
+    apply_result = apply_manifest(manifest)
+
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"infra-provision apply: {len(apply_result.applied)} applied, "
+        f"{len(apply_result.failed)} failed",
+    )
+
+    # ── Health check ──────────────────────────────────────────────────────────
+    all_passed, check_notes = run_health_checks(manifest)
+
+    # ── Rollback if health check failed ───────────────────────────────────────
+    rollback_notes: list[str] = []
+    if not all_passed:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            "infra-provision health checks FAILED — triggering rollback",
+            "ERROR",
+        )
+        rollback_notes = rollback_manifest(manifest, apply_result)
+        if row_number is not None:
+            update_row("Agent_Approvals", row_number, {"Status": "Needs Revision"}, project_id)
+
+        if owner_space:
+            fail_lines = "\n".join(f"• {n}" for n in check_notes if n.startswith("❌"))
+            rb_lines = "\n".join(f"  {n}" for n in rollback_notes)
+            send_message(
+                owner_space,
+                f"⚠️ Infrastructure changes were applied but health checks failed. "
+                f"GAOS attempted to roll back automatically.\n\n"
+                f"Failed checks:\n{fail_lines}\n\n"
+                f"Rollback actions:\n{rb_lines}\n\n"
+                "Review the Agent_Approvals tab for details.",
+            )
+        return {
+            "status": "rolled_back",
+            "proposal_id": proposal_id,
+            "rollback_notes": rollback_notes,
+        }
+
+    # ── Success ───────────────────────────────────────────────────────────────
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"infra-provision complete: proposal {proposal_id} — all checks passed.",
+    )
+    if owner_space:
+        applied_summary = "\n".join(f"• {line}" for line in apply_result.applied)
+        send_message(
+            owner_space,
+            f"✅ Infrastructure changes applied successfully.\n\n{applied_summary}\n\n"
+            "All health checks passed. Grafana will show live data within 5 minutes.",
+        )
+    return {"status": "applied", "proposal_id": proposal_id}
