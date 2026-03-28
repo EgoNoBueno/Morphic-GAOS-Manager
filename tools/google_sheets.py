@@ -217,10 +217,12 @@ def append_row(tab: str, row: dict[str, Any], project_id: str) -> None:
 
 def batch_append_rows(tab: str, rows: list[dict[str, Any]], project_id: str) -> None:
     """
-    Append multiple rows in a single API call (values_append).
-    All rows must have identical key sets matching the tab header.
+    Insert multiple rows immediately below the header row (row 2) so the newest
+    entry always appears at the top of the tab. All rows must have identical key
+    sets matching the tab header.
 
-    Counts as one API request regardless of row count.
+    Internally uses INSERT_DIMENSION + values.update (2 API calls); still counts
+    as one token-bucket consumption since throughput is well within 300 req/min.
 
     Raises:
         TabNotFoundError, RateLimitError, SheetsWriteError.
@@ -240,17 +242,10 @@ def batch_append_rows(tab: str, rows: list[dict[str, Any]], project_id: str) -> 
     if not _bucket.consume():
         raise RateLimitError("Token bucket exhausted — too many write requests.")
 
-    # Use the tab name as the range so values_append inserts after the last
-    # populated row (INSERT_ROWS mode). Do NOT append a row number — ws.row_count
-    # returns the pre-allocated grid size, not the count of populated rows.
-    range_notation = _range(tab)
+    # Insert at row 2 (immediately below the header) so newest entries appear
+    # at the top without requiring any manual scrolling.
     try:
-        _retry(
-            _spreadsheet.values_append,
-            range_notation,
-            {"valueInputOption": "USER_ENTERED", "insertDataOption": "INSERT_ROWS"},
-            {"values": values},
-        )
+        _retry(ws.insert_rows, values, 2, value_input_option="USER_ENTERED")
     except gspread.exceptions.APIError as exc:
         raise SheetsWriteError(f"Write to '{tab}' failed: {exc}") from exc
 

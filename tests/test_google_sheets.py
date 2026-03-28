@@ -165,14 +165,16 @@ class TestAppendRow:
             {"timestamp": "2026-03-14", "agent_id": "test", "message": "smoke"},
             "default",
         )
-        ss.values_append.assert_called_once()
-        args = ss.values_append.call_args
-        assert args[0][2]["values"] == [["2026-03-14", "test", "smoke"]]
+        # batch_append_rows now uses ws.insert_rows(values, 2, ...) so the call
+        # lands on the worksheet mock, not on the spreadsheet mock.
+        ws.insert_rows.assert_called_once()
+        values_arg = ws.insert_rows.call_args[0][0]
+        assert values_arg == [["2026-03-14", "test", "smoke"]]
 
     def test_noop_on_empty_rows(self):
         ws, ss = self._setup_spreadsheet(["timestamp"])
         batch_append_rows("Logs", [], "default")
-        ss.values_append.assert_not_called()
+        ws.insert_rows.assert_not_called()
 
     def test_raises_tab_not_found(self):
         sheets_mod._spreadsheet = _make_spreadsheet({})
@@ -394,7 +396,8 @@ class TestTokenBucket:
 
 
 class TestBatchAppendRowsInsertMode:
-    def test_calls_values_append_with_insert_data_option(self):
+    def test_calls_insert_rows_at_row_2(self):
+        """Newest-first: rows are inserted at position 2 (below the header)."""
         ws = _make_ws("Logs", ["timestamp", "message"])
         ss = _make_spreadsheet({"Logs": ws})
         sheets_mod._spreadsheet = ss
@@ -403,14 +406,15 @@ class TestBatchAppendRowsInsertMode:
             [{"timestamp": "2026-01-01", "message": "hi"}],
             "default",
         )
-        params = ss.values_append.call_args[0][1]
-        assert params.get("insertDataOption") == "INSERT_ROWS"
+        ws.insert_rows.assert_called_once()
+        _, row_arg = ws.insert_rows.call_args[0]
+        assert row_arg == 2
 
-    def test_range_does_not_contain_row_number(self):
-        ws = _make_ws("Logs", ["timestamp"])
+    def test_values_ordered_by_header(self):
+        """Values list must follow tab header column order."""
+        ws = _make_ws("Logs", ["timestamp", "message"])
         ss = _make_spreadsheet({"Logs": ws})
         sheets_mod._spreadsheet = ss
-        batch_append_rows("Logs", [{"timestamp": "x"}], "default")
-        range_arg = ss.values_append.call_args[0][0]
-        # Should be just "'Logs'" — no !A123 appended
-        assert "!" not in range_arg
+        batch_append_rows("Logs", [{"timestamp": "2026-01-01", "message": "hi"}], "default")
+        values_arg = ws.insert_rows.call_args[0][0]
+        assert values_arg == [["2026-01-01", "hi"]]

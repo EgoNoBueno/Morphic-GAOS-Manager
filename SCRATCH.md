@@ -107,6 +107,30 @@ Phase 3.5 additions (Innovation Interface Layer)
 │                        Depends on: Step 5 (injects into Blueprint Section E)
 └── Step 7: AppSheet app (no backend code — config only, wires to Project_Incubator tab)
              └── Depends on: Step 5 (tab must exist first)
+
+Phase 5 additions (Grafana Live Dashboard — Sheets → BQ Staging Sync)
+├── Step 8.1: scripts/create_staging_tables.py — run-once DDL; CREATE TABLE IF NOT EXISTS for
+│            4 new BQ staging tables in aos_logs: staging_approvals, staging_logs,
+│            staging_errors, staging_pending_knowledge. All columns STRING + synced_at TIMESTAMP.
+├── Step 8.2: replace_rows(table_ref, rows, project_id) in tools/bigquery.py
+│            DELETE FROM WHERE TRUE → streaming insert. Raises BigQueryInsertError on DELETE fail.
+│            Empty rows = clear table only. Covered by new tests in tests/test_sheets_sync.py.
+├── Step 8.3: handle_sheets_sync(project_id) in agents/nexus_prime/orchestrator.py
+│            Loops SYNC_TABS (4 pairs). Per-tab failures non-fatal (WARNING + continue).
+│            Normalizes headers (lowercase, spaces → underscores). Adds synced_at timestamp.
+│            Returns row counts dict.
+├── Step 8.4: POST /sheets-sync in main.py
+│            Nexus-Prime only. Follows /archive pattern. Update module docstring.
+├── Step 8.5: gaas-sheets-sync Cloud Scheduler job in scripts/provision_schedulers.py
+│            Schedule: */5 * * * * (every 5 min). Path: /sheets-sync. Cost: +$0.10/month.
+├── Step 8.6: 5 new panels in dashboard/grafana/dashboards/ceo-overview.json (IDs 10–14)
+│            Live Approval Queue (table), Pending Approvals stat, Pending Knowledge stat,
+│            Live Log Feed (last 50), Live Error Feed (last 20). Datasource: bigquery-morphic-gaos.
+│            Existing panels untouched.
+└── Step 8.7: tests/test_sheets_sync.py (new file) — 5 tests: SS1 (happy path, 4 tabs),
+             SS2 (TabNotFoundError non-fatal), SS3 (BQ failure non-fatal + continue),
+             SS4 (empty rows), SS5 (header normalization).
+             Mock boundaries: get_all_records and replace_rows — not the BQ SDK directly.
 ```
 
 ---
@@ -143,6 +167,13 @@ Phase 3.5 additions (Innovation Interface Layer)
 | 6 | `SCOUT_MAX_SEARCH_DEPTH`, `SCOUT_MAX_QUERIES_PER_MANDATE` in `settings.yaml` | Config | $0 | ✅ |
 | 6 | `GOOGLE_SEARCH_API_KEY`, `GOOGLE_SEARCH_CX` secrets | Secret Manager | $0 | ⏳ wire in GCP |
 | 7 | AppSheet app | No-code config | $0 — Workspace included | — |
+| 8.1 | `scripts/create_staging_tables.py` | Run-once DDL script | $0 | ⏳ |
+| 8.2 | `replace_rows()` in `tools/bigquery.py` | Function | $0 | ⏳ |
+| 8.3 | `handle_sheets_sync()` in nexus_prime orchestrator | Handler | $0 | ⏳ |
+| 8.4 | `POST /sheets-sync` in `main.py` | Endpoint | $0 | ⏳ |
+| 8.5 | `gaos-sheets-sync` Cloud Scheduler job | GCP resource | $0.10/month | ⏳ |
+| 8.6 | 5 new Grafana panels in `ceo-overview.json` | Dashboard | $0 | ⏳ |
+| 8.7 | `tests/test_sheets_sync.py` | 5 tests | $0 | ⏳ |
 
 **Revised monthly cost estimate:** ~$2.55–$2.65/month (adds one $0.10 Cloud Scheduler job + occasional Blueprint LLM calls; well within target).
 
@@ -161,6 +192,10 @@ Phase 3.5 additions (Innovation Interface Layer)
 | New: `tools/google_docs.py` | — |
 | New: `tools/vertex_search.py` | — |
 | New: `tools/google_search.py` | — |
+| `GAOS-Manager-Spec.md` | Add Phase 5 (Grafana live sync); add `POST /sheets-sync` endpoint; update cost table (+$0.10/month) |
+| `GAOS-Deploy-Spec.md` | Add `gaos-sheets-sync` Scheduler job step; add `create_staging_tables.py` run-once step; add Phase 5 exit checklist items |
+| New: `scripts/create_staging_tables.py` | — |
+| New: `tests/test_sheets_sync.py` | — |
 
 ---
 
@@ -605,14 +640,97 @@ Reply 'status' anytime for an update."
 
 ---
 
+## Topic 9: Grafana Live Operational Dashboard — Sheets → BQ Staging Sync
+
+**Problem:** Grafana already deployed (Phase 5 complete). Gap: Grafana queries BigQuery, which is only refreshed at 2 AM by `handle_archive()`. Live operational data (pending approvals, active logs, errors, pending knowledge) is in Google Sheets and is up to 24 hours stale in the dashboard.
+
+**Solution:** A new `POST /sheets-sync` endpoint in Nexus-Prime reads 4 operational Sheet tabs and does a full-replace into 4 new BigQuery staging tables every 5 minutes. Grafana gets 5 new panels that query the staging tables instead of the nightly archive tables.
+
+### Root Cause of Staleness
+
+```
+Grafana queries BigQuery (aos_logs.approval_history)
+    ↑
+BigQuery only updated at 2 AM by handle_archive()
+    ↑ 24-hour gap
+Live data lives in Google Sheets (Agent_Approvals, Logs, Error Logs, Pending_Knowledge)
+```
+
+### Solution Architecture
+
+```
+Cloud Scheduler */5 * * * *
+    → POST /sheets-sync (Nexus-Prime Cloud Run)
+    → handle_sheets_sync(project_id):
+          get_all_records("Agent_Approvals") → replace_rows(staging_approvals)
+          get_all_records("Logs")             → replace_rows(staging_logs)
+          get_all_records("Error Logs")       → replace_rows(staging_errors)
+          get_all_records("Pending_Knowledge")→ replace_rows(staging_pending_knowledge)
+    → Grafana queries staging_* tables
+    → Live data lag: ≤ 5 minutes
+```
+
+### Staging Tables (new, dataset: aos_logs)
+
+| Table | Source Tab | Key Columns |
+|---|---|---|
+| `staging_approvals` | `Agent_Approvals` | All headers verbatim (STRING) + `synced_at TIMESTAMP` |
+| `staging_logs` | `Logs` | All headers + `synced_at TIMESTAMP` |
+| `staging_errors` | `Error Logs` | All headers + `synced_at TIMESTAMP` |
+| `staging_pending_knowledge` | `Pending_Knowledge` | All headers + `synced_at TIMESTAMP` |
+
+All columns STRING (avoids schema drift if Sheet columns change). No partition key — tables are tiny, always full-replace.
+
+### `replace_rows()` — New BQ Primitive
+
+No `replace_rows()` exists in `tools/bigquery.py` — only `insert_row()`, `insert_rows()`, `query_rows()`. New function:
+- `DELETE FROM table WHERE TRUE` via `client.query().result()` (DML)
+- Streaming insert via `insert_rows_json`
+- Raises `BigQueryInsertError` on DELETE failure; proceeds to insert only if DELETE succeeded
+- If `rows` is empty: runs DELETE (clears table) and returns — no insert
+- Full docstring required (Rule 17)
+
+### New Grafana Panels (IDs 10–14)
+
+| Panel ID | Type | Title | Staging Table Queried |
+|---|---|---|---|
+| 10 | table | Live Approval Queue | `staging_approvals ORDER BY timestamp ASC LIMIT 100` |
+| 11 | stat | Pending Approvals (live) | `staging_approvals WHERE LOWER(status) IN ('pending', '')` |
+| 12 | stat | Pending Knowledge (live) | `staging_pending_knowledge WHERE LOWER(status) IN ('pending', '')` |
+| 13 | table | Live Log Feed (last 50) | `staging_logs ORDER BY timestamp DESC LIMIT 50` |
+| 14 | table | Live Error Feed (last 20) | `staging_errors ORDER BY timestamp DESC LIMIT 20` |
+
+Datasource uid `bigquery-morphic-gaos` (existing — no changes to `provisioning/datasources/bigquery.yaml`).
+
+### Cost
+
+- 4th Cloud Scheduler job: **$0.10/month** (first 3 are free)
+- Sheets API: 4 reads × 12/hr = 48 calls/hr — well within 300 req/min budget
+- BQ DML (DELETE): free for the amounts involved
+- **Total impact:** +$0.10/month → revised estimate ~$2.65/month
+
+### Verification Steps
+
+1. `python scripts/create_staging_tables.py` → 4 tables in `morphic-gaos-prod.aos_logs`
+2. Force-POST `/sheets-sync` → HTTP 200 with `{"staging_approvals": 5, ...}`
+3. `SELECT COUNT(*) FROM morphic-gaos-prod.aos_logs.staging_approvals` in BQ → matches Sheet row count
+4. Open Grafana → panels 10–14 populated; existing panels unaffected
+5. `python scripts/provision_schedulers.py` → `gaos-sheets-sync` in Scheduler console
+6. Wait 10 min → edit Sheet row → Grafana reflects change within 5 min
+7. `pytest tests/test_sheets_sync.py` → 5 passing; full pytest suite → 0 failures
+
+**Status: PLANNED — implementation plan complete. Awaiting execution. See `/memories/session/plan.md` for full spec.**
+
+---
+
 ## Notes
 
 - Owner has Google Workspace Business account (AppSheet included, Google Chat included)
 - Cost target remains ~$2.50/month — all changes must be evaluated against this
 - Vertex AI Agent Engine explicitly excluded from Phase 1–4 — $50–$135/month; deferred to Phase 5+
-- Phase 5 (Grafana) still on roadmap — new additions must not conflict
+- Phase 5 (Grafana) live dashboard plan complete — 7 build steps designed, not yet implemented. See Topic 9.
 - No spec changes will be made until the full picture is captured here
 
 ---
 
-*Last updated: 2026-03-16*
+*Last updated: 2026-03-28*

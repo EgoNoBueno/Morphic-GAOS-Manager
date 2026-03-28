@@ -5,6 +5,29 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-28T20:00-03:00 — Sheet UX improvements — complete
+
+### What was done
+
+Three spreadsheet quality-of-life improvements requested by owner.
+
+**Code changes:**
+- `tools/google_sheets.py` — `batch_append_rows()` rewritten to use `ws.insert_rows(values, row=2)` instead of `values_append` with `INSERT_ROWS` mode. All agent writes (task completions, approval proposals, knowledge observations) now insert at row 2 so newest entries appear at the top without scrolling.
+- `tests/test_google_sheets.py` — Updated `TestAppendRow.test_append_single_row`, `TestAppendRow.test_noop_on_empty_rows`, and `TestBatchAppendRowsInsertMode` to assert on `ws.insert_rows` rather than `ss.values_append`. All 571 tests passing.
+- `scripts/provision_sheet_controls.py` — New idempotent run-once script. Step 1: creates any missing tabs from the full TABS list and writes correct header rows. Step 2: applies `ONE_OF_LIST` data validation dropdown (Pending / Approved / Rejected / Deployed / Needs Revision) to `Agent_Approvals` Column I. Uses `InstalledAppFlow` with `oauth-client.json` for Sheets/Drive scoped auth; token cached to `config/keys/sheets_token.json`.
+- `SCRATCH.md` — Updated Phase 5 Grafana plan section, build sequence, component table, and notes.
+
+**Script executed against live Sheet `1O0GA48SIJtyKPOZku8sV9li71p1KRgbJoTyhfXoooH4`:**
+- Headers written to: `Accounting`, `Marketing`, `Sales by Product`, `Shipping and Receiving`, `Research Products`
+- Status dropdown applied to `Agent_Approvals` Column I
+- All other existing tabs untouched
+
+### What's next
+- Commit this work
+- Graft sheets-to-BQ staging sync (Topic 9 / Phase 5) when ready to proceed
+
+---
+
 ## 2026-03-27T21:00-03:00 — Code quality and correctness batch — complete
 
 ### What was done
