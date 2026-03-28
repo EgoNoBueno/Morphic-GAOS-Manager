@@ -1,278 +1,277 @@
 # Build Notes
 
-Implementation notes written for the authors of external resources that directly influenced GAOS architecture decisions. Each entry describes what we learned, what we built, and what we skipped.
+Notes for the author of the [OpenClaw Paradigm Book](https://github.com/chunhualiao/openclaw-paradigm-book). We read your book as part of an architecture review for [Morphic-GAOS](https://github.com/EgoNoBueno/Morphic-GAOS-Manager), a multi-agent system running on Google Cloud (LangGraph, Cloud Run, Pub/Sub, Vertex AI, BigQuery). Each entry shares what we learned from a chapter, what it inspired us to ship, and where our architecture had already arrived at the same answer by a different path.
+
+Chapters 1, 9, and 10 were not reviewed in this cycle.
 
 ---
 
-## Chapter 8 — Autonomous Systems Design
-*OpenClaw Paradigm Book — chunhualiao/openclaw-paradigm-book*
-*Implemented: 2026-03-27*
+## Chapter Summary
 
-Hi,
-
-We reviewed Chapter 8 of the OpenClaw Paradigm Book as part of an architecture review for [Morphic-GAOS](https://github.com/EgoNoBueno/Morphic-GAOS-Manager), a multi-agent orchestration system built on Google Cloud (LangGraph, Cloud Run, Pub/Sub, Vertex AI, BigQuery). The chapter covers autonomous systems design including self-healing, goal-oriented behavior, multi-agent coordination, and safety layers. Four concrete ideas translated directly to shipped code.
-
-**Our starting point**
-
-GAOS is already deeply autonomous in the §8.2 Conditional Autonomy sense: seven domain-specialist agents operate independently, escalate to a human (via the Approval Gate and Google Chat) only when they hit an unresolvable state, and run entirely on GCP without operator intervention during normal operation. What we lacked was formal lifecycle state tracking, protection against accumulated state corruption in long-running flows, circuit protection on failing external dependencies, and a generic output quality check distinct from the code-proposal coherence gate we already had.
-
----
-
-**What we shipped**
-
-*Phoenix checkpoint and recovery pattern (§8.11)*
-
-The Phoenix Pattern addresses a real failure mode in long-running orchestration flows: an unhandled exception or partial tool-call failure can leave the agent state dict in an internally inconsistent state. Without a recovery mechanism, the LangGraph state machine re-enters the event loop on the next message with stale or corrupt values, producing unpredictable behavior.
-
-We implemented `tools/phoenix.py` with four public functions:
-- `validate_state()` — checks that required fields are non-empty and the serialized state is under 512 KB
-- `save_checkpoint()` — serializes the state to JSON, computes a SHA-256 hash, and streams the row to `aos_logs.agent_checkpoints` in BigQuery (best-effort; BQ failure is non-fatal to the calling agent)
-- `load_checkpoint()` — queries the last 5 checkpoints for an agent, hash-verifies each, and returns the first valid one
-- `phoenix_recover()` — the entry point: validates current state, and if corrupted, restores from the last known-good checkpoint; raises `CheckpointCorruptedError` if none exists
-
-The hash-on-load check was a deliberate design decision: `aos_logs.agent_checkpoints` is writable by the agent service account and technically human-editable via the GCP console. A tampered checkpoint would deploy corrupt state into the next execution and be nearly impossible to debug. The SHA-256 pin closes that.
-
-*Formal agent lifecycle state machine (§8.23)*
-
-Agents already have informal lifecycle states (boot sequences, heartbeats, LangGraph node transitions) but no formally typed values or structured transition logging. We added `AgentState` (a `str` enum) to `agents/__init__.py` with nine canonical states:
-
-```
-INIT → PLANNING → EXECUTION → OBSERVATION → HEALING → SYNTHESIS → COMPLETED
-                                          ↘ ESCALATION
-                                                      ↘ IDLE (on complete or park)
-```
-
-`log_state_transition(agent_id, project_id, task_id, from_state, to_state, reason)` fires a structured `_log_cloud` entry with `log_type="state_transition"` and both state values in the `extra` payload, making the OODA loop fully auditable in Cloud Logging and filterable by `jsonPayload.from_state` / `jsonPayload.to_state` in Grafana. The Grafana dashboard can now expose the complete state trajectory of every task, not just the terminal outcome.
-
-*Circuit breaker for external dependency calls (§8.3.3)*
-
-Long-running agents that call external tools (BigQuery, Sheets, Pub/Sub, the Gemini API) have no protection today against hitting a dependency that's soft-failing — a dead endpoint with a 10-second timeout burns the entire Cloud Run request budget and eventually starves the event loop. We implemented `tools/circuit_breaker.py` as a thread-safe, in-memory circuit breaker:
-
-- Three states: `CLOSED` (normal), `OPEN` (tripped), `HALF_OPEN` (probe after cooldown)
-- `check(agent_id, resource_key)` raises `CircuitOpenError` if the circuit is open and the cooldown hasn't elapsed; transitions to `HALF_OPEN` when cooldown expires
-- `record_failure()` / `record_success()` update the counter and state
-- Per-instance in-memory state is intentional: Cloud Run agents are single-process, single-thread from the perspective of this loop. We don't need cross-instance coordination (which would require a distributed cache) — we need to prevent *this* instance from hammering a dead resource.
-- Default threshold: 3 consecutive failures. Default cooldown: 300 seconds.
-
-The HALF_OPEN state is the only non-trivial implementation choice: after cooldown, we allow exactly one probe call before deciding whether to reopen or close. This matches the standard circuit breaker pattern and avoids the failure mode where cooldown expiry immediately re-floods a still-recovering service.
-
-*Output coherence check (§8.3.1 Semantic Validation)*
-
-We already had `_validate_proposal_coherence()` in `agents/__init__.py` as a pre-approval gate for code proposals. What was missing was a general-purpose quality check that any agent can call to verify that a generated output actually addresses the task goal — not just that it's syntactically valid.
-
-`validate_output_coherence(goal, output, agent_id, project_id)` uses `LOCAL_MODEL` (Ollama, offline) to score the output against the goal on relevance, completeness, and coherence, returning `{"passed": bool, "confidence": float, "reason": str}`. If Ollama is unavailable, it passes with `confidence=0.5` and logs a warning — the caller's main path is never blocked.
-
-The offline constraint was a deliberate choice consistent with our existing `_validate_proposal_coherence` design: the output being evaluated is operational content. Sending it to a cloud LLM (Gemini) would incur both cost and data egress risk. Ollama handles it locally.
+| Chapter | Topic | Outcome |
+|---------|-------|---------|
+| 2 | The OpenClaw Ecosystem | No new code — five architectural alignments confirmed |
+| 3 | Skill Architecture Patterns | No new code — pattern vocabulary validated against existing design |
+| 4 | The Soul.md Pattern | No new code — structural enforcement preferred over declarative |
+| 5 | Multi-Agent Orchestration | Shipped `_validate_proposal_coherence()` pre-approval quality gate |
+| 6 | File Coordination and Memory | Shipped recency sort on memory load + progressive nightly distillation |
+| 7 | Cron and Scheduled Automation | Shipped idempotency guard on archive job + `provision_schedulers.py` |
+| 8 | Autonomous Systems Design | Shipped phoenix checkpointing, lifecycle state machine, circuit breaker, output coherence check |
+| 11 | Security Patterns | Shipped Bandit SAST; HMAC signing deferred to Phase 4; prompt injection deferred indefinitely |
+| 12 | Future of AI-Native Development | Two ideas pending: budget ceiling guard + priority-to-model routing in `think()` |
+| 13 | The Tooling Ecosystem | No new code — canonical patterns already implemented |
+| 14 | Education and Community | No new code — community governance; not applicable to single-operator system |
 
 ---
 
-**What we skipped and why**
+## Chapter 2 — The OpenClaw Ecosystem
+*Reviewed: 2026-03-27*
 
-- *Tree-of-Thoughts planning (§8.12.1):* Latency and token cost are prohibitive for GAOS's reactive event loop. The correct fix for multi-path planning uncertainty is better prompt design on single-pass calls, not N-branch generation + critic selection on every decision.
-- *Cross-model verification (§8.20.1):* For critical approvals running three independent models (Claude + GPT + Gemini) with consensus before execution is a sound pattern. But the GAOS Approval Gate already requires a human reviewer — adding model consensus on top of human approval would be defending a gate that already has the strongest possible guard. Revisit in Phase 5 if approval latency tolerances allow it.
-- *Stigmergic task queues (§8.16.3):* Replacing or augmenting Pub/Sub with a `tasks/pending/` directory poll is an interesting resilience pattern but implies a shared filesystem that doesn't exist in our Cloud Run architecture. A GCS-backed equivalent is possible but adds a new dependency for a resilience benefit we'd only feel at agent scale far beyond current projections.
-- *Ghost/stealth patterns (§8.24):* Not in scope. All GAOS tool calls use authenticated GCP APIs. The privacy concern addressed by PII-redaction at the edge (`8.24.3`) is worth tracking but requires evidence of PII-exposure risk in our current operational content scope before implementing.
-- *Red-Team Guardian (§8.16.2):* Sound for Phase 4 — a scheduled agent that attempts to bypass `validate_code_safety()` via prompt injection would stress-test our static analysis gates against real adversarial inputs rather than crafted fixtures. Tagged for Phase 4.
+Your walkthrough of the OpenClaw architecture — Gateway at the center, agents as isolated specialists, skills as the extensibility layer, environment-first configuration at every level — reads like someone reverse-engineered our design decisions and gave them better names.
 
----
+GAOS arrived at most of these patterns independently, under the same pressures you describe. Reading Chapter 2 didn't change our code, but it gave us a shared vocabulary for choices we'd made without a formal label.
 
-**Results**
+**Where the architectures align**
 
-558 tests passing (up from 511). New test files:
-- `tests/test_circuit_breaker.py` — 22 tests covering all states, transitions, cooldown, and isolation
-- `tests/test_phoenix.py` — 25 tests covering validation, save/load round-trip, hash verification, corrupt-state recovery, and BigQuery failure resilience
+Five patterns in the chapter map directly to things we already have:
 
----
+- **Gateway-Mediated Multi-Agent Pattern.** Your `GatewayServer` is a single process that routes all messages, enforces isolation, and manages agent lifecycles. Our equivalent is Nexus-Prime: a central orchestrator that coordinates seven domain-specialist agents through Pub/Sub. No agent talks to another directly — everything flows through the gateway. The isolation guarantee is the same; the transport layer is different (your WebSocket RPC vs. our Pub/Sub topics).
 
-## Chapter 7 — Cron and Scheduled Automation Patterns
-*OpenClaw Paradigm Book — chunhualiao/openclaw-paradigm-book*
-*Implemented: 2026-03-27*
+- **Environment-First Configuration.** Your `openclaw.json` with `${ENV_VAR}` SecretRefs and the cascading resolution chain (CLI flag → env var → config file → default) is exactly what we do with `config/settings.yaml` plus `tools/secrets.py`. Model aliases like `FAST_MODEL` and `LOCAL_MODEL` are our version of your model fallback chain — one file to edit when a model version changes, not seven orchestrator files. We enforce this with a test (`TestU3NoLiteralModelVersions`) that scans every orchestrator for hardcoded model strings and fails the build if any are found.
 
-Hi,
+- **Tool Policies.** Your per-agent tool configuration — `"exec": { "ask": "always" }`, `"write": { "deny": true }` — maps to our `validate_code_safety()` AST gate and `_ALLOWED_IMPORTS` allowlist. The mechanism is different (your policies are declarative JSON; ours are code-level AST analysis) but the principle is identical: agents operate under least-privilege constraints enforced structurally, not by trusting the model to follow instructions.
 
-We've been working through the OpenClaw Paradigm Book as part of an ongoing architecture review for [Morphic-GAOS](https://github.com/EgoNoBueno/Morphic-GAOS-Manager), a multi-agent orchestration system built on Google Cloud (LangGraph, Cloud Run, Pub/Sub, Vertex AI, BigQuery). Chapter 7's section on scheduled automation patterns surfaced two concrete gaps in our implementation that we shipped fixes for.
+- **Skill Blueprint Pattern.** Your `SKILL.md` files — self-contained, machine-readable specs that an agent can read to understand a skill — are a formal version of our agent identity files in `Docs/agents/<name>.md`. Each agent has a documented scope, constraints, and behavioral principles. The difference is that your skills are loaded into the system prompt at runtime; ours are documentation that informs the design of code-level constraints. We chose structural enforcement over declarative enforcement (more on this in Chapter 4).
 
-**Our starting point**
+- **Channel Architecture.** Your 17-channel integration layer normalizes messages from Telegram, Discord, Slack, and more into a common format. Our channel surface is narrower — Google Chat inbound, Pub/Sub for inter-agent communication, Cloud Scheduler HTTP for cron triggers — but the normalization principle is the same: agents process messages without knowing which channel delivered them.
 
-GAOS runs two Cloud Scheduler jobs against a single Cloud Run service (Nexus-Prime): a nightly 2 AM archive sweep that moves aged Google Sheets rows to BigQuery cold storage, and a 6 AM morning briefing that assembles a daily status card via Google Chat. Both are standalone `async def` functions invoked directly by HTTP POST from Cloud Scheduler — they run outside the LangGraph state machine for simplicity.
+**Where they diverge**
 
-**What we shipped**
+- **ClawHub / Dynamic Skills.** Your skill marketplace assumes an expanding capability set discoverable at runtime. GAOS has seven fixed agents with pre-defined scopes. There's no skill registry because there's no runtime skill discovery — each agent's domain is locked at build time. We chose predictability over extensibility at this stage.
 
-*Idempotency guard for the archive job (§7.3 / §7.9.2)*
+- **Deployment Model.** Your deployment targets personal hardware — a single Node.js daemon on a laptop with loopback binding. GAOS targets managed cloud infrastructure — Cloud Run, Pub/Sub, BigQuery, Secret Manager. The loopback-first model wouldn't work for us because our agents need to be always-on and reachable by GCP services. Your hybrid mesh model (§2.3.3) is closer to where we'd go if multi-instance coordination became necessary.
 
-Chapter 7's framing of overlap prevention (§7.22.3) and the incremental processing checkpoint pattern (§7.9.2) prompted us to audit `handle_archive()` for retry safety. Cloud Scheduler retries on 5xx or timeout — if both the original and the retry run reach the Sheets read before either completes deletion, BigQuery gets duplicate rows in `aos_logs.task_outcomes`. We had no guard against this.
+- **Multi-Gateway Mesh.** The `mesh.*` namespace for routing between multiple Gateway instances is a nice resilience pattern. We don't have an equivalent — there's one Nexus-Prime, and agent failover is handled at the Cloud Run level rather than the application level. Worth revisiting if geographic distribution becomes a requirement.
 
-The fix was low-ceremony: at the top of `handle_archive()`, we read the Logs tab for any row where `agent_id == "nexus-prime"` AND `level == "ARCHIVE"` AND timestamp is within the last 4 hours. If found, the function logs a WARNING and returns `{"skipped": True}` immediately. The idempotency key was already being written by step 4 of the function — we just weren't checking it at entry. Two new tests cover the skip path and the normal-flow path. Suite is at 511 tests.
+**What this chapter gave us**
 
-*Scheduled job version control (§7.4 / IaC)*
-
-Chapter 7's recommendation to manage scheduler configurations in IaC matched a real gap: our `infra/main.tf` had zero `google_cloud_scheduler_job` resources. The two jobs existed only in the GCP console, meaning a new project deployment would have no scheduled jobs at all.
-
-Rather than adding Terraform resources (which would require `terraform apply` against a live state file), we added `scripts/provision_schedulers.py`. The script follows the pattern of our other one-time bootstrap scripts (`setup_secrets.py`, `provision_missing_folders.py`) — it's idempotent, reads project config from `settings.yaml`, resolves the nexus-prime Cloud Run URL dynamically via the Cloud Run Admin API, and creates or patches the two Cloud Scheduler jobs using `googleapiclient`. It also ensures `nexus-prime-sa` holds `roles/run.invoker` on the Cloud Run service. Run it once per project after `terraform apply`.
-
-**What we skipped**
-
-The chapter's adaptive scheduling section (§7.7) and circuit breaker patterns (§7.5.2) don't map to our current setup — Cloud Scheduler is the scheduler, and making schedules adaptive would require an external controller layer that's out of scope. The `gaos_doctor.py` diagnostic script has no autonomous alerting capability, but it's a manual CLI tool by design and adding a `/health` endpoint that Cloud Scheduler pings would be a larger architectural change for a later phase.
-
----
-
-## Chapter 6 — File Coordination and Memory Patterns
-*OpenClaw Paradigm Book — chunhualiao/openclaw-paradigm-book*
-*Implemented: 2026-03-27*
-
-Hi,
-
-We've been reading through the OpenClaw Paradigm Book as part of an ongoing architecture review for [Morphic-GAOS](https://github.com/EgoNoBueno/Morphic-GAOS-Manager), a multi-agent orchestration system built on Google Cloud (LangGraph, Cloud Run, Pub/Sub, Vertex AI, BigQuery). Chapter 6 was directly actionable for us, and I wanted to share what we took from it and what we actually shipped.
-
-**Our starting point**
-
-GAOS already had a layered memory architecture that maps reasonably well to the chapter's three-tier mental model — a Vertex AI Memory Bank for curated semantic knowledge (your "MEMORY.md" analog), BigQuery for episodic task history, and a `Pending_Knowledge` Google Sheet tab as the staging buffer for candidate learnings. Agents boot stateless on Cloud Run and load their domain memory once at startup.
-
-Two gaps in our implementation stood out after reading Chapter 6.
-
----
-
-**Gap 1: Recency-blind truncation (§6.7 — Contextual Loading / Token Budget)**
-
-Your `ContextBudget` class introduced something we hadn't thought carefully about: *which* content gets dropped when you're over budget matters as much as *how much* gets dropped. We had a token budget guard in our boot-time memory loader, but it truncated entries in whatever order the Vertex AI API returned them — no recency awareness whatsoever. An agent could boot with its newest, most relevant knowledge silently evicted and its oldest, potentially stale entries intact.
-
-**What we implemented:** A single pre-sort step before the budget guard runs. All memory entries are now sorted newest-first by `created_at` before truncation. When budget pressure hits, the oldest entries are dropped first. The implementation handles API versions that don't expose `created_at` with a graceful no-op fallback.
-
----
-
-**Gap 2: No automatic path from experience to curated memory (§6.8–6.9 — Progressive Summarization + Heartbeat-Driven Maintenance)**
-
-This was the more substantive finding. GAOS agents accumulate task history in BigQuery continuously, but the only way for that experience to reach the curated memory layer was through human-approved proposals — and those only happened when an agent explicitly surfaced a learning. There was no automated distillation loop.
-
-Your progressive summarization hierarchy (raw observations → daily summaries → weekly insights → curated long-term memory) gave us the right framing. We adapted it to fit our architecture's constraints: we have a nightly archive job (`handle_archive()`) that already runs at 2AM and reads recent log data. That became our distillation trigger.
-
-**What we implemented:** A new "progressive distillation" step in the nightly archive job. After the archive sweep completes, the job reads back the last 24 hours of log messages, groups them by agent, and for any agent that generated ≥ 5 messages (enough signal to be worth summarizing), it calls a local LLM to distill 2–3 actionable lessons. Those lessons are written to `Pending_Knowledge` — the staging layer — which means a human must approve them before they reach the curated memory layer. This was a deliberate choice: automatic distillation writes *proposals*, not *facts*. The confidence gate and approval gate remain intact.
-
-The local LLM constraint was important to us: distillation runs on Ollama (offline, no data egress, no cost) because we're summarizing operational logs that may contain business-sensitive data.
-
----
-
-**What we skipped and why**
-
-- **File coordination / FileLock (§6.11):** Not applicable — we have no shared filesystem. Cloud-native APIs handle concurrent access.
-- **Vector backends (§6.10):** Vertex AI Memory Bank already covers semantic retrieval; adding ChromaDB or Qdrant would create split-brain memory with no clear benefit.
-- **PII redaction (§6.5):** No evidence of PII in our current memory content scope. Worth revisiting if that changes.
-- **ContextBudget as a reusable class:** Our boot-time memory load is the only multi-source context assembly point today, so promoting the pattern to a full class would be premature. We took the underlying principle (sort before truncating) and applied it directly.
-
----
-
-**Results**
-
-509 tests passing. The distillation step ran cleanly in our test suite against mocked infrastructure — each agent's domain context (beacon→marketing, ledger→accounting, etc.) routes to the right memory domain, and LLM failures are non-blocking so a downed Ollama instance never blocks the archive sweep.
-
-The chapter's core insight — that memory isn't just about what you store, it's about what survives under pressure and what gets regularly distilled into durable signal — translated directly into two concrete improvements. Thanks for writing it.
+No new code, but a clean pattern vocabulary we now use when discussing our architecture. "Gateway-mediated" and "environment-first" are better shorthand than the ad-hoc descriptions we were using before. The framing of tool policies as a spectrum from `ask: "always"` to `deny: true` also sharpened our thinking about where `validate_code_safety()` sits — we're firmly at the "deny by default, allowlist the exceptions" end.
 
 ---
 
 ## Chapter 3 — Skill Architecture Patterns in Practice
-*OpenClaw Paradigm Book — chunhualiao/openclaw-paradigm-book*
 *Reviewed: 2026-03-27*
 
-Hi,
+This chapter walks through six concrete skill implementations and uses them to illustrate eight pattern categories. It's the most hands-on chapter in Part I, and the one where we could most directly test your patterns against our existing code.
 
-Chapter 3 is a case-study chapter — it works through six concrete skill implementations (health-check, founder-coach, ai-proposal-generator, Discord, gog, and the claude-usage/early-compact pair) and uses them as vehicles to illustrate eight pattern categories: Tool-Based Error Recovery, File-Based Memory, Skill Blueprint, Guardrail-First Safety, Environment-First Configuration, Micro-Skill Architecture, Gateway-Mediated Multi-Agent, and a comparative table across all of them.
+**Where we lined up**
 
-**Our starting point**
+GAOS maps to most of these patterns, even though we built them independently:
 
-GAOS maps to most of these patterns structurally, though we arrived at them independently. Domain-locking (seven agents each with narrow, non-overlapping scope) is the Micro-Skill Architecture applied at the agent level. The `validate_code_safety()` AST gate plus SHA-256 pin is Guardrail-First Safety applied to code execution proposals. Secret Manager plus `settings.yaml` model aliases instead of hardcoded values is Environment-First Configuration. Pub/Sub as the sole inter-agent channel, mediated by Nexus-Prime, is the Gateway-Mediated Multi-Agent Pattern. `gaos_doctor.py`'s BigQuery staleness query is a lightweight form of the health-check pattern.
+- Domain-locking (seven agents, each with a narrow non-overlapping scope) is the **Micro-Skill Architecture** applied at the agent level.
+- The `validate_code_safety()` AST gate plus SHA-256 pinning is **Guardrail-First Safety** applied to code execution.
+- Secret Manager plus `settings.yaml` model aliases is **Environment-First Configuration**.
+- Pub/Sub as the sole inter-agent channel, mediated by Nexus-Prime, is the **Gateway-Mediated Multi-Agent Pattern**.
+- `gaos_doctor.py`'s BigQuery staleness query is a lightweight version of your health-check skill.
 
-**What was actually useful**
+**What stood out**
 
-The chapter's most practically interesting concept was the **OK/WARN/FAIL tri-state diagnostic model** from the health-check skill. GAOS currently reports binary IDLE/RUNNING heartbeats without a nuanced degradation tier. An agent can be "running" while one of its cloud dependencies is soft-failing — the current status model doesn't surface that. However, after reviewing the existing implementation, we concluded this belongs at the observability layer (Grafana/Cloud Logging alerts, not heartbeat payload changes) once deployment stabilizes. Not a Phase 2 code change.
+The **OK/WARN/FAIL tri-state diagnostic model** from the health-check skill was the most practically interesting concept. Our agents currently report binary IDLE/RUNNING heartbeats with no degradation tier — an agent can be "running" while one of its cloud dependencies is quietly failing, and our status model doesn't surface that gap. After reviewing what it would take to implement, we decided this belongs at the observability layer (Grafana and Cloud Logging alerts) once deployment stabilizes. Tagged for post-Phase 2.
 
-**The anti-patterns section (§3.10) was the most directly reinforcing part of the chapter.** Three anti-patterns were documented there:
+The **anti-patterns section (§3.10)** was the most reinforcing part. Three problems you called out are things we've already solved:
 
-- *Monolithic Skill:* We'd already solved this. Domain-locking enforces narrow scope at the agent level by architectural constraint, not by convention.
-- *Hard-Coded Path:* GAOS is actively hardening this with `TestU3NoLiteralModelVersions` — a test that scans all seven orchestrator source files for literal model version strings and fails the build if any are found.
-- *Silent Failure:* All GCP API wrappers return structured results with explicit status, output, and error categorization. Silent failure never propagates through our tool layer.
+- *Monolithic Skill:* Domain-locking enforces narrow scope by architectural constraint, not convention.
+- *Hard-Coded Path:* `TestU3NoLiteralModelVersions` scans all orchestrator files for literal model version strings and fails the build on any match.
+- *Silent Failure:* All GCP API wrappers return structured results with explicit status, output, and error fields.
 
-The `claude-usage` / `early-compact` cost-awareness micro-skills have no direct analog in GAOS — Cloud Run agents are stateless and load memory once at boot from Vertex AI. There is no per-session context window to compress. The CLI Bridging pattern (gog skill) is also inapplicable — all GAOS inputs arrive via Google Chat or Pub/Sub. No CLI translation layer exists or is needed.
+**What didn't apply**
 
-**What we implemented**
+The `claude-usage` / `early-compact` cost-awareness skills have no analog in GAOS — our agents are stateless Cloud Run processes that load memory once at boot, so there's no per-session context window to compress. The CLI Bridging pattern (gog skill) is also inapplicable; all GAOS inputs arrive via Google Chat or Pub/Sub.
 
-Nothing new — chapter 3 functioned primarily as a pattern vocabulary validation. The main outcome was reinforced confidence that our existing architectural decisions align with the canonical pattern shapes identified here. A note was added to revisit the tri-state health model as a post-Phase 2 observability improvement.
-
-**Results**
-
-Test count unchanged. No implementation gaps identified that weren't already solved by existing architecture or deferred to a later phase.
+**Result:** No new code. The chapter served as pattern vocabulary validation and gave us confidence that our existing design matches the canonical shapes you've identified.
 
 ---
 
 ## Chapter 4 — The Soul.md Pattern
-*OpenClaw Paradigm Book — chunhualiao/openclaw-paradigm-book*
 *Reviewed: 2026-03-27*
 
-Hi,
+Chapter 4 introduces Soul.md as a constitutional document for AI agents: a Markdown file that defines name, core truths, style, boundaries, and continuity strategy. The premise is that LLM-based agents have behavioral characteristics worth shaping deliberately — and that shaping should happen through a persistent, version-controlled file injected into the system prompt at runtime.
 
-Chapter 4 introduces Soul.md as a "constitutional document" for AI agents: a human-readable Markdown file that defines an agent's Name, Core Truths, Style, Boundaries, and Continuity strategy. The core premise is that LLM-based agents have emergent behavioral characteristics that deserve intentional, declarative shaping rather than being left to default model behavior — and that shaping should happen through a persistent, version-controlled file that is injected into the system prompt at runtime.
+**Our parallel construct**
 
-**Our starting point**
+GAOS has `Docs/agents/<name>.md` identity files and `Docs/about-me.md`. These define each agent's role, scope, constraints, and principles. They're version-controlled and reviewed alongside code changes. The key difference: our identity files are human-facing documentation. In your Soul.md pattern, the model *reads* the soul on every call and is behaviorally governed by its contents.
 
-GAOS has a parallel construct: `Docs/agents/<name>.md` identity files and `Docs/about-me.md`. These describe each agent's role, domain scope, constraints, and behavioral principles. They're version-controlled and reviewed in the same commits as code changes. However, there is a meaningful architectural difference: our identity files are human-facing documentation. In OpenClaw's Soul.md pattern, the file content is loaded into the agent's runtime system prompt — the model *reads* the soul on every session start and is behaviorally governed by its contents.
+In GAOS, behavior is enforced structurally — LangGraph state machine, code-level domain-locking, `validate_code_safety()` allowlist, Pub/Sub routing rules — rather than through an injected persona prompt.
 
-In GAOS, agent behavior is governed structurally — LangGraph state machine, code-level domain-locking, `validate_code_safety()` allowlist, Pub/Sub routing rules — rather than declaratively via an injected persona prompt. The model receives task-specific prompts but not a persistent "constitutional" prompt that re-establishes identity on every call.
+**The interesting gap**
 
-**The genuine gap**
+The **Boundaries** concept was the most meaningful delta. You encode constraints like "Ask before acting externally" in Soul.md, mapping directly to tool permission policies. We achieve the same outcome through code: the AST gate enforces execution boundaries, the Approval Gate enforces code proposal boundaries, and domain-locking enforces communication boundaries. Our "soul" is invariants in code rather than declarations in Markdown.
 
-The **Boundaries** concept at the identity level is the most interesting delta. OpenClaw encodes constraints like "Ask before acting externally" in Soul.md, and those map directly to tool permission policies. In GAOS, we achieve the same outcome through code: the `validate_code_safety()` AST gate enforces execution boundaries, the Approval Gate enforces code proposal boundaries, and domain-locking enforces inter-agent communication boundaries. Our "soul" is expressed as invariants in code rather than declarations in Markdown.
+The **Continuity** section was the closest match. Your agents declare memory management behavior ("Read `memory/YYYY-MM-DD.md` at session start"). Ours do the same thing through `load_domain_memory()` at boot and the IDLE heartbeat write — the mechanism exists, it's just not declared in a per-agent identity file.
 
-The **Continuity** section of Soul.md is the part closest to something we actively implement. It declares how an agent should manage its memory files across sessions ("Read memory/YYYY-MM-DD.md at session start. Update it before closing."). Our equivalent is the boot-time `load_domain_memory()` call and the IDLE heartbeat write — agents load domain context at start and contribute back via the nightly archive flow. The mechanism exists; it's just not declared in a human-readable per-agent identity file.
+**Why we didn't ship anything**
 
-**What we implemented**
+Adding a runtime-injected Soul.md per agent would mean wiring the identity file into every `_call_model()` call across seven orchestrators. That's a broad surface area change with unclear upside: an LLM can "forget" a system prompt under context pressure; an AST gate cannot be persuaded.
 
-Nothing new from this chapter — deliberately. Adding a runtime-injected Soul.md prompt per agent would require wiring the identity file into every `_call_model()` invocation across all seven orchestrators. That's a broad surface area change with unclear incremental value: our code-level constraints are more enforceable than prompt-level constraints. An LLM can "forget" a system prompt when context pressure is high; an AST gate cannot be bypassed by persuasive phrasing.
+The one pattern worth carrying forward is the **layered Soul.md concept** (§4.6.2) — a shared corporate-soul with per-agent overlays. That maps to a `global identity + domain identity` structure we could formalize without changing runtime behavior. Tagged for Phase 4.
 
-The one pattern worth carrying forward is the **layered Soul.md concept** from §4.6.2 — a shared corporate-soul with per-agent overlays. That maps cleanly to a future `global identity + domain identity` structure we could formalize without changing runtime behavior. Tagged for Phase 4.
-
-**What we skipped and why**
-
-- *Runtime Soul injection:* Structural enforcement is more reliable than declarative enforcement for a system that executes real GCP side effects.
-- *A/B testing Soul.md variations:* We don't have the session volume or user-facing feedback loop to make this meaningful at this stage.
-- *Soul Generator / Templates:* Seven agents with stable, well-defined identities. Template generation is premature.
-
-**Results**
-
-Test count unchanged. The chapter gave us useful vocabulary for describing our existing identity architecture and a clear articulation of why we chose structural over declarative enforcement. The identity files we have are the right artifact; the question of whether they should be runtime-injected is a Phase 4 decision.
+**Result:** No new code. The chapter gave us useful vocabulary for our identity architecture and a clear articulation of why we chose structural over declarative enforcement.
 
 ---
 
 ## Chapter 5 — Multi-Agent Orchestration Patterns
-*OpenClaw Paradigm Book — chunhualiao/openclaw-paradigm-book*
 *Implemented: 2026-03-27*
 
-Hi,
-
-Chapter 5 covers the orchestration design space exhaustively — gateway-mediated (OpenClaw's primary pattern), peer-to-peer, hierarchical, market-based, and swarm approaches — then examines state management, session lifecycle, communication protocols, failure handling, security, and performance scaling across all of them.
+Chapter 5 covers the orchestration design space thoroughly — gateway-mediated, peer-to-peer, hierarchical, market-based, and swarm approaches — then digs into state management, session lifecycle, communication protocols, failure handling, security, and scaling across all of them.
 
 **Our starting point**
 
-GAOS implements a gateway-mediated architecture that the chapter would place in the "moderately coupled" tier. Nexus-Prime is the gateway: all inter-agent coordination runs through it via Pub/Sub, Google Sheets, and BigQuery. Tier 2 agents (Beacon, Ledger, Pursuit, Foreman, Steward, Scout) are domain specialists that never communicate with each other directly. The `A2AMessage` Pub/Sub envelope is our standardized message format. BigQuery tables are the shared state store for task history and observability.
+GAOS implements a gateway-mediated architecture that the chapter would place in the "moderately coupled" tier. Nexus-Prime is the gateway: all coordination runs through it via Pub/Sub, Google Sheets, and BigQuery. The six Tier 2 agents (Beacon, Ledger, Pursuit, Foreman, Steward, Scout) never communicate directly. The `A2AMessage` Pub/Sub envelope is our standardized message format, and BigQuery is the shared state store for task history and observability.
 
-**What we implemented**
+**What we shipped**
 
-One idea from §5.10.1 — Quality Assurance Through Multi-Agent Review — was directly actionable. The chapter described review cycles where draft content passes through agents checking factual accuracy, structural coherence, and alignment with project goals before finalization. We adapted this to our code proposal workflow.
+One idea from §5.10.1 — Quality Assurance Through Multi-Agent Review — was directly actionable. Your description of review cycles where drafts pass through agents checking factual accuracy, structural coherence, and project alignment mapped to a real gap in our code proposal workflow.
 
-The GAOS Approval Gate already enforces a human-in-the-loop check on all proposed code. What was missing was a pre-approval automated quality pass — a lightweight coherence check to catch proposals that are structurally valid but semantically incoherent before they reach the human reviewer.
+The Approval Gate already enforces a human check on all proposed code. What was missing was a pre-approval automated quality pass to catch proposals that are syntactically valid but semantically incoherent before a human has to review them.
 
-**What we shipped:** `_validate_proposal_coherence()` in `agents/__init__.py`. It runs two checks against every `ApprovalProposal` before it enters the approval queue:
+We shipped `_validate_proposal_coherence()` in `agents/__init__.py` with two checks:
 
-1. *Structural check:* The `issue` field must be ≥ 20 characters (a meaningful problem statement). If code is present, `stopping_constraint` must be non-empty — the agent must declare why the proposed code is safe to deploy.
-2. *Semantic check:* An offline Ollama call asks whether the code and stated issue are coherent. A `QUALITY WARNING` is appended to `stopping_constraint` on failure — prominently visible to the human reviewer — but the proposal is not rejected automatically. Human judgment remains final.
+1. **Structural:** The `issue` field must be at least 20 characters (a real problem statement). If code is present, `stopping_constraint` must be non-empty — the agent must explain why the proposed code is safe.
+2. **Semantic:** An offline Ollama call checks whether the code and stated issue are coherent. On failure, a `QUALITY WARNING` is appended to `stopping_constraint` — visible to the human reviewer — but the proposal is not rejected automatically. Human judgment stays final.
 
-The function is wired into `propose_gate` in `nexus_prime/orchestrator.py` and covered by seven tests (QP1-QP7) in `tests/test_agents.py`.
+Covered by seven tests (QP1–QP7) in `tests/test_agents.py`.
 
-**What we skipped and why**
+**What we skipped**
 
-- *Performance reputation tracking:* The market-based coordination section suggested routing tasks to highest-performing agents based on historical scores. In GAOS, routing is by domain, not by reputation. Ledger always handles accounting tasks because that's its mandated scope, not because it's the best performer on some leaderboard. Reputation scoring would be a false signal.
-- *Heartbeat watchdog:* Already implemented in `gaos_doctor.py`. The BigQuery staleness query catches agents that haven't written a heartbeat within the expected window.
-- *Formal cross-agent context propagation:* GAOS agents maintain isolated context by design. Each agent loads its own domain memory at boot; there is no cross-agent context sharing. Adding a formal "context packet" to the `A2AMessage` envelope would increase payload size unpredictably against Pub/Sub's 10MB hard limit, and violate the isolation that domain-locking provides.
-- *Capability registry:* Seven fixed agents with stable, hardcoded capability sets. Dynamic service discovery is over-engineering at this scale.
+- *Performance reputation tracking:* Routing by domain, not leaderboard. Ledger handles accounting because that's its mandate, not because it won a score.
+- *Heartbeat watchdog:* Already implemented in `gaos_doctor.py`.
+- *Cross-agent context propagation:* Agents maintain isolated context by design. A "context packet" in `A2AMessage` would increase payload size against Pub/Sub's 10 MB hard limit and break domain-locking isolation.
+- *Capability registry:* Seven fixed agents, stable capabilities. Dynamic service discovery is premature at this scale.
 
-**Results**
+**Result:** 503 tests passing. The coherence gate added a meaningful quality layer with zero risk to the human approval layer.
 
-503 tests passing post-implementation. The `_validate_proposal_coherence()` function added a meaningful quality gate to the proposal workflow with zero risk to the human approval layer, which remains the final authority on all proposed changes.
+---
+
+## Chapter 6 — File Coordination and Memory Patterns
+*Implemented: 2026-03-27*
+
+This chapter was the most directly actionable one for us. Two specific gaps became clear after reading it.
+
+**Our starting point**
+
+GAOS already had a layered memory architecture that maps to your three-tier mental model: Vertex AI Memory Bank for curated semantic knowledge (your "MEMORY.md" analog), BigQuery for episodic task history, and a `Pending_Knowledge` Google Sheet tab as the staging buffer for candidate learnings. Agents boot stateless on Cloud Run and load their domain memory once at startup.
+
+**Gap 1: Recency-blind truncation (§6.7)**
+
+Your `ContextBudget` class introduced something we hadn't thought carefully about: *which* content gets dropped under budget pressure matters as much as *how much*. Our boot-time memory loader had a token budget guard, but it truncated entries in whatever order the Vertex AI API returned them — no recency awareness. An agent could boot with its newest knowledge silently evicted and its oldest, stalest entries intact.
+
+**Fix:** A pre-sort step before the budget guard runs. All memory entries are now sorted newest-first by `created_at` before truncation. Oldest entries drop first under pressure. The implementation handles API versions that don't expose `created_at` with a graceful fallback.
+
+**Gap 2: No path from experience to curated memory (§6.8–6.9)**
+
+This was the bigger finding. GAOS agents write task history to BigQuery continuously, but the only way for that experience to reach curated memory was through human-approved proposals — and those only happened when an agent explicitly surfaced a learning. There was no automated distillation loop.
+
+Your progressive summarization hierarchy (raw observations → daily summaries → weekly insights → curated long-term memory) gave us the right framing. We adapted it: we already had a nightly archive job (`handle_archive()`) running at 2 AM. That became the distillation trigger.
+
+**Fix:** A new "progressive distillation" step in the nightly archive job. After the archive sweep, it reads the last 24 hours of log messages, groups them by agent, and for any agent with five or more messages, calls a local LLM to distill two or three actionable lessons. Those go to `Pending_Knowledge` where a human must approve them before they reach curated memory. Automatic distillation writes *proposals*, not *facts*. The confidence gate and approval gate stay intact.
+
+The local LLM constraint mattered: distillation runs on Ollama (offline, no data egress, no cost) because we're summarizing operational logs that may contain business-sensitive data.
+
+**What we skipped**
+
+- **FileLock (§6.11):** No shared filesystem to coordinate around.
+- **Vector backends (§6.10):** Vertex AI Memory Bank covers semantic retrieval already.
+- **PII redaction (§6.5):** No evidence of PII in our current content scope.
+- **`ContextBudget` as a class:** Only one context assembly point exists, so a class would be premature. We took the principle and applied it directly.
+
+**Result:** 509 tests passing. LLM failures are non-blocking — a downed Ollama never blocks the archive sweep.
+
+The core insight — that memory isn't just about what you store, it's about what survives under pressure and what gets regularly distilled into durable signal — translated directly into two improvements. Well framed.
+
+---
+
+## Chapter 7 — Cron and Scheduled Automation Patterns
+*Implemented: 2026-03-27*
+
+Chapter 7's section on scheduled automation surfaced two concrete gaps in our implementation.
+
+**Our starting point**
+
+GAOS runs two Cloud Scheduler jobs against a single Cloud Run service (Nexus-Prime): a nightly 2 AM archive sweep that moves aged Google Sheets rows to BigQuery cold storage, and a 6 AM morning briefing that sends a daily status card via Google Chat. Both are standalone `async def` functions invoked by HTTP POST from Cloud Scheduler, outside the LangGraph state machine.
+
+**What we shipped**
+
+*Idempotency guard (§7.3 / §7.9.2)*
+
+Your framing of overlap prevention and incremental processing checkpoints prompted us to audit `handle_archive()` for retry safety. Cloud Scheduler retries on 5xx or timeout — if both the original and retry run reach the Sheets read before either finishes, BigQuery gets duplicate rows. We had no guard against this.
+
+The fix: at the top of `handle_archive()`, check for any row with `agent_id == "nexus-prime"` AND `level == "ARCHIVE"` AND timestamp within the last 4 hours. If found, log a WARNING and return immediately. The idempotency key was already being written — we just weren't checking it at entry. Two new tests cover the skip and normal-flow paths. Suite reached 511.
+
+*Scheduled job version control (§7.4)*
+
+Your recommendation to manage scheduler configurations in version control matched a real gap: `infra/main.tf` had zero `google_cloud_scheduler_job` resources. The two jobs existed only in the GCP console — a new project deployment would have no scheduled jobs at all.
+
+We added `scripts/provision_schedulers.py` — idempotent, reads project config from `settings.yaml`, resolves the Cloud Run URL dynamically, and creates or patches the two jobs using `googleapiclient`. Run once per project after `terraform apply`.
+
+**What we skipped**
+
+Adaptive scheduling (§7.7) and circuit breaker patterns (§7.5.2) don't map to our setup. Cloud Scheduler is the scheduler, and making schedules adaptive would need an external controller layer out of scope at this stage.
+
+---
+
+## Chapter 8 — Autonomous Systems Design
+*Implemented: 2026-03-27*
+
+This chapter covers self-healing, goal-oriented behavior, multi-agent coordination, and safety layers. Four ideas translated directly to shipped code — the highest yield of any chapter in the review.
+
+**Our starting point**
+
+GAOS already operates in the §8.2 Conditional Autonomy sense: seven agents run independently, escalate to a human only through the Approval Gate and Google Chat, and run entirely on GCP without operator intervention during normal flow. What we lacked was formal lifecycle state tracking, protection against state corruption in long-running flows, circuit protection on failing dependencies, and a general-purpose output quality check.
+
+**What we shipped**
+
+*Phoenix checkpoint and recovery (§8.11)*
+
+Long-running orchestration flows have a real failure mode: an unhandled exception can leave the LangGraph state dict internally inconsistent, and without recovery the state machine re-enters with corrupt values. We implemented `tools/phoenix.py` with four functions:
+
+- `validate_state()` — checks required fields are non-empty and serialized state is under 512 KB
+- `save_checkpoint()` — serializes to JSON, computes SHA-256, streams to BigQuery (best-effort)
+- `load_checkpoint()` — queries the last 5 checkpoints, hash-verifies each, returns the first valid one
+- `phoenix_recover()` — validates current state; if corrupted, restores from last known-good checkpoint
+
+The hash-on-load check is deliberate: `aos_logs.agent_checkpoints` is technically human-editable via the GCP console. A tampered checkpoint would deploy corrupt state into the next execution. The SHA-256 pin closes that.
+
+*Formal lifecycle state machine (§8.23)*
+
+Agents had informal lifecycle states but no typed values or structured logging. We added `AgentState` (a `str` enum) with nine canonical states:
+
+```
+INIT → PLANNING → EXECUTION → OBSERVATION → HEALING → SYNTHESIS → COMPLETED
+                                          ↘ ESCALATION
+                                                      ↘ IDLE
+```
+
+`log_state_transition()` fires a structured log entry with both states in the payload, making the full OODA loop auditable in Cloud Logging and filterable in Grafana.
+
+*Circuit breaker (§8.3.3)*
+
+Agents calling external tools had no protection against soft-failing dependencies — a dead endpoint with a 10-second timeout burns the entire Cloud Run request budget. We implemented `tools/circuit_breaker.py`:
+
+- Three states: CLOSED (normal), OPEN (tripped), HALF_OPEN (probe after cooldown)
+- Default: 3 consecutive failures, 300-second cooldown
+- Per-instance in-memory state (intentional — Cloud Run agents are single-process)
+- HALF_OPEN allows exactly one probe call before deciding to reopen or close
+
+*Output coherence check (§8.3.1)*
+
+We had `_validate_proposal_coherence()` for code proposals but nothing for general output quality. `validate_output_coherence()` uses Ollama (offline, no cost, no data egress) to score output against the task goal and returns `{"passed": bool, "confidence": float, "reason": str}`. If Ollama is unavailable, it passes with `confidence=0.5` — the main path is never blocked.
+
+**What we skipped**
+
+- *Tree-of-Thoughts (§8.12.1):* Latency and token cost are too high for our reactive event loop.
+- *Cross-model verification (§8.20.1):* The Approval Gate already requires a human reviewer — model consensus on top adds cost without incremental safety.
+- *Stigmergic task queues (§8.16.3):* Requires a shared filesystem we don't have in Cloud Run.
+- *Ghost/stealth patterns (§8.24):* Not in scope; all calls use authenticated GCP APIs.
+- *Red-Team Guardian (§8.16.2):* A scheduled agent that attempts to bypass `validate_code_safety()` via prompt injection — sound for Phase 4.
+
+**Result:** 558 tests passing (up from 511). New test files: `tests/test_circuit_breaker.py` (22 tests) and `tests/test_phoenix.py` (25 tests).
