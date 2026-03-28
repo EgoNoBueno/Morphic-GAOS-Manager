@@ -22,6 +22,8 @@ Chapters 1, 9, and 10 were not reviewed in this cycle.
 | 13 | The Tooling Ecosystem | No new code — canonical patterns already implemented |
 | 14 | Education and Community | No new code — community governance; not applicable to single-operator system |
 
+*Chapters 11–14 are summary-only entries — outcomes were logged during the review but full narrative sections were not written in this cycle.*
+
 ---
 
 ## Chapter 2 — The OpenClaw Ecosystem
@@ -69,7 +71,7 @@ This chapter walks through six concrete skill implementations and uses them to i
 GAOS maps to most of these patterns, even though we built them independently:
 
 - Domain-locking (seven agents, each with a narrow non-overlapping scope) is the **Micro-Skill Architecture** applied at the agent level.
-- The `validate_code_safety()` AST gate plus SHA-256 pinning is **Guardrail-First Safety** applied to code execution.
+- The `validate_code_safety()` AST gate plus SHA-256 pinning of code proposals — catching any post-approval spreadsheet edits before deploy — is **Guardrail-First Safety** applied to code execution (the same hash-verification pattern extends to agent state checkpoints in Chapter 8).
 - Secret Manager plus `settings.yaml` model aliases is **Environment-First Configuration**.
 - Pub/Sub as the sole inter-agent channel, mediated by Nexus-Prime, is the **Gateway-Mediated Multi-Agent Pattern**.
 - `gaos_doctor.py`'s BigQuery staleness query is a lightweight version of your health-check skill.
@@ -113,7 +115,7 @@ The **Continuity** section was the closest match. Your agents declare memory man
 
 Adding a runtime-injected Soul.md per agent would mean wiring the identity file into every `_call_model()` call across seven orchestrators. That's a broad surface area change with unclear upside: an LLM can "forget" a system prompt under context pressure; an AST gate cannot be persuaded.
 
-The one pattern worth carrying forward is the **layered Soul.md concept** (§4.6.2) — a shared corporate-soul with per-agent overlays. That maps to a `global identity + domain identity` structure we could formalize without changing runtime behavior. Tagged for Phase 4.
+The one pattern worth carrying forward is the **layered Soul.md concept** (§4.6.2) — a shared corporate-soul with per-agent overlays. That maps to a `global identity + domain identity` structure we could formalize without changing runtime behavior. Deferred — queued as future work once the system reaches production stability.
 
 **Result:** No new code. The chapter gave us useful vocabulary for our identity architecture and a clear articulation of why we chose structural over declarative enforcement.
 
@@ -211,7 +213,7 @@ The fix: at the top of `handle_archive()`, check for any row with `agent_id == "
 
 Your recommendation to manage scheduler configurations in version control matched a real gap: `infra/main.tf` had zero `google_cloud_scheduler_job` resources. The two jobs existed only in the GCP console — a new project deployment would have no scheduled jobs at all.
 
-We added `scripts/provision_schedulers.py` — idempotent, reads project config from `settings.yaml`, resolves the Cloud Run URL dynamically, and creates or patches the two jobs using `googleapiclient`. Run once per project after `terraform apply`.
+We added `scripts/provision_schedulers.py` — idempotent, reads project config from `settings.yaml`, resolves the Cloud Run URL dynamically, and creates or patches the two jobs using `googleapiclient`; run it once per project after `terraform apply` to close the gap that `infra/main.tf` leaves (it has no `google_cloud_scheduler_job` resources).
 
 **What we skipped**
 
@@ -250,6 +252,19 @@ INIT → PLANNING → EXECUTION → OBSERVATION → HEALING → SYNTHESIS → CO
                                           ↘ ESCALATION
                                                       ↘ IDLE
 ```
+
+Valid transitions (design intent — not enforced in code; `log_state_transition()` is a logging helper, not a guard):
+
+- `INIT → PLANNING` — agent startup
+- `PLANNING → EXECUTION` — plan formed
+- `EXECUTION → OBSERVATION` — task step complete
+- `OBSERVATION → HEALING` — error detected; self-correction attempted
+- `OBSERVATION → ESCALATION` — unrecoverable; human review required
+- `OBSERVATION → SYNTHESIS` — outcome acceptable; proceed to summarize
+- `HEALING → SYNTHESIS` — recovery succeeded
+- `SYNTHESIS → COMPLETED` — task done
+- `ESCALATION → IDLE` — waiting for human response
+- `COMPLETED → IDLE` — post-completion standby
 
 `log_state_transition()` fires a structured log entry with both states in the payload, making the full OODA loop auditable in Cloud Logging and filterable in Grafana.
 

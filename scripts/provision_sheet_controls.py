@@ -198,7 +198,7 @@ def provision_missing_tabs(sh: gspread.Spreadsheet) -> None:
         ws = sh.worksheet(tab)
         current = ws.row_values(1)
         if not current:
-            ws.update("A1", [headers])
+            ws.update([[h for h in headers]], "A1")  # type: ignore[call-arg]
             print(f"  + wrote headers to: {tab}")
         else:
             status = "exists" if tab in existing else "created"
@@ -258,11 +258,11 @@ def main() -> None:
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(str(_CLIENT_FILE), SCOPES)
-            creds = flow.run_local_server(port=0)
+            creds = flow.run_local_server(port=0)  # type: ignore[assignment]
         _TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _TOKEN_FILE.write_text(creds.to_json())
+        _TOKEN_FILE.write_text(creds.to_json())  # type: ignore[union-attr]
 
-    gc = gspread.Client(auth=creds)
+    gc = gspread.Client(auth=creds)  # type: ignore[arg-type]
     sh = gc.open_by_key(wid)
     print(f"Opened: {sh.title}  ({wid})\n")
 
