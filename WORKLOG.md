@@ -5,6 +5,43 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-28T21:30-03:00 — Phase 5 Grafana live sync — complete
+
+### What was done
+
+Implemented the full Grafana live sync plan (Phase 5, Steps 8.1–8.7) — Sheets → BQ
+staging pipeline that gives Grafana near-real-time operational data (≤5 min delay).
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `scripts/create_staging_tables.py` | NEW — idempotent DDL for 4 staging tables |
+| `tools/bigquery.py` | Added `replace_rows()` — DELETE WHERE TRUE + streaming insert |
+| `agents/nexus_prime/orchestrator.py` | Added `handle_sheets_sync()` + `_SYNC_TABS` + `_normalize_header()` |
+| `main.py` | Added `POST /sheets-sync` endpoint; updated module docstring |
+| `scripts/provision_schedulers.py` | Added `gaos-sheets-sync` job (`*/5 * * * *`) |
+| `dashboard/grafana/dashboards/ceo-overview.json` | Added 5 live panels (IDs 10–14); updated description |
+| `tests/test_sheets_sync.py` | NEW — 9 tests (SS1–SS5 handle, E1–E4 endpoint) |
+
+### Tests added
+
+- `TestHandleSheetsSync` — SS1 happy path, SS2 tab error non-fatal, SS3 BQ error non-fatal,
+  SS4 empty rows, SS5 header normalization
+- `TestSheetsSyncEndpoint` — E1 200 nexus-prime, E2 404 wrong agent, E3 401 no auth,
+  E4 response body keys
+
+Full suite: **580 passed, 0 failures** (was 571 before this session).
+
+### Next
+
+1. Run `python scripts/create_staging_tables.py` to create the 4 staging tables in BQ
+2. Redeploy nexus-prime Cloud Run service to pick up `/sheets-sync`
+3. Run `python scripts/provision_schedulers.py` to register the `gaos-sheets-sync` job
+4. Open Grafana → confirm 5 new panels populate within 5 minutes of first scheduler run
+
+---
+
 ## 2026-03-28T20:00-03:00 — Sheet UX improvements — complete
 
 ### What was done

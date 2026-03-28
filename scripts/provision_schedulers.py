@@ -52,6 +52,12 @@ JOBS: list[dict] = [
         "path": "/daily-sync",
         "description": "Morning briefing Chat card (Nexus-Prime §2.5)",
     },
+    {
+        "id": "gaos-sheets-sync",
+        "schedule": "*/5 * * * *",
+        "path": "/sheets-sync",
+        "description": "Near-real-time Sheet → BQ staging sync for Grafana (every 5 min)",
+    },
 ]
 
 SCOPES = [

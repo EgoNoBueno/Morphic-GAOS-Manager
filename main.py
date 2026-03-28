@@ -10,6 +10,7 @@ Endpoints:
   POST /sync          Apps Script → promote approved skill (Nexus-Prime only)
   POST /archive       Cloud Scheduler nightly archive sweep (Nexus-Prime only)
   POST /daily-sync    Cloud Scheduler 6 AM morning briefing (Nexus-Prime only)
+  POST /sheets-sync   Cloud Scheduler 5-min Sheets → BigQuery staging sync (Nexus-Prime only)
   POST /chat          Google Chat push events — text messages and card callbacks
   POST /vision        Owner vision submission → Blueprint Doc generator (Nexus-Prime only)
   POST /poll-comments Cloud Scheduler 5-min doc-comment poll (Nexus-Prime only)
@@ -565,6 +566,40 @@ async def daily_sync(request: Request) -> JSONResponse:
         )
     except Exception as exc:
         log.exception("Daily sync failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return JSONResponse(content={"status": "ok", **result})
+
+
+@app.post("/sheets-sync")
+async def sheets_sync(request: Request) -> JSONResponse:
+    """
+    Near-real-time Sheets → BigQuery staging sync for Grafana (every 5 min).
+    Reads Agent_Approvals, Logs, Error Logs, and Pending_Knowledge and performs
+    a full-replace into the four aos_logs.staging_* tables.
+    Nexus-Prime only.
+
+    Spec: GAOS-Manager-Spec.md §9.6 (Phase 5 Step 8)
+    """
+    _verify_pubsub_audience(request)
+
+    if _AGENT_NAME != "nexus-prime":
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{_AGENT_NAME}' does not support /sheets-sync.",
+        )
+
+    from agents.nexus_prime.orchestrator import handle_sheets_sync
+
+    project_id = _get_project_id()
+    try:
+        result = await handle_sheets_sync(project_id)
+        log.info(
+            "Sheets sync complete: %s",
+            {k: v for k, v in result.items() if k not in ("synced_at", "task_id")},
+        )
+    except Exception as exc:
+        log.exception("Sheets sync failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return JSONResponse(content={"status": "ok", **result})

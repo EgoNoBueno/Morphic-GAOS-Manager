@@ -1,5 +1,5 @@
 {
-  "description": "GAOS CEO overview — agent health, approval queue, evolution activity, cost, and throughput.",
+  "description": "GAOS CEO overview — agent health, approval queue, evolution activity, cost, throughput, and live staging panels (5-min refresh from Sheets).",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -329,6 +329,223 @@
       ],
       "title": "Evolution Tasks by Agent (Last 30 Days)",
       "type": "barchart"
+    },
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "auto", "displayMode": "auto", "inspect": false },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "Pending":        { "color": "yellow", "index": 0 },
+                "Approved":       { "color": "green",  "index": 1 },
+                "Rejected":       { "color": "red",    "index": 2 },
+                "Deployed":       { "color": "blue",   "index": 3 },
+                "Needs Revision": { "color": "orange", "index": 4 }
+              }
+            }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "id" },
+            "properties": [{ "id": "custom.width", "value": 80 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "agent_id" },
+            "properties": [{ "id": "custom.width", "value": 120 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "status" },
+            "properties": [
+              { "id": "custom.displayMode", "value": "color-background" },
+              { "id": "custom.width", "value": 130 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "timestamp" },
+            "properties": [{ "id": "custom.width", "value": 180 }]
+          }
+        ]
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 22 },
+      "id": 10,
+      "options": { "footer": { "enablePagination": false, "show": false }, "showHeader": true },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT id, agent_id, status, issue, trigger_reason, stopping_constraint, iterations_run, timestamp\nFROM `morphic-gaos-prod.aos_logs.staging_approvals`\nORDER BY timestamp DESC\nLIMIT 100",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Live Approval Queue (≤5 min delay)",
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 3 },
+              { "color": "red",    "value": 10 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 32 },
+      "id": 11,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS pending_count\nFROM `morphic-gaos-prod.aos_logs.staging_approvals`\nWHERE LOWER(COALESCE(status, '')) IN ('pending', '')",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Pending Approvals (live)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red",    "value": 20 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 32 },
+      "id": 12,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS pending_count\nFROM `morphic-gaos-prod.aos_logs.staging_pending_knowledge`\nWHERE LOWER(COALESCE(status, '')) IN ('pending', '')",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Pending Knowledge (live)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "auto", "displayMode": "auto", "inspect": false },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "timestamp" },
+            "properties": [{ "id": "custom.width", "value": 180 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "agent_id" },
+            "properties": [{ "id": "custom.width", "value": 120 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "level" },
+            "properties": [{ "id": "custom.width", "value": 80 }]
+          }
+        ]
+      },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 37 },
+      "id": 13,
+      "options": { "footer": { "enablePagination": false, "show": false }, "showHeader": true },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT timestamp, agent_id, level, message\nFROM `morphic-gaos-prod.aos_logs.staging_logs`\nORDER BY timestamp DESC\nLIMIT 50",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Live Log Feed — last 50 (≤5 min delay)",
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "auto", "displayMode": "auto", "inspect": false },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "timestamp" },
+            "properties": [{ "id": "custom.width", "value": 180 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "agent_id" },
+            "properties": [{ "id": "custom.width", "value": 120 }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "error_type" },
+            "properties": [{ "id": "custom.width", "value": 150 }]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 47 },
+      "id": 14,
+      "options": { "footer": { "enablePagination": false, "show": false }, "showHeader": true },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT timestamp, agent_id, error_type, message\nFROM `morphic-gaos-prod.aos_logs.staging_errors`\nORDER BY timestamp DESC\nLIMIT 20",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Live Error Feed — last 20 (≤5 min delay)",
+      "type": "table"
     }
   ],
   "refresh": "30s",

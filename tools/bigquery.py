@@ -142,6 +142,52 @@ def insert_rows(
         raise BigQueryInsertError(f"BigQuery batch insert into '{full_ref}' failed: {exc}") from exc
 
 
+def replace_rows(
+    table_ref: str,
+    rows: list[dict[str, Any]],
+    project_id: str = "",
+) -> None:
+    """Full-replace the contents of a BigQuery table via DELETE + streaming INSERT.
+
+    Issues a DML ``DELETE FROM … WHERE TRUE`` to clear the table, then streams
+    all rows via :func:`insert_rows`. If *rows* is empty the table is truncated
+    and the function returns immediately without inserting.
+
+    This is intentionally a two-step operation rather than a LOAD job or MERGE
+    to keep the implementation simple and avoid the 1,000 LOAD-jobs/table/day
+    quota. The empty window between DELETE and INSERT is < 1 second, which is
+    acceptable for a 5-minute refresh cycle.
+
+    Args:
+        table_ref:  Unqualified ``dataset.table`` or fully qualified
+                    ``project.dataset.table``.
+        rows:       List of row dicts keyed by column name. Values must be
+                    JSON-serialisable.
+        project_id: Unused (present for API symmetry with other tools). The GCP
+                    project is always read from settings.GCP_PROJECT_ID.
+
+    Raises:
+        BigQueryInsertError: The DELETE DML query failed.
+        BigQueryRowError:    One or more rows were rejected during streaming
+                             insert.
+    """
+    settings = get_settings()
+    gcp_project = settings.GCP_PROJECT_ID
+    full_ref = _full_table_ref(table_ref, gcp_project)
+
+    client = _get_client(gcp_project)
+
+    try:
+        client.query(f"DELETE FROM `{full_ref}` WHERE TRUE").result()
+    except Exception as exc:
+        raise BigQueryInsertError(f"replace_rows: DELETE from '{full_ref}' failed: {exc}") from exc
+
+    if not rows:
+        return
+
+    insert_rows(table_ref, rows, project_id=project_id)
+
+
 def query_rows(
     sql: str,
     project_id: str = "",

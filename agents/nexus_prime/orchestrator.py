@@ -2443,6 +2443,106 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
     }
 
 
+# ── handle_sheets_sync ────────────────────────────────────────────────────────
+
+#: Sheet tabs and their corresponding BigQuery staging tables.
+_SYNC_TABS: list[tuple[str, str]] = [
+    ("Agent_Approvals", "aos_logs.staging_approvals"),
+    ("Logs", "aos_logs.staging_logs"),
+    ("Error Logs", "aos_logs.staging_errors"),
+    ("Pending_Knowledge", "aos_logs.staging_pending_knowledge"),
+]
+
+
+def _normalize_header(header: str) -> str:
+    """Normalize a Sheet header to a valid BigQuery column name.
+
+    Rules: strip whitespace → lowercase → spaces to ``_`` → ``/`` to ``_``.
+
+    Args:
+        header: Raw Sheet column header string (e.g. ``"Approved By"``).
+
+    Returns:
+        Normalized column name safe for BigQuery (e.g. ``"approved_by"``).
+    """
+    return header.strip().lower().replace(" ", "_").replace("/", "_")
+
+
+async def handle_sheets_sync(project_id: str) -> dict[str, Any]:
+    """Sync 4 operational Sheet tabs to BigQuery staging tables for Grafana.
+
+    Called by ``POST /sheets-sync`` (Cloud Scheduler, every 5 minutes).
+    Not a graph node — runs outside the LangGraph state machine.
+
+    Each tab is read in full, headers are normalized to valid BQ column names,
+    a ``synced_at`` timestamp is injected, and the staging table is fully
+    replaced via ``replace_rows()`` (DELETE WHERE TRUE + streaming insert).
+
+    Tab failures are non-fatal: a WARNING is logged and the remaining tabs
+    continue. The returned dict will include an ``"error"`` key for any tab
+    that failed.
+
+    Spec: GAOS-Manager-Spec.md §9.6 (Phase 5 Step 8)
+
+    Args:
+        project_id: Active GAOS project ID — passed through to all tool calls.
+
+    Returns:
+        Dict with one key per staging table mapped to row count (int), or
+        ``{"error": str}`` for failed tabs. Also includes ``"synced_at"``
+        (ISO timestamp) and ``"task_id"`` (UUID).
+    """
+    from datetime import UTC, datetime
+
+    from tools.bigquery import replace_rows
+    from tools.google_sheets import get_all_records, init_sheets_client
+
+    task_id = str(uuid.uuid4())
+    synced_at = datetime.now(UTC).isoformat()
+
+    init_sheets_client(project_id)
+
+    result: dict[str, Any] = {}
+
+    for tab_name, staging_table in _SYNC_TABS:
+        try:
+            raw_rows: list[dict] = get_all_records(tab_name, project_id)
+
+            normalized: list[dict[str, Any]] = []
+            for row in raw_rows:
+                normalized_row = {_normalize_header(k): v for k, v in row.items()}
+                normalized_row["synced_at"] = synced_at
+                normalized.append(normalized_row)
+
+            replace_rows(staging_table, normalized, project_id)
+
+            table_key = staging_table.split(".")[-1]
+            result[table_key] = len(normalized)
+
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"sheets-sync: {tab_name} → {staging_table} ({len(normalized)} rows)",
+            )
+        except Exception as exc:
+            table_key = staging_table.split(".")[-1]
+            result[table_key] = {"error": str(exc)}
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"sheets-sync: {tab_name} failed — {exc}",
+                "WARNING",
+            )
+
+    result["synced_at"] = synced_at
+    result["task_id"] = task_id
+    return result
+
+
 def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     """
     Handle a SKILL_REQUEST message — two sub-cases based on payload content.
