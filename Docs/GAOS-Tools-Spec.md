@@ -1050,7 +1050,7 @@ chat:
 
 ### Usage Rule
 
-Only Nexus-Prime calls `send_approval_card()` or `send_skill_import_card()`. Domain orchestrators may not post Chat messages directly.
+Only Nexus-Prime calls `send_approval_card()`, `send_skill_import_card()`, or `send_infra_proposal_card()`. Domain orchestrators may not post Chat messages directly.
 
 ---
 
@@ -1689,3 +1689,145 @@ See `GAOS-Deploy-Spec.md §7` for the `agent_checkpoints` table creation script.
 | `state_json` | STRING | Serialized dict — never executed |
 | `checkpoint_hash` | STRING | SHA-256 of `state_json` |
 | `is_valid` | BOOL | Always `True` on write; hash mismatch rows skipped at load |
+
+---
+
+## 21. `tools/infra_provision.py`
+
+Infrastructure drift detection, controlled apply, health verification, and scoped rollback for the three GCP resource types managed outside OpenTofu by Morphic-GAOS: **Cloud Scheduler jobs**, **BigQuery staging tables**, and **Secret Manager secret slots**. Added in Phase 4 alongside the `POST /infra-provision` endpoint and `send_infra_proposal_card()`.
+
+> **Spec reference:** `GAOS-Deploy-Spec.md §20 (Infrastructure Provisioner)`
+
+### Desired State Registry
+
+Three module-level constants define the single source of truth for every managed resource. Import from here — never duplicate the lists elsewhere.
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `DESIRED_SCHEDULER_JOBS` | `list[dict]` | Cloud Scheduler job defs: `id`, `schedule`, `path`, `description` |
+| `DESIRED_BQ_TABLES` | `list[str]` | Staging table names in `aos_logs` dataset |
+| `DESIRED_SECRETS` | `list[str]` | Secret Manager secret IDs that must exist |
+| `BQ_DATASET` | `str` | Dataset name constant — `"aos_logs"` |
+
+### Data Model
+
+```python
+class ChangeKind(StrEnum):
+    CREATE = "CREATE"
+    UPDATE = "UPDATE"
+    NO_CHANGE = "NO_CHANGE"
+
+class ResourceType(StrEnum):
+    SCHEDULER_JOB = "SCHEDULER_JOB"
+    BQ_TABLE = "BQ_TABLE"
+    SECRET = "SECRET"
+
+@dataclass
+class ChangeEntry:
+    """Single resource diff result. Serializes to/from JSON for Agent_Approvals."""
+    resource_type: ResourceType
+    resource_id: str
+    kind: ChangeKind
+    desired: dict[str, Any]
+    actual: dict[str, Any]
+    irreversible: bool         # True for BQ_TABLE creates — tables are never auto-dropped
+    human_description: str     # Plain-language label shown in the Chat approval card
+
+@dataclass
+class InfraManifest:
+    """Full diff manifest produced by build_manifest(). Serialises to JSON for storage."""
+    proposal_id: str
+    project_id: str
+    region: str
+    nexus_url: str
+    sa_email: str
+    changes: list[ChangeEntry]
+    # Computed properties: .actionable (filters NO_CHANGE), .has_changes, .has_irreversible
+
+@dataclass
+class ApplyResult:
+    """Outcome of apply_manifest()."""
+    applied: list[str]
+    failed: list[str]
+    applied_entries: list[ChangeEntry]   # Scoped input for rollback_manifest()
+    # Computed property: .success = not bool(failed)
+```
+
+### Public API
+
+```python
+def build_manifest(
+    project_id: str,
+    region: str,
+    nexus_url: str,
+    sa_email: str,
+    scheduler_client: Any | None = None,
+    bq_client: Any | None = None,
+    sm_client: Any | None = None,
+) -> InfraManifest:
+    """
+    Diff desired vs actual GCP state across all three resource types.
+
+    Returns InfraManifest with ALL entries including NO_CHANGE so the Chat
+    card can accurately say "N changes, M already up to date".
+    GCP clients are auto-created via ADC if not provided.
+    """
+
+def apply_manifest(
+    manifest: InfraManifest,
+    scheduler_client: Any | None = None,
+    bq_client: Any | None = None,
+    sm_client: Any | None = None,
+) -> ApplyResult:
+    """
+    Apply actionable changes in safe dependency order:
+    secrets → BQ tables → scheduler jobs.
+    Each resource is independent — one failure does not abort the rest.
+    """
+
+def rollback_manifest(
+    manifest: InfraManifest,
+    apply_result: ApplyResult,
+    scheduler_client: Any | None = None,
+    sm_client: Any | None = None,
+) -> list[str]:
+    """
+    Attempt to undo changes recorded in apply_result.applied_entries.
+    Hard rules: BQ tables are NEVER dropped; secrets with existing
+    versions are NOT deleted; scheduler jobs are deleted (CREATE)
+    or re-patched to their previous schedule (UPDATE).
+    Returns list of human-readable outcome strings.
+    """
+
+def run_health_checks(
+    manifest: InfraManifest,
+    scheduler_client: Any | None = None,
+    bq_client: Any | None = None,
+) -> tuple[bool, list[str]]:
+    """
+    Verify all changed resources exist after apply_manifest().
+    Skips NO_CHANGE entries — checks only modified resource types.
+    Returns (all_passed: bool, notes: list[str]).
+    """
+```
+
+### Workflow Integration
+
+Called from two entry points — never directly from an orchestrator event loop:
+
+| Entry Point | Phase | Actions |
+|-------------|-------|---------|
+| `scripts/provision_infra.py` (CLI, local or CI) | PLAN | `build_manifest()` → write `Agent_Approvals` row → `send_infra_proposal_card()` |
+| `handle_infra_provision()` in nexus_prime | APPLY | Read manifest JSON from approval row → `apply_manifest()` → `run_health_checks()` → rollback + result card on failure |
+
+### Apply Order Rationale
+
+Secrets are created first (additive, no data risk). BQ tables use `CREATE TABLE IF NOT EXISTS` DDL (idempotent). Scheduler jobs are upserted last so their OIDC targets (Nexus URL) and BigQuery dependencies exist before the jobs can run.
+
+### Rollback Hard Rule
+
+BigQuery tables created during apply are **never** auto-dropped — data may already be written. `rollback_manifest()` emits a `ROLLBACK SKIPPED` line with a manual `bq rm` command for the operator.
+
+### Test Coverage
+
+`tests/test_infra_provision.py` — covers: `build_manifest` (all NO_CHANGE, partial CREATE, multi-kind), `apply_manifest` (happy path, partial failure), `rollback_manifest` (scheduler CREATE rollback, scheduler UPDATE rollback, BQ skip, secret with versions skip), `run_health_checks` (pass, fail, mixed).

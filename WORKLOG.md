@@ -5,6 +5,82 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-28T23:45-03:00 — UTF-8 standardisation + doc catch-up — complete
+
+### What was done
+
+Enforced UTF-8 project-wide following a CP1252 `UnicodeEncodeError` in
+`scripts/provision_sheet_controls.py`. Added `sys.stdout.reconfigure(encoding='utf-8')`
+guard, `encoding='utf-8'` to all `open()` calls in scripts, `PYTHONUTF8=1` to
+pytest config, and `pytest-env` as a dev dependency. Updated all missing spec docs
+and WORKLOG entries for InfraProvisioner and this session (Rule 12/13 catch-up).
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `scripts/provision_sheet_controls.py` | `sys.stdout.reconfigure(encoding='utf-8')` guard; `open()` encoding fixed |
+| `scripts/_create_corpora.py` | `encoding='utf-8'` on both `open()` calls |
+| `scripts/_seed_knowledge_files.py` | `encoding='utf-8'` on `open()` |
+| `scripts/_seed_knowledge.py` | `encoding='utf-8'` on `open()` |
+| `scripts/_sync_e2e_test.py` | `encoding='utf-8'` on `open()` |
+| `scripts/setup_apps_script.py` | `encoding='utf-8'` on all 6 `open()` calls |
+| `scripts/smoke_test_4.py` | `encoding='utf-8'` on `open()` |
+| `scripts/smoke_test_6_7.py` | `encoding='utf-8'` on `open()` |
+| `pyproject.toml` | `pytest-env>=1.1.0` dev dep; `env = ["PYTHONUTF8=1"]` in pytest config |
+| `Docs/GAOS-Deploy-Spec.md` | §20 InfraProvisioner, UTF-8 note in §15 Windows warning |
+| `Docs/GAOS-Tools-Spec.md` | §21 `tools/infra_provision.py`; `send_infra_proposal_card()` in §10 |
+| `Docs/GAOS-Manager-Spec.md` | `POST /infra-provision` endpoint in endpoint table |
+| `Docs/GAOS-Nexus-Prime-Spec.md` | §9 endpoint table + `handle_infra_plan`/`handle_infra_provision` nodes |
+
+### Tests
+
+597 passing — no regressions.
+
+### What's next
+
+- End-to-end test: run `scripts/provision_infra.py --project morphic-gaos-prod --space <space>` against a live GCP project to validate the full PLAN→APPROVE→APPLY chain.
+- Phase 4 exit: Chat-path Approval Gate end-to-end validation (§18 unchecked item).
+
+---
+
+## 2026-03-28T22:15-03:00 — InfraProvisioner: PLAN→APPROVE→APPLY→HEALTHCHECK→ROLLBACK — complete
+
+### What was done
+
+Built a complete infrastructure self-provisioning system. The owner never runs
+`gcloud` commands for routine provisioning. Instead: a CLI triggers a diff, a Chat
+card presents the plan in plain English, the owner taps Approve, Nexus-Prime applies
+the changes, runs health checks, and rolls back automatically if anything fails.
+
+### Files changed
+
+| File | Change |
+|---|---|
+| `tools/infra_provision.py` | NEW — diff/apply/rollback/health-check engine; single source of truth for desired state |
+| `scripts/provision_infra.py` | NEW — CLI entry point (plan phase + OIDC POST to nexus-prime) |
+| `tests/test_infra_provision.py` | NEW — 20 tests (IP1–IP14, diff helpers) |
+| `models/__init__.py` | Added `INFRA_PROVISION_APPROVED`, `INFRA_PROVISION_REJECTED` MessageType values |
+| `tools/google_chat.py` | Added `send_infra_proposal_card()` — plain-language card with Approve/Reject buttons |
+| `main.py` | CARD_CLICKED handler for `infra_approve`/`infra_reject`; `POST /infra-provision` endpoint |
+| `agents/nexus_prime/orchestrator.py` | `handle_infra_plan()`, `handle_infra_provision()`, `_infra_provision_node`; graph wired |
+
+### Tests added
+
+- `TestBuildManifest` — IP1 CREATE diff, IP2 no-op
+- `TestApplyManifest` — IP3 partial failure, IP4 full success
+- `TestRollbackManifest` — IP5 BQ never dropped, IP6 empty secret deleted, IP6b versioned secret skipped, IP7 created scheduler deleted, IP8 updated scheduler restored
+- `TestRunHealthChecks` — IP9 scheduler passes, IP10 scheduler missing fails, IP11 BQ passes, IP12 BQ missing fails, no-op skips
+- `TestSerialization` — IP13 InfraManifest round-trip, IP14 ChangeEntry round-trip
+- `TestDiffHelpers` — 4 diff helper unit tests
+
+### What's next
+
+- UTF-8 standardisation (next entry above).
+- End-to-end live test of provision_infra.py CLI.
+
+---
+
 ## 2026-03-28T21:30-03:00 — Phase 5 Grafana live sync — complete
 
 ### What was done

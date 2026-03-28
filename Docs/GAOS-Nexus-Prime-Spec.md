@@ -93,7 +93,7 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
 
 ### 3.1 Node Inventory
 
-Nexus-Prime's `StateGraph` has 16 nodes. The router node determines which branch to execute based on message type.
+Nexus-Prime's `StateGraph` has 19 nodes. The router node determines which branch to execute based on message type. Added since original design: `market_watchdog`, `roi_optimizer` (Phase 3 reactive routing), `handle_infra_provision` (Phase 4 InfraProvisioner).
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -1075,6 +1075,22 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
 
 ---
 
+#### `handle_infra_provision`
+
+*(Phase 4)* LangGraph node adapter for the APPLY phase of the [InfraProvisioner workflow](GAOS-Deploy-Spec.md#20-infrastructure-provisioner). Triggered by `INFRA_PROVISION_APPROVED` or `INFRA_PROVISION_REJECTED` messages published from the `/chat` CARD_CLICKED handler when the owner taps **Approve** or **Reject** on the infra proposal card.
+
+**On APPROVED:** Reads the `InfraManifest` JSON from `Agent_Approvals.proposed_code` for the matching `proposal_id`. Calls `apply_manifest()` (secrets → BQ tables → Scheduler jobs in safe order). Runs `run_health_checks()` — if any check fails, calls `rollback_manifest()` and sends a failure result card to the owner's Chat space. On full success, sends a plain-language success card listing every applied change.
+
+**On REJECTED:** Marks the proposal row status as `Rejected` and sends a brief rejection acknowledgement card.
+
+**Imports used:** `tools.infra_provision.{apply_manifest, rollback_manifest, run_health_checks, InfraManifest}`, `tools.google_chat.send_infra_proposal_card`.
+
+**No LLM call.** Pure imperative apply node.
+
+> ⚠️ **Partial failure is non-fatal.** `apply_manifest()` processes each resource independently. A failed secret creation does not block BQ table creation. The node sends a result card listing both applied and failed items and only triggers rollback when `run_health_checks()` reports a failure.
+
+---
+
 ### 3.3 Graph Assembly
 
 ```python
@@ -1101,6 +1117,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_node("handle_skill_request", handle_skill_request)
     graph.add_node("market_watchdog",      market_watchdog)   # Phase 3
     graph.add_node("roi_optimizer",        roi_optimizer)     # Phase 3
+    graph.add_node("handle_infra_provision", _infra_provision_node)  # Phase 4
 
     graph.set_entry_point("boot")
     graph.add_edge("boot", "monitor")
@@ -1124,6 +1141,7 @@ def build_nexus_prime_graph() -> Any:
             "handle_skill_request": "handle_skill_request",
             "market_watchdog":      "market_watchdog",    # Phase 3
             "roi_optimizer":        "roi_optimizer",      # Phase 3
+            "handle_infra_provision": "handle_infra_provision",  # Phase 4
         },
     )
 
@@ -1151,6 +1169,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_edge("handle_skill_request", "record")
     graph.add_edge("market_watchdog",       "record")   # Phase 3
     graph.add_edge("roi_optimizer",         "record")   # Phase 3
+    graph.add_edge("handle_infra_provision", "record")  # Phase 4
     graph.add_edge("record",               END)
 
     return graph.compile(checkpointer=MemorySaver())
@@ -1353,6 +1372,7 @@ Nexus-Prime exposes these HTTP endpoints as a Cloud Run service:
 | `/chat` | POST | `parse_chat_event` + graph | Google Chat push events (direct messages + mentions) |
 | `/vision` | POST | graph via `agent.run()` | Owner vision submission → Blueprint Doc creation |
 | `/poll-comments` | POST | `handle_poll_comments` | Cloud Scheduler 5-min doc-comment poll |
+| `/infra-provision` | POST | `handle_infra_plan` | CLI-triggered infra diff — builds manifest, writes `Agent_Approvals` row, sends Chat proposal card |
 | `/health` | GET | `handle_health` | Returns 200 if the service is running |
 
 All endpoints except `/health` require authentication via OIDC token (Cloud Run service-to-service auth). The `/pubsub` endpoint additionally validates the Pub/Sub push token.

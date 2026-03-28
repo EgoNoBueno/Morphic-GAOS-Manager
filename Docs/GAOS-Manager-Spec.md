@@ -1641,6 +1641,7 @@ Inserted between Phase 2 and Phase 3. All items below must be deployed and verif
 | 5 | AppSheet Vision Hub + `VISION_SUBMITTED` handler + `doc-comment-poll` Scheduler job | `tests/test_vision_workflow.py` | ✅ Complete (`doc-comment-poll` ⏳ wire in GCP) |
 | 6 | Scout `_discover` recursive node + `tools/google_search.py` + `KNOWLEDGE_INJECTION` | `tools/google_search.py`, `tests/test_scout_discover.py` | ✅ Complete |
 | 7 | `ITERATE_PLAN` constraint compaction node + `SKILL_REQUEST` approval flow | — | — |
+| 8 | `POST /infra-provision` endpoint + `tools/infra_provision.py` + `send_infra_proposal_card()` + `handle_infra_provision` graph node — full PLAN→APPROVE→APPLY→HEALTHCHECK→ROLLBACK workflow | `tools/infra_provision.py`, `tests/test_infra_provision.py`, `scripts/provision_infra.py` | ✅ Complete |
 
 #### Phase 2.5 Exit Criteria
 

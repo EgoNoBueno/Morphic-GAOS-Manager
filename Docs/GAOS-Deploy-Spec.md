@@ -1649,7 +1649,14 @@ Phase 2 is complete — and Phase 3 (multi-agent orchestration) may begin — wh
 
 > ⚠️ **Warning — OLLAMA_HOST secret has trailing `\r\n`:** `get_secret('OLLAMA_HOST', ...)` returns `'http://localhost:11434\r\n'`. Fixed in `agents/__init__.py` with `.strip().rstrip("/")` on the host value. If symptoms reappear (httpx raises `Invalid non-printable ASCII character in URL, '\r'`), verify the fix is in place or update the secret via `echo -n 'http://localhost:11434' | gcloud secrets versions add OLLAMA_HOST --data-file=- --project=...`.
 
-> ⚠️ **Warning — Windows charmap blocks Unicode in model responses:** On Windows, `sys.stdout` defaults to cp1252. If a model response contains non-ASCII characters (e.g. `→`, `—`), any `print()` of that text raises `UnicodeEncodeError`. Fix: add `sys.stdout.reconfigure(encoding='utf-8')` at script startup (after the `sys` import). All scripts that print model output must include this.
+> ⚠️ **Warning — Windows charmap blocks Unicode in model responses:** On Windows, `sys.stdout` defaults to cp1252. If a model response contains non-ASCII characters (e.g. `→`, `—`), any `print()` of that text raises `UnicodeEncodeError`. Fix: add the following guard at script startup (after the `sys` import). All scripts that print model output or Unicode symbols must include this.
+>
+> ```python
+> if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+>     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+> ```
+>
+> Additionally, all `open()` calls in scripts must pass `encoding="utf-8"` explicitly. The pytest suite injects `PYTHONUTF8=1` automatically via `pyproject.toml` (`pytest-env` plugin). For interactive terminal sessions add `$env:PYTHONUTF8 = "1"` to your PowerShell profile.
 
 ---
 
@@ -1854,6 +1861,56 @@ See `scripts/bootstrap.py` docstring for full prerequisites and arg reference.
 
 - **Gap 5 (pre-built image):** Publish `gaos-agent:latest` to a public or
   customer-accessible registry in the CI/CD apply job. Depends on Gap 1 (done).
+
+---
+
+## 20. Infrastructure Provisioner
+
+**Purpose:** Self-service GCP resource provisioning for Cloud Scheduler jobs, BigQuery
+staging tables, and Secret Manager secrets — without the owner ever running `gcloud`.
+
+**Workflow:**
+```
+CLI (plan)  →  Chat card (Approve/Reject)  →  Nexus-Prime (apply)
+              ↓                                      ↓
+         ApprovalProposal row               health check → rollback if failed
+         in Agent_Approvals                  → result Chat card
+```
+
+**Entry points:**
+- `scripts/provision_infra.py` — CLI plan phase. Run locally or from CI.
+- `POST /infra-provision` on nexus-prime — triggers `handle_infra_plan()`.
+- CARD_CLICKED `infra_approve`/`infra_reject` → `handle_infra_provision()` graph node.
+
+**Core module:** `tools/infra_provision.py`
+
+| Export | Purpose |
+|--------|--------|
+| `DESIRED_SCHEDULER_JOBS` | Authoritative list of Cloud Scheduler jobs |
+| `DESIRED_BQ_TABLES` | Authoritative list of BigQuery staging tables |
+| `DESIRED_SECRETS` | Authoritative list of Secret Manager secrets |
+| `build_manifest()` | Diff desired vs actual GCP state → `InfraManifest` |
+| `apply_manifest()` | Apply actionable entries in safe order (secrets → BQ → scheduler) |
+| `rollback_manifest()` | Undo applied entries; BQ tables are **never** dropped |
+| `run_health_checks()` | Targeted checks on changed resources only |
+
+**Manifest storage:** `InfraManifest.to_json()` is stored in `ApprovalProposal.proposed_code`
+in the `Agent_Approvals` sheet — no new GCP resources required.
+
+**Safe apply order:** secrets (additive) → BQ tables (`CREATE TABLE IF NOT EXISTS`) → schedulers (upsert).
+
+**Rollback hard rules:**
+- BigQuery tables: **never dropped**. Notes include a manual `bq rm` command.
+- Secrets: only deleted if zero versions exist.
+- Scheduler CREATE → delete; Scheduler UPDATE → re-patch to prior schedule from `ChangeEntry.actual`.
+
+**To trigger a plan:**
+```powershell
+.venv\Scripts\python.exe scripts\provision_infra.py --project morphic-gaos-prod --space spaces/<id>
+# --dry-run prints diff without sending card
+```
+
+> ⚠️ **Warning — manifest stored in proposed_code column:** `handle_infra_provision()` reads the manifest JSON from `ApprovalProposal.proposed_code` (column H of `Agent_Approvals`). If that cell is manually edited after the card is sent, the SHA-256 hash will mismatch and the apply will be rejected. Never edit the JSON in that column directly.
 
 ---
 
