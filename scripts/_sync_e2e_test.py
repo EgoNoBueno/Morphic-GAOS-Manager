@@ -59,7 +59,7 @@ _TEST_SHA256 = hashlib.sha256(_TEST_CODE.encode()).hexdigest()
 
 
 def load_settings() -> dict:
-    with open(SETTINGS_PATH) as f:
+    with open(SETTINGS_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 

@@ -162,7 +162,7 @@ _STATUS_COL_INDEX = 8
 def _get_workbook_id() -> str:
     """Read sheet.workbook_id from config/settings.yaml."""
     cfg_path = Path(__file__).parent.parent / "config" / "settings.yaml"
-    with cfg_path.open() as fh:
+    with cfg_path.open(encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
     wid: str = cfg.get("sheet", {}).get("workbook_id", "")
     if not wid:
@@ -192,7 +192,7 @@ def provision_missing_tabs(sh: gspread.Spreadsheet) -> None:
         if not headers:
             # Display-only tab — no programmatic writes expected.
             status = "exists" if tab in existing else "created"
-            print(f"  [ok] {status} (display-only, no headers): {tab}")
+            print(f"  \u2713 {status} (display-only, no headers): {tab}")
             continue
 
         ws = sh.worksheet(tab)
@@ -202,7 +202,7 @@ def provision_missing_tabs(sh: gspread.Spreadsheet) -> None:
             print(f"  + wrote headers to: {tab}")
         else:
             status = "exists" if tab in existing else "created"
-            print(f"  [ok] {status} with headers: {tab}")
+            print(f"  \u2713 {status} with headers: {tab}")
 
 
 # ── Step 2 — Agent_Approvals Status dropdown ───────────────────────────────────
@@ -266,10 +266,10 @@ def main() -> None:
     sh = gc.open_by_key(wid)
     print(f"Opened: {sh.title}  ({wid})\n")
 
-    print("Step 1 - Provisioning missing tabs...")
+    print("Step 1 \u2014 Provisioning missing tabs...")
     provision_missing_tabs(sh)
 
-    print("\nStep 2 - Adding Status dropdown to Agent_Approvals Column I...")
+    print("\nStep 2 \u2014 Adding Status dropdown to Agent_Approvals Column I...")
     add_status_dropdown(sh)
 
     print("\nDone.")

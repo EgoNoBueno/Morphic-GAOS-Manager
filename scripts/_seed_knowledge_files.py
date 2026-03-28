@@ -101,7 +101,7 @@ def file_exists(svc, name: str, parent_id: str) -> bool:
 
 
 def main() -> None:
-    with open("config/settings.yaml") as _f:
+    with open("config/settings.yaml", encoding="utf-8") as _f:
         settings = yaml.safe_load(_f)
     knowledge_folder_id = settings["projects"]["default"]["drive_folder_id"]
 

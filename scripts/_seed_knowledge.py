@@ -278,7 +278,7 @@ def file_exists(drive, parent_id: str, name: str) -> bool:
 
 
 def main() -> None:
-    with open(SETTINGS_PATH) as f:
+    with open(SETTINGS_PATH, encoding="utf-8") as f:
         settings = yaml.safe_load(f)
 
     knowledge_folder_id = settings["projects"]["default"]["drive_folder_id"]

@@ -60,7 +60,7 @@ SETTINGS_PATH = _REPO_ROOT / "config" / "settings.yaml"
 
 
 def _load_project_id() -> str:
-    with open(SETTINGS_PATH) as f:
+    with open(SETTINGS_PATH, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
     project_id = (cfg.get("gcp") or {}).get("project_id")
     if not project_id:

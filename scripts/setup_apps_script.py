@@ -87,7 +87,7 @@ SCOPES = [
 def load_settings() -> dict:
     if not SETTINGS_PATH.exists():
         sys.exit("config/settings.yaml not found — run setup_workspace.py first")
-    with open(SETTINGS_PATH) as f:
+    with open(SETTINGS_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -109,7 +109,7 @@ def enable_api(api: str) -> None:
 
 def get_script_id_for_spreadsheet(script_service, spreadsheet_id: str) -> str | None:
     """Return the script ID stored in settings.yaml from a prior run, if valid."""
-    with open(SETTINGS_PATH) as f:
+    with open(SETTINGS_PATH, encoding="utf-8") as f:
         settings = yaml.safe_load(f)
     script_id = settings.get("apps_script", {}).get("script_id")
     if not script_id:
@@ -264,10 +264,10 @@ def store_secret(name: str, value: str) -> None:
 
 def save_script_id(script_id: str) -> None:
     """Persist the script ID to settings.yaml for --post-auth phase."""
-    with open(SETTINGS_PATH) as f:
+    with open(SETTINGS_PATH, encoding="utf-8") as f:
         settings = yaml.safe_load(f)
     settings.setdefault("apps_script", {})["script_id"] = script_id
-    with open(SETTINGS_PATH, "w") as f:
+    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
         yaml.dump(settings, f, default_flow_style=False, allow_unicode=True)
 
 
@@ -316,7 +316,7 @@ def phase1() -> None:
             store_secret("WEBHOOK_URL", web_app_url)
             settings["apps_script"]["webhook_url"] = web_app_url
             settings["apps_script"]["deployment_id"] = deployment_id
-            with open(SETTINGS_PATH, "w") as f:
+            with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
                 yaml.dump(settings, f, default_flow_style=False, allow_unicode=True)
         else:
             print("  ⚠  Web App URL not returned — script may need browser consent first")
@@ -465,10 +465,10 @@ def phase2() -> None:
     print("Discovering Chat DM owner space...")
     owner_space = discover_chat_dm_space(creds)
     if owner_space:
-        with open(SETTINGS_PATH) as f:
+        with open(SETTINGS_PATH, encoding="utf-8") as f:
             settings_live = yaml.safe_load(f)
         settings_live.setdefault("chat", {})["owner_space"] = owner_space
-        with open(SETTINGS_PATH, "w") as f:
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
             yaml.dump(settings_live, f, default_flow_style=False, allow_unicode=True)
         print(f"  chat.owner_space → {owner_space} ✅")
     else:

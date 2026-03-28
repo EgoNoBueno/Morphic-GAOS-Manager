@@ -24,11 +24,11 @@ for domain in domains:
         print(f"  {domain}: ERROR — {e}")
 
 # Update settings.yaml
-with open(SETTINGS) as f:
+with open(SETTINGS, encoding="utf-8") as f:
     settings = yaml.safe_load(f)
 
 settings.setdefault("memory_bank", {})["corpora"] = results
-with open(SETTINGS, "w") as f:
+with open(SETTINGS, "w", encoding="utf-8") as f:
     yaml.dump(settings, f, default_flow_style=False, allow_unicode=True)
 
 print("\nsettings.yaml updated with corpus resource names.")

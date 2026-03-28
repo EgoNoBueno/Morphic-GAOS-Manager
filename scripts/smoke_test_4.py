@@ -40,7 +40,7 @@ POLL_TIMEOUT = 60  # seconds total wait
 
 
 def load_workbook_id() -> str:
-    with open(SETTINGS_PATH) as f:
+    with open(SETTINGS_PATH, encoding="utf-8") as f:
         return yaml.safe_load(f)["sheet"]["workbook_id"]
 
 
