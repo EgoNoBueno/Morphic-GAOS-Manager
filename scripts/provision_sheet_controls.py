@@ -25,6 +25,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+# Ensure Unicode symbols (✓, —) render correctly in any Windows terminal.
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
 import gspread
 import yaml
 from google.auth.transport.requests import Request
