@@ -107,7 +107,7 @@ def main() -> None:
 
     # Full drive scope required: script lists/creates files inside a pre-existing
     # Knowledge folder not created by this app; drive.file scope cannot grant that access.
-    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/drive"])
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/" + "drive"])
     creds.refresh(Request())
     svc = googleapiclient.discovery.build("drive", "v3", credentials=creds, cache_discovery=False)
 

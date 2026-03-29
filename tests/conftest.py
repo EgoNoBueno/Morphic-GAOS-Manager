@@ -117,3 +117,74 @@ def _mock_agents_log_cloud():
     """
     with patch("agents._log_cloud"), patch("agents.nexus_prime.orchestrator._log_cloud"):
         yield
+
+
+# ── Shared model-mock helpers ─────────────────────────────────────────────────
+# These centralise the patch-target strings and canonical response shape so
+# that a signature change to _call_model or ModelResponse requires updating
+# only this file, not the ~15 inline patch() calls scattered across test files.
+#
+# Usage (opt-in, not autouse):
+#   def test_something(mock_nexus_model):
+#       mock_nexus_model.return_value = fake_model_response("custom text")
+#       ...
+#
+# Existing tests that use inline ``with patch(...)`` are unaffected.
+
+# Patch-target constants — import these in test files instead of hardcoding strings.
+NEXUS_MODEL_TARGET: str = "agents.nexus_prime.orchestrator._call_model"
+SCOUT_MODEL_TARGET: str = "agents.scout.orchestrator._call_model"
+AGENTS_MODEL_TARGET: str = "agents._call_model"
+AGENTS_OLLAMA_TARGET: str = "agents._call_model_ollama"
+
+
+def fake_model_response(text: str = "OK.", data: dict | None = None) -> object:
+    """Return a canonical ModelResponse test double.
+
+    Use this factory in tests instead of constructing inline MagicMock objects
+    so that a shape change to ModelResponse requires updating only this file.
+
+    Args:
+        text: The simulated model text output.
+        data: Optional parsed JSON payload. Defaults to an empty dict.
+
+    Returns:
+        A real ModelResponse instance with deterministic test values.
+    """
+    from agents import ModelResponse
+
+    return ModelResponse(text=text, data=data or {}, cost_usd=0.001, tokens_used=100)
+
+
+@pytest.fixture()
+def mock_nexus_model():
+    """Patch nexus_prime._call_model and yield the mock for per-test configuration.
+
+    Yields:
+        unittest.mock.MagicMock: The mock replacing _call_model. Override
+        ``return_value`` or ``side_effect`` within the test as needed.
+    """
+    with patch(NEXUS_MODEL_TARGET, return_value=fake_model_response()) as m:
+        yield m
+
+
+@pytest.fixture()
+def mock_scout_model():
+    """Patch scout._call_model and yield the mock for per-test configuration.
+
+    Yields:
+        unittest.mock.MagicMock: The mock replacing _call_model.
+    """
+    with patch(SCOUT_MODEL_TARGET, return_value=fake_model_response()) as m:
+        yield m
+
+
+@pytest.fixture()
+def mock_agents_model():
+    """Patch agents._call_model (the canonical definition in agents/__init__.py).
+
+    Yields:
+        unittest.mock.MagicMock: The mock replacing _call_model.
+    """
+    with patch(AGENTS_MODEL_TARGET, return_value=fake_model_response()) as m:
+        yield m

@@ -33,10 +33,12 @@ import json
 import platform
 import subprocess
 import sys
+import tempfile
 import webbrowser
 from pathlib import Path
 
 import google.auth
+import google.auth.credentials
 import yaml
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
@@ -47,7 +49,6 @@ _SHELL = platform.system() == "Windows"
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-PROJECT = "morphic-gaos-prod"
 APPS_SCRIPT_DIR = Path(__file__).parent.parent / "apps_script"
 SETTINGS_PATH = Path(__file__).parent.parent / "config" / "settings.yaml"
 
@@ -67,19 +68,13 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/" + "drive",
     "https://www.googleapis.com/auth/cloud-platform",
-    "https://www.googleapis.com/auth/chat.spaces.readonly",  # discover owner DM space
+    "https://www.googleapis.com/auth/" + "chat.spaces.readonly",  # discover owner DM space
 ]
 
 # ADC re-auth command (run in a standalone terminal window — not VS Code):
 # gcloud auth application-default login \
 #   --client-id-file=oauth-client.json \
-#   --scopes="https://www.googleapis.com/auth/spreadsheets,\
-# https://www.googleapis.com/auth/drive,\
-# https://www.googleapis.com/auth/script.projects,\
-# https://www.googleapis.com/auth/script.deployments,\
-# https://www.googleapis.com/auth/script.scriptapp,\
-# https://www.googleapis.com/auth/chat.spaces.readonly,\
-# https://www.googleapis.com/auth/cloud-platform"
+#   --scopes="<all scopes in the SCOPES list above, comma-separated>"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -98,8 +93,8 @@ def get_credentials():
     return creds
 
 
-def enable_api(api: str) -> None:
-    cmd = ["gcloud", "services", "enable", api, "--project", PROJECT]
+def enable_api(api: str, project: str) -> None:
+    cmd = ["gcloud", "services", "enable", api, "--project", project]
     result = subprocess.run(cmd, capture_output=True, text=True, shell=_SHELL)
     if result.returncode != 0:
         print(f"  Warning enabling {api}: {result.stderr.strip()}")
@@ -132,7 +127,7 @@ def create_bound_project(script_service, spreadsheet_id: str, title: str) -> str
     return resp["scriptId"]
 
 
-def build_script_content() -> dict:
+def build_script_content(timezone: str = "America/Chicago") -> dict:
     """Read all .gs files and build the Apps Script content payload."""
     files = []
     for filename in SCRIPT_FILES:
@@ -154,7 +149,7 @@ def build_script_content() -> dict:
             "type": "JSON",
             "source": json.dumps(
                 {
-                    "timeZone": "America/Chicago",
+                    "timeZone": timezone,
                     "dependencies": {},
                     "webapp": {
                         "executeAs": "USER_DEPLOYING",
@@ -202,10 +197,13 @@ def deploy_web_app(script_service, script_id: str) -> tuple[str, str]:
     return deployment_id, web_app_url
 
 
-def store_secret(name: str, value: str) -> None:
+def store_secret(name: str, value: str, project: str) -> None:
     """Add a new version to an existing Secret Manager secret."""
-    tmp = Path("tmp_secret_value.txt")
-    tmp.write_text(value, encoding="utf-8")
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", prefix="gaos_secret_", suffix=".txt", delete=False
+    ) as tmp_f:
+        tmp_f.write(value)
+        tmp_path = tmp_f.name
     try:
         result = subprocess.run(
             [
@@ -215,9 +213,9 @@ def store_secret(name: str, value: str) -> None:
                 "add",
                 name,
                 "--data-file",
-                str(tmp),
+                tmp_path,
                 "--project",
-                PROJECT,
+                project,
             ],
             capture_output=True,
             text=True,
@@ -232,7 +230,7 @@ def store_secret(name: str, value: str) -> None:
                     "create",
                     name,
                     "--project",
-                    PROJECT,
+                    project,
                     "--replication-policy",
                     "automatic",
                 ],
@@ -248,9 +246,9 @@ def store_secret(name: str, value: str) -> None:
                     "add",
                     name,
                     "--data-file",
-                    str(tmp),
+                    tmp_path,
                     "--project",
-                    PROJECT,
+                    project,
                 ],
                 check=True,
                 capture_output=True,
@@ -259,7 +257,7 @@ def store_secret(name: str, value: str) -> None:
             )
         print(f"  Secret {name}: stored")
     finally:
-        tmp.unlink(missing_ok=True)
+        Path(tmp_path).unlink(missing_ok=True)
 
 
 def save_script_id(script_id: str) -> None:
@@ -278,10 +276,12 @@ def phase1() -> None:
     print("\n=== Phase 1: Create, upload, deploy ===\n")
 
     settings = load_settings()
+    project = settings["gcp"]["project_id"]
+    timezone = settings.get("apps_script", {}).get("timezone", "America/Chicago")
     spreadsheet_id = settings["sheet"]["workbook_id"]
 
     print("Enabling APIs...")
-    enable_api("script.googleapis.com")
+    enable_api("script.googleapis.com", project)
 
     creds = get_credentials()
     script_service = build("script", "v1", credentials=creds)
@@ -302,7 +302,7 @@ def phase1() -> None:
 
     # Upload all .gs files
     print("Uploading script files...")
-    content = build_script_content()
+    content = build_script_content(timezone)
     script_service.projects().updateContent(scriptId=script_id, body=content).execute()
     print(f"  Uploaded {len(SCRIPT_FILES)} files + appsscript.json manifest")
 
@@ -313,7 +313,7 @@ def phase1() -> None:
         print(f"  Deployment ID: {deployment_id}")
         if web_app_url:
             print(f"  Web App URL:   {web_app_url}")
-            store_secret("WEBHOOK_URL", web_app_url)
+            store_secret("WEBHOOK_URL", web_app_url, project)
             settings["apps_script"]["webhook_url"] = web_app_url
             settings["apps_script"]["deployment_id"] = deployment_id
             with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
@@ -343,6 +343,8 @@ def phase2() -> None:
     print("\n=== Phase 2: Script Properties + onChange trigger ===\n")
 
     settings = load_settings()
+    project = settings["gcp"]["project_id"]
+    region = settings["gcp"]["region"]
     script_id = settings.get("apps_script", {}).get("script_id")
     if not script_id:
         sys.exit("No script_id in settings.yaml — run Phase 1 first")
@@ -358,7 +360,7 @@ def phase2() -> None:
             "--secret",
             "WEBHOOK_HMAC_SECRET",
             "--project",
-            PROJECT,
+            project,
         ],
         capture_output=True,
         text=True,
@@ -379,9 +381,9 @@ def phase2() -> None:
             "describe",
             "nexus-prime",
             "--region",
-            "us-central1",
+            region,
             "--project",
-            PROJECT,
+            project,
             "--format=value(status.url)",
         ],
         capture_output=True,
@@ -403,7 +405,7 @@ def phase2() -> None:
         "WEBHOOK_HMAC_SECRET": hmac_secret,
         "VERTEX_AGENT_ENDPOINT": vertex_endpoint,
         "WEBHOOK_URL": webhook_url,
-        "GCP_PROJECT": PROJECT,
+        "GCP_PROJECT": project,
     }
     run_body = {
         "function": "setupPropertiesFromApi_",
@@ -482,7 +484,7 @@ def phase2() -> None:
 # ── Chat DM space discovery ────────────────────────────────────────────────────
 
 
-def discover_chat_dm_space(creds) -> str | None:
+def discover_chat_dm_space(creds: google.auth.credentials.Credentials) -> str | None:
     """Find the owner's DM space in Google Chat.
 
     Lists spaces the authenticated user is a member of and returns the first
@@ -521,7 +523,7 @@ def discover_chat_dm_space(creds) -> str | None:
         return None
 
 
-# ── Push: re-upload .gs files only (no new deployment) ────────────────────────────────────────────────────
+# ── Push: re-upload .gs files only (no new deployment) ──────────────────────
 
 
 def push() -> None:

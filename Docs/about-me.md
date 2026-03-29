@@ -1,67 +1,24 @@
 # About Me — Owner Context for AI Agents
 
-> **NOTE TO USER:** This is a template file. Modify the sections below to accurately reflect your specific business niche, current priorities, and unique value proposition. AI agents in this system read this file as standing orders — the more specific you make it, the better the outputs.
 
 ---
+I am a software architect and solo CEO in Digital Marketing and Digital Product Sales, building production-grade AI-automated business workflows on Google Cloud to scale and operate my business. My work is characterized by:
 
-## 👤 Professional Identity & Role
+**Structural enforcement over declaration.** I make incorrect behavior impossible rather than asking systems to behave correctly. Security, cost, and quality constraints are enforced in code — not in prompts, comments, or conventions that can be ignored.
 
-- **Industry:** Digital Marketing & Growth Orchestration
-- **Core Role:** Strategic partner focused on scaling digital presence and optimizing conversion ecosystems
-- **Areas of Expertise:** Lead generation, content strategy, performance marketing, and marketing automation
+**Automation is the preference.** If a task can be scripted, it should be. Manual steps are brittle, slow, and don't scale — they become recurring debt. The default response to any repeatable task is a working implementation, not an instruction.
 
----
+**Human judgment as a reserved, not rationed, resource.** I design automation to handle the fast path completely and surface the consequential decisions cleanly. I don't automate around human review — I engineer the escalation path so humans can act with full context and minimum friction.
 
-## 🎯 Core Mission & Philosophy
+**Institutional memory as a first-class output.** Every session closes with documentation that matches reality. Specs describe what is built. Lessons are captured where they will be found, not where they were learned.
 
-Our North Star is delivering massive, measurable value to customers. We do not chase vanity metrics or fluff.
+**Cost as an engineering invariant, not an afterthought.** I model unit economics before writing features, enforce model tier discipline through tests, and bound resource growth structurally.
 
-- **High-Quality Output:** Every deliverable must meet a premium standard of excellence — no filler, no fluff.
-- **Pain Point Resolution:** We build products and services that solve specific, acute problems for our target audience.
-- **Customer-Centricity:** Every marketing decision starts with the end-user's needs and psychological triggers, not internal assumptions.
+**Proportionate governance.** I scale the process to delivery pace and team size. When scaffolding exceeds its utility, I cut it.
 
----
+**Scope discipline.** I declare features complete when they are complete. I resist phase expansion. A system that works in production at reduced scope is worth more than a larger system that hasn't shipped.
 
-## 🚀 High-Level Priorities
+**Friction elimination.** I resolve structural mismatches at the source. Workarounds are temporary and documented as debt, not promoted to permanent patterns.
 
-1. **Strategic Value** — Identify and double down on the 20% of marketing activities that drive 80% of results.
-2. **Product Excellence** — Refine "pain point solving" products until they are the best-in-class solution for the niche.
-3. **Sustainable Growth** — Build long-term brand authority rather than relying on short-term hacks.
+**Honest assessment.** I state what didn't work, what was skipped, and why — in the same document as what shipped.
 
----
-
-## 📈 Common Business Goals
-
-| Goal | Description |
-|------|-------------|
-| **Lead Generation** | Scale the volume and quality of inbound prospects |
-| **Conversion Optimization** | Improve $ROI$ of existing traffic through rigorous testing and psychological alignment |
-| **Retention** | Maximize customer lifetime value (LTV) through exceptional post-purchase value delivery |
-| **Authority Building** | Establish a dominant voice in the Digital Marketing space through thought leadership |
-
----
-
-## 🛠️ Success Metrics (KPIs)
-
-| Category | Metrics |
-|----------|---------|
-| **Efficiency** | Cost Per Acquisition (CPA), Return on Ad Spend (ROAS) |
-| **Impact** | Net Promoter Score (NPS), Customer Satisfaction (CSAT) |
-| **Growth** | Monthly Recurring Revenue (MRR), Year-over-Year (YoY) growth |
-
----
-
-## 🤖 Instructions for AI Agents
-
-This file is your **standing orders**. Before starting any task, draft, or project in this workspace:
-
-1. Read this file to understand the owner's high-level business philosophy.
-2. Filter all suggestions through: *"Does this solve a specific pain point?"* and *"Does this provide measurable value?"*
-3. Match tone and strategy to a professional Digital Marketing expert who values quality over quantity.
-4. If a requested task contradicts the priorities listed here, flag the inconsistency and ask for clarification before proceeding.
-
-### Why This File Exists
-
-`about-me.md` is the strategic compass for AI-assisted work in this workspace. Instead of re-explaining business context in every prompt, agents pull this file automatically.
-
-It ensures that when an agent executes autonomous tasks — drafting a sales sequence, scoring a lead, proposing a campaign budget — it does so with an understanding of the business's *why*, not just the *what*. This leads to outputs that are relevant, professional, and aligned with long-term goals rather than one-off requests.

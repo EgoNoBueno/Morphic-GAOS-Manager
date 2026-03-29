@@ -210,7 +210,7 @@ Cost outcome: one extra Flash call (~$0.001) per compaction event; every Bluepri
 - *Dynamic complexity routing (§9.4.2):* Model selection is currently node-level (each LangGraph node has a fixed tier assignment). Per-request complexity classification is a noted gap; it's the "priority-to-model routing in `think()`" item in the Chapter 12 pending list.
 - *Budget hard cap + circuit breaker (§9.9.2):* The `cost_usd` field exists but there's no enforced ceiling that halts execution. This is the "budget ceiling guard" item in the Chapter 12 pending list. The circuit breaker pattern from Chapter 8 runs on task failure count, not dollar amount.
 
-**Result:** 42 new tests covering `iterate_plan` (3 tests) and `_run_compaction` (3 tests). The compaction node eliminated unbounded prompt growth on active Blueprints with no quality trade-off.
+**Result:** 42 tests passing in the session; 3 new tests cover `iterate_plan` and 3 cover `_run_compaction` (in `tests/test_vision_workflow.py`). The compaction node eliminated unbounded prompt growth on active Blueprints with no quality trade-off.
 
 ---
 

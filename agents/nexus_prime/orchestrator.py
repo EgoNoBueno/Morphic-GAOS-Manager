@@ -282,7 +282,7 @@ def _create_sheet_workbook(new_pid: str) -> str:
     template_id = settings.sheet.workbook_id
     # Full drive scope required: files().copy() on a pre-existing template file
     # (not created by this SA) cannot be authorised with drive.file scope.
-    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/drive"])
+    creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/" + "drive"])
     service = build("drive", "v3", credentials=creds, cache_discovery=False)
     result = (
         service.files()

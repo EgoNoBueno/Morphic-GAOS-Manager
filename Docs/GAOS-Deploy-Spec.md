@@ -1897,6 +1897,8 @@ CLI (plan)  →  Chat card (Approve/Reject)  →  Nexus-Prime (apply)
 **Manifest storage:** `InfraManifest.to_json()` is stored in `ApprovalProposal.proposed_code`
 in the `Agent_Approvals` sheet — no new GCP resources required.
 
+> ⚠️ **Warning — manifest stored in proposed_code column:** `handle_infra_provision()` reads the manifest JSON from `ApprovalProposal.proposed_code` (column H of `Agent_Approvals`). If that cell is manually edited after the card is sent, the SHA-256 hash will mismatch and the apply will be rejected. Never edit the JSON in that column directly.
+
 **Safe apply order:** secrets (additive) → BQ tables (`CREATE TABLE IF NOT EXISTS`) → schedulers (upsert).
 
 **Rollback hard rules:**
@@ -1909,8 +1911,6 @@ in the `Agent_Approvals` sheet — no new GCP resources required.
 .venv\Scripts\python.exe scripts\provision_infra.py --project morphic-gaos-prod --space spaces/<id>
 # --dry-run prints diff without sending card
 ```
-
-> ⚠️ **Warning — manifest stored in proposed_code column:** `handle_infra_provision()` reads the manifest JSON from `ApprovalProposal.proposed_code` (column H of `Agent_Approvals`). If that cell is manually edited after the card is sent, the SHA-256 hash will mismatch and the apply will be rejected. Never edit the JSON in that column directly.
 
 ---
 
