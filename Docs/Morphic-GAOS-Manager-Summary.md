@@ -28,7 +28,7 @@ The system is designed to run at **minimal operating cost** by routing routine w
 
 6. **Layered Memory** — Scratchpad → BigQuery (episodic) → Sheets staging buffer → Vertex AI Memory Bank (long-term). Agents propose learnings; Nexus-Prime promotes them to permanent memory only after owner approval.
 
-**Current State (Phases 1–4 complete, Phase 5 complete):** All 7 orchestrators, the full tool layer (14 modules including `google_chat.py`, `vertex_search.py`, `google_docs.py`, and `google_search.py`), and a **496-test suite** are built and passing. Phases 1 through 4 are complete: all 7 Cloud Run services are deployed, the Approval Gate Chat-path E2E is validated (5 live approval proposals delivered via Google Chat), and the `think` node, vision hub, full approval loop, and two Phase 3 reactive routing nodes (`market_watchdog`, `roi_optimizer`) are live. Phase 4 is exiting — cost/security verification and the GAOS-Doctor checklist are the remaining tasks. Phase 5 — Grafana CEO dashboard — is complete: Grafana live on Cloud Run. Vertex Agent Engine remains future scope.
+**Current State (Phases 1–4 complete, Phase 5 complete):** All 7 orchestrators, the full tool layer (18 modules including `google_chat.py`, `vertex_search.py`, `google_docs.py`, `google_search.py`, `memory_mirror.py`, `circuit_breaker.py`, `phoenix.py`, and `infra_provision.py`), and a **600-test suite** are built and passing. Phases 1 through 4 are complete: all 7 Cloud Run services are deployed, the Approval Gate Chat-path E2E is validated (5 live approval proposals delivered via Google Chat), and the `think` node, vision hub, full approval loop, and two Phase 3 reactive routing nodes (`market_watchdog`, `roi_optimizer`) are live. Phase 4 is exiting — cost/security verification and the GAOS-Doctor checklist are the remaining tasks. Phase 5 — Grafana CEO dashboard — is complete: Grafana live on Cloud Run. Vertex Agent Engine remains future scope.
 
 ---
 
@@ -58,7 +58,7 @@ Think of Morphic-G AOS like a well-run office with a clear chain of command.
 
 *The authoritative source for how the entire system is designed, why every decision was made, and what the full implementation looks like.*
 
-This is the largest document (over 1,690 lines). It defines the system from top to bottom. Every other spec file links back to it.
+This is the second-largest document (~1,455 lines; `GAOS-Deploy-Spec.md` at ~1,563 lines is now the longest). It defines the system from top to bottom. Every other spec file links back to it.
 
 #### Agent Hierarchy
 **What it is:** A three-tier structure — Nexus-Prime at the top, six domain orchestrators in the middle, unlimited task agents at the bottom.
@@ -122,7 +122,7 @@ This is the largest document (over 1,690 lines). It defines the system from top 
 
 #### Development Roadmap (5 Phases)
 **What it is:** A phased build plan. **Phase 1 is complete** — all 7 orchestrators, the `main.py` Cloud Run entry point, the core tool layer (`bigquery`, `webhook_sender`, `memory`, `project_registry`, `google_sheets`, `pubsub`, `secrets`), and a baseline test suite covering U1–U5 unit specs and S1–S4 static analysis gate.
-**Phase 2.5 Steps 1–6 are complete (496 tests passing after Phase 3–4 additions):**
+**Phase 2.5 Steps 1–6 are complete (600 tests passing after Phase 3–4 additions):**
 - Step 1: `tools/google_chat.py` + `POST /chat` (25 tests; commit `551f0ca`)
 - Step 2: `handle_daily_sync()` + `POST /daily-sync` + `ChatConfig` (13 tests; commit `ed6140b`)
 - Step 3: `tools/vertex_search.py` + Playbook schema + `write_playbook` node (22 tests; commit `d0f05b1`)
@@ -211,7 +211,7 @@ While the master spec defines what the system does, this document defines how ea
 
 *The API reference for every shared function agents are allowed to call. No agent touches a Google SDK directly — it goes through these wrappers.*
 
-This document defines the public interface for fourteen tool modules. The design enforces consistent `project_id` scoping, batching, and error handling across the whole system.
+This document defines the public interface for eighteen tool modules. The design enforces consistent `project_id` scoping, batching, and error handling across the whole system.
 
 #### `tools/secrets.py`
 **What it does:** Fetches secrets from Google Secret Manager by name. The only module allowed to touch Secret Manager directly.
@@ -283,6 +283,28 @@ This document defines the public interface for fourteen tool modules. The design
 **Added:** Phase 2.5 Step 6.
 **Key constraint:** Free tier is 100 queries/day; `max_queries_per_mandate` (default 15) caps each mandate at 15% of the daily quota.
 **Resources required:** Google Custom Search API, `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_CX` in Secret Manager.
+
+#### `tools/memory_mirror.py`
+**What it does:** Bidirectional sync between the Vertex AI Memory Bank and the Knowledge Atlas Google Doc. `sync_to_atlas()` reads all active Memory Bank entries for an agent, formats them as structured Markdown, and appends (or overwrites) the relevant section in the Atlas Doc so the human owner has a single readable document of everything agents know.
+**Why it exists:** The Memory Bank is a vector store — human-readable only via API queries. The Atlas Doc gives the owner full visibility into long-term agent memory without requiring them to query Vertex AI.
+**Added:** Phase 2.5 (memory transparency layer).
+**Resources required:** `tools/memory.py`, `tools/google_docs.py`, Vertex AI Memory Bank, Google Docs API.
+
+#### `tools/circuit_breaker.py`
+**What it does:** Per-agent circuit breaker for LLM and external tool calls. Tracks consecutive failures; after the configured threshold (`open_threshold`, default 5), the circuit opens and calls fail fast (raising `CircuitOpenError`) until the reset timeout elapses. Wraps any callable via `CircuitBreaker.call(fn, *args)` or the `@circuit_breaker` decorator.
+**Why it exists:** Without a circuit breaker, a flapping Vertex AI endpoint or Ollama process causes every agent call to time out, burning quota and blocking the event loop. The circuit breaker converts repeated failures into fast rejections and allows orderly fallback.
+**Resources required:** Pure Python (no GCP dependency).
+
+#### `tools/phoenix.py`
+**What it does:** LangGraph state checkpoint save and load with crash recovery. `save_checkpoint(agent_id, project_id, state)` serializes and SHA-256-hashes the agent's full LangGraph state dict to Cloud Storage. `load_checkpoint()` retrieves and validates the hash before returning state. `phoenix_recover()` wraps a boot sequence — if a valid checkpoint exists, the agent resumes mid-graph rather than restarting from the beginning.
+**Why it exists:** Cloud Run instances are ephemeral. Without persisted checkpoints, a container restart during a multi-step evolution loop or a parked approval task loses all in-progress state. Phoenix gives agents crash recovery without any external database.
+**Resources required:** Google Cloud Storage, `roles/storage.objectAdmin` on the `GAOS_PHOENIX_BUCKET` bucket.
+
+#### `tools/infra_provision.py`
+**What it does:** Executes the full infrastructure provisioning workflow — PLAN → APPROVE → APPLY → HEALTHCHECK → ROLLBACK — driven by a Terraform wrapper. Called by the `POST /infra-provision` Cloud Run endpoint. On PLAN, generates a `TerraformPlan` struct and sends a `send_infra_proposal_card()` to the owner via Google Chat. On APPLY (post-approval), runs `terraform apply`, then health-checks the deployed resources. On HEALTHCHECK failure, automatically triggers ROLLBACK.
+**Why it exists:** Infrastructure changes are the highest blast-radius operations in the system. Wrapping them in the same APPROVE → APPLY → HEALTHCHECK → ROLLBACK pattern as code changes gives the owner the same oversight for infra as for skills — with automatic rollback if the apply succeeds but the service fails to become healthy.
+**Added:** Phase 2.5 Step 8.
+**Resources required:** Terraform CLI, Google Cloud Storage (Terraform state bucket), Cloud Run service account with project-level IAM admin, `tools/google_chat.py`.
 
 ---
 
@@ -451,14 +473,14 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 
 | File | Purpose | Length |
 |------|---------|--------|
-| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,800 lines |
-| `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~902 lines |
-| `Docs/GAOS-Nexus-Prime-Spec.md` | Engineering construction requirements for the Tier 1 root orchestrator | ~834 lines |
+| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,455 lines |
+| `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~1,563 lines |
+| `Docs/GAOS-Nexus-Prime-Spec.md` | Engineering construction requirements for the Tier 1 root orchestrator | ~1,178 lines |
 | `Docs/GAOS-Onboarding-Spec.md` | Deployer first-run guide + end-user onboarding via Steward | ~638 lines |
 | `Docs/GAOS-Memory-Spec.md` | Full memory architecture, five layers, self-learning loop | ~706 lines |
 | `Docs/GAOS-Agent-Spec.md` | Engineering construction requirements for every agent tier | ~317 lines |
 | `Docs/GAOS-Skill-Compliance-Spec.md` | External skill review process before AOS integration | ~298 lines |
-| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 14 modules) | ~893 lines |
+| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 18 modules) | ~1,391 lines |
 | `Docs/GAOS-Persona-Spec.md` | AOS soul ("The Strategic Architect"), `think` node spec, tone standard | ~297 lines |
 | `Docs/GAOS-Security-Policy.md` | Zero trust security policy — identity, code gates, prompt injection, threat detection, incident response | ~400 lines |
 | `Docs/GAOS-Privacy-Spec.md` | Cloud data exposure, privacy risk analysis, and mitigation strategies | ~260 lines |
@@ -476,7 +498,7 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 | `Docs/agents/steward.md` | Identity file — Steward (Admin & HR Agent) | — |
 | `Docs/agents/scout.md` | Identity file — Scout (Research Agent) | — |
 | `main.py` | Cloud Run HTTP entry point — all 7 agents, selected by `AGENT_NAME` env var | — |
-| `tests/` | 496-test suite — U1–U5 unit specs + S1–S4 static analysis + tool modules + Phases 2–3 + Phase 3 reactive routing + memory cap enforcement | — |
+| `tests/` | 600-test suite — U1–U5 unit specs + S1–S4 static analysis + tool modules + Phases 2–3 + Phase 3 reactive routing + memory cap enforcement + regression payloads + Bandit SAST | — |
 
 ---
 

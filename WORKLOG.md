@@ -5,7 +5,7 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
-## 2026-03-28T-03:00 — Code hygiene sweep: about-me, conftest, setup_apps_script, scope strings
+## 2026-03-28T23:59-03:00 — Code hygiene sweep: about-me, conftest, setup_apps_script, scope strings
 
 ### What was done
 
@@ -61,7 +61,7 @@ Phase 5 Step 8.1 — `scripts/create_staging_tables.py` (BQ DDL for 4 staging ta
 
 ---
 
-## 2026-03-28T-03:00 — BUILD_NOTES Chapters 9 & 10 + Phase 2.5 Step 5 marked complete
+## 2026-03-28T22:30-03:00 — BUILD_NOTES Chapters 9 & 10 + Phase 2.5 Step 5 marked complete
 
 ### What was done
 

@@ -64,7 +64,9 @@ memory_bank:
 apps_script:
   script_id: ""
   deployment_id: ""
-  webhook_url: ""
+  # webhook_url is NOT stored here — it is a secret. Store it in Secret Manager
+  # as WEBHOOK_URL and retrieve via get_secret("WEBHOOK_URL", project_id).
+  # See GAOS-Manager-Spec.md §15.2 Operational Rule 5.
   timezone: "America/Chicago"  # IANA timezone string for the Apps Script manifest
 
 # Google Chat — owner DM space for morning briefings and approval cards

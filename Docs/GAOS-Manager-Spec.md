@@ -342,7 +342,11 @@ Morphic-GAOS-Manager/
 │   ├── web_search.py             # DuckDuckGo Instant Answer API — free, no key, Ollama context injection only
 │   ├── vertex_search.py          # Vertex AI Search over Drive Knowledge/ corpus (Phase 2.5 Step 3)
 │   ├── google_docs.py            # Google Docs create/append/comment — Blueprint Factory (Phase 2.5 Step 4)
-│   └── google_search.py          # Google Custom Search API — Scout _discover node (Phase 2.5 Step 6)
+│   ├── google_search.py          # Google Custom Search API — Scout _discover node (Phase 2.5 Step 6)
+│   ├── memory_mirror.py          # Bidirectional sync: Memory Bank ↔ Knowledge Atlas Doc
+│   ├── circuit_breaker.py        # Per-agent circuit breaker for LLM and tool calls
+│   ├── phoenix.py                # LangGraph state checkpoint save/load + crash recovery
+│   └── infra_provision.py        # Terraform-backed infra PLAN→APPROVE→APPLY→HEALTHCHECK→ROLLBACK workflow
 ├── models/                       # Pydantic schemas (A2AMessage, MemoryEntry, etc.)
 ├── config/
 │   ├── settings.yaml             # Model aliases, GCP IDs, topic list (committed)
@@ -361,11 +365,22 @@ Morphic-GAOS-Manager/
 │   ├── helpers.gs
 │   ├── setup_protection.gs
 │   └── syncSkillsToVertex.gs
-├── scripts/                      # One-time setup and seeding scripts
-│   ├── setup_workspace.py
-│   ├── setup_apps_script.py
-│   ├── _create_corpora.py
-│   └── _seed_knowledge.py
+├── scripts/                      # Setup, provisioning, and dev-ops scripts
+│   ├── setup_workspace.py            # GCP project bootstrap (secrets, SA grants, Pub/Sub topics)
+│   ├── setup_apps_script.py          # Deploy .gs files to Apps Script via API
+│   ├── setup_secrets.py              # Provision Secret Manager entries
+│   ├── bootstrap.py                  # One-shot GCP project initialization
+│   ├── provision_infra.py            # Dry-run Terraform plan for infra proposals
+│   ├── provision_missing_folders.py  # Create any missing Drive Knowledge/ folders
+│   ├── provision_schedulers.py       # Create Cloud Scheduler jobs
+│   ├── provision_sheet_controls.py   # Apply Sheet protected ranges + header row
+│   ├── nightly_knowledge_promotion.py # Promote Pending_Knowledge entries to Memory Bank
+│   ├── observability_loop.py         # Local dev: poll observability log once + emit
+│   ├── gaos_doctor.py                # Diagnose config, credential, and connectivity issues
+│   ├── chat_emulator.py              # Local dev: simulate inbound Google Chat events
+│   ├── _create_corpora.py            # Create Vertex AI RAG corpora per domain
+│   ├── _seed_knowledge.py            # Seed Drive Knowledge/ folder with initial docs
+│   └── …                             # smoke tests, e2e helpers, diagnostic utils
 ├── tests/
 ├── main.py                       # FastAPI entry point — AGENT_NAME env var selects orchestrator
 ├── Dockerfile
@@ -1640,7 +1655,7 @@ Inserted between Phase 2 and Phase 3. All items below must be deployed and verif
 | 4 | `tools/google_docs.py` + Blueprint Factory (Nexus-Prime `ITERATE_PLAN` node) | `tools/google_docs.py` | ✅ |
 | 5 | AppSheet Vision Hub + `VISION_SUBMITTED` handler + `doc-comment-poll` Scheduler job | `tests/test_vision_workflow.py` | ✅ Complete (`doc-comment-poll` ⏳ wire in GCP) |
 | 6 | Scout `_discover` recursive node + `tools/google_search.py` + `KNOWLEDGE_INJECTION` | `tools/google_search.py`, `tests/test_scout_discover.py` | ✅ Complete |
-| 7 | `ITERATE_PLAN` constraint compaction node + `SKILL_REQUEST` approval flow | — | — |
+| 7 | `ITERATE_PLAN` constraint compaction node + `SKILL_REQUEST` approval flow | — | ⏳ Not started |
 | 8 | `POST /infra-provision` endpoint + `tools/infra_provision.py` + `send_infra_proposal_card()` + `handle_infra_provision` graph node — full PLAN→APPROVE→APPLY→HEALTHCHECK→ROLLBACK workflow | `tools/infra_provision.py`, `tests/test_infra_provision.py`, `scripts/provision_infra.py` | ✅ Complete |
 
 #### Phase 2.5 Exit Criteria

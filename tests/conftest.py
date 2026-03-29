@@ -188,3 +188,14 @@ def mock_agents_model():
     """
     with patch(AGENTS_MODEL_TARGET, return_value=fake_model_response()) as m:
         yield m
+
+
+@pytest.fixture()
+def mock_agents_ollama():
+    """Patch agents._call_model_ollama (the Ollama routing path in agents/__init__.py).
+
+    Yields:
+        unittest.mock.MagicMock: The mock replacing _call_model_ollama.
+    """
+    with patch(AGENTS_OLLAMA_TARGET, return_value=fake_model_response()) as m:
+        yield m
