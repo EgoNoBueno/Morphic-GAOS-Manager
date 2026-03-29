@@ -2,7 +2,7 @@
 
 Notes for the author of the [OpenClaw Paradigm Book](https://github.com/chunhualiao/openclaw-paradigm-book). We read your book as part of an architecture review for [Morphic-GAOS](https://github.com/EgoNoBueno/Morphic-GAOS-Manager), a multi-agent system running on Google Cloud (LangGraph, Cloud Run, Pub/Sub, Vertex AI, BigQuery). Each entry shares what we learned from a chapter, what it inspired us to ship, and where our architecture had already arrived at the same answer by a different path.
 
-Chapters 1, 9, and 10 were not reviewed in this cycle.
+Chapter 1 was not reviewed in this cycle.
 
 ---
 
@@ -17,6 +17,8 @@ Chapters 1, 9, and 10 were not reviewed in this cycle.
 | 6 | File Coordination and Memory | Shipped recency sort on memory load + progressive nightly distillation |
 | 7 | Cron and Scheduled Automation | Shipped idempotency guard on archive job + `provision_schedulers.py` |
 | 8 | Autonomous Systems Design | Shipped phoenix checkpointing, lifecycle state machine, circuit breaker, output coherence check |
+| 9 | Cost Optimization | Shipped `_run_compaction()` (Early Compact Pattern applied to Blueprint constraints) |
+| 10 | Debugging AI-Native Systems | Shipped `handle_skill_request` (Tool-Based Error Recovery with human-in-the-loop escalation) |
 | 11 | Security Patterns | Shipped Bandit SAST; HMAC signing deferred to Phase 4; prompt injection deferred indefinitely |
 | 12 | Future of AI-Native Development | Two ideas pending: budget ceiling guard + priority-to-model routing in `think()` |
 | 13 | The Tooling Ecosystem | No new code — canonical patterns already implemented |
@@ -172,6 +174,82 @@ Your `ContextBudget` class introduced something we hadn't thought carefully abou
 **Gap 2: No path from experience to curated memory (§6.8–6.9)**
 
 This was the bigger finding. GAOS agents write task history to BigQuery continuously, but the only way for that experience to reach curated memory was through human-approved proposals — and those only happened when an agent explicitly surfaced a learning. There was no automated distillation loop.
+
+---
+
+## Chapter 9 — Cost Optimization Patterns
+*Implemented: 2026-03-28*
+
+Chapter 9 reframes cost as a first-class engineering concern: every token consumed is a line item, and unmanaged growth eventually makes a system economically unsustainable. The chapter's core prescription is three-tier model routing — cheap models for preprocessing, balanced models for drafting, premium models for final synthesis — plus four pattern families: Early Compact, response caching, budget circuit breakers, and off-peak batch scheduling.
+
+**Where GAOS already had the answer**
+
+The three-tier vocabulary is exactly what `settings.models.*` aliases implement. `FAST_MODEL`, `DEEP_MODEL`, and `LOCAL_MODEL` are the three tiers in different names. `TestU3NoLiteralModelVersions` enforces that no orchestrator bypasses the alias system and hardcodes a version string. Chapter 9 §9.4's configuration table reads like a spec for what we already had.
+
+Cost tracking per call (`cost_usd` accumulation on `NexusPrimeWorkingMemory`, `PRIORITY-2-COST-MONITOR` structural log lines) maps to §9.6.1's usage tracking pattern. The phoenix checkpoint interval is a loose analog of §9.7.1's off-peak scheduling — compute-intensive operations can be deferred or batched without real-time pressure.
+
+**What the chapter gave us: the Early Compact Pattern**
+
+Section §9.3.1 described the Early Compact Pattern precisely: pass raw, growing data through a cheap model first to produce a compressed summary, feed only the summary to the expensive model. The insight is that the preprocessing token spend is tiny relative to the savings on every subsequent expensive call that would have read the raw data instead.
+
+We had a concrete instance of exactly this problem sitting unsolved. The `ITERATE_PLAN` node accumulates owner comments as Blueprint constraints. Each new comment is appended individually. Without compaction, a Blueprint with 20 owner comments would feed all 20 constraints into every re-generation call, growing the prompt linearly with user engagement. The most active Blueprint cycles — the most valuable ones — would be the most expensive.
+
+We shipped `_run_compaction()` as a direct application of the Early Compact Pattern:
+
+1. When the active constraint count for a Blueprint reaches `_COMPACTION_THRESHOLD` (5), a single `FAST_MODEL` call compresses all N constraints into one dense paragraph.
+2. The compacted paragraph replaces the N individual entries in `blueprint_constraints`.
+3. The originals are archived to `aos_logs.blueprint_constraints` in BigQuery for audit.
+4. The Blueprint Doc receives the compacted text as a single update.
+
+Cost outcome: one extra Flash call (~$0.001) per compaction event; every Blueprint re-generation after compaction reads one paragraph instead of N lines. The prompt stays bounded regardless of total comment volume — at most three compacted paragraphs over a Blueprint's full lifecycle.
+
+**What we deferred**
+
+- *Anthropic prompt caching (§9.3.4):* Vertex AI Gemini doesn't expose the equivalent cache-write / cache-read pricing split in the same explicit API. Prompt caching against Gemini is implicit and opaque; we cannot reason about cache hit rates or engineer for it.
+- *Semantic caching (§9.15):* Not applicable. GAOS agents process discrete Pub/Sub events — no repeated queries from a shared user-facing surface where semantic deduplication would hit.
+- *Dynamic complexity routing (§9.4.2):* Model selection is currently node-level (each LangGraph node has a fixed tier assignment). Per-request complexity classification is a noted gap; it's the "priority-to-model routing in `think()`" item in the Chapter 12 pending list.
+- *Budget hard cap + circuit breaker (§9.9.2):* The `cost_usd` field exists but there's no enforced ceiling that halts execution. This is the "budget ceiling guard" item in the Chapter 12 pending list. The circuit breaker pattern from Chapter 8 runs on task failure count, not dollar amount.
+
+**Result:** 42 new tests covering `iterate_plan` (3 tests) and `_run_compaction` (3 tests). The compaction node eliminated unbounded prompt growth on active Blueprints with no quality trade-off.
+
+---
+
+## Chapter 10 — Debugging AI-Native Systems
+*Implemented: 2026-03-28*
+
+Chapter 10 addresses the paradigm shift required when debugging probabilistic systems. Traditional debugging assumes reproducible failures and deterministic causal chains. AI-native systems fail in ways that are probabilistic, emergent, and context-dependent. The chapter's four-pattern response: Tool-Based Error Recovery, status classification (OK/WARN/FAIL), structured logging, and example-driven (rather than assertion-based) testing.
+
+**Where GAOS already had the answer**
+
+The structured logging prescription in §10.5.1 — every log entry must carry timestamp, component, agent ID, task/session ID, tool name, and severity — is what `_log_cloud(agent_id, project_id, level, task_id, message, severity)` implements across all seven orchestrators. Rule 18 in the coding standards bans `print()` and mandates `_log_cloud`. The `project_id` on every log entry exists precisely for the multi-tenant filtering scenario the chapter describes: Cloud Logging queries filter by `jsonPayload.project_id` to isolate one project's agent activity without mixing in another.
+
+Example-driven testing is what the GAOS test suite does by default. Tests patch at the `_call_model` or `_log_cloud` boundary and validate state transitions through concrete state dictionaries — not assertion-based output matching against model text.
+
+**What the chapter gave us: `handle_skill_request` as a structured error recovery node**
+
+Section §10.2.3 lists five recovery strategies, ending with **User Intervention** — when automated recovery is insufficient, surface the failure to a human with enough context to make a decision. The chapter frames this as a last resort; in GAOS it's the designed path for a specific class of failure.
+
+During the Write-Test-Refine loop, an agent may discover it needs a library that isn't in `_ALLOWED_IMPORTS`. `ModuleNotFoundError` is the error; the correct response is not to retry, not to try a workaround import, and not to fail silently. The agent publishes a `SKILL_REQUEST` to Nexus-Prime with the library name and the proposal context.
+
+`handle_skill_request` is the Tool-Based Error Recovery node for this error class:
+
+1. **Inbound path:** Receives the `SKILL_REQUEST` message, calls `send_skill_import_card()` to send a structured Chat card to the owner (library name, requesting agent, reason), writes a row to `Agent_Approvals` for audit, and parks the `proposal_id` so the requesting agent's task can be resumed.
+2. **Resolution path (Approved):** Publishes a resolved `SKILL_REQUEST` back to the requesting agent's Pub/Sub topic; the agent can now proceed with the approved library.
+3. **Resolution path (Rejected):** Publishes an `ALERT` to the requesting agent; the loop logs a hard stop with reason `skill_request_rejected` and writes an escalation row to `Agent_Approvals`.
+
+This is the exact four-level escalation structure from §10.4.3 (Automated → Alert maintainer → Hard stop) — instantiated as a Pub/Sub message flow with a Google Chat card as the human intervention surface.
+
+**OK/WARN/FAIL status model**
+
+The chapter's tri-state diagnostic model (§10.3) was noted in our Chapter 3 entry as a gap. Agents report binary IDLE/RUNNING heartbeats — no degradation tier. The complete solution belongs at the infrastructure observability layer (Grafana dashboards with Cloud Logging-backed alerts), which is Phase 5 work. The Chapter 10 reading sharpened the design intent: agent heartbeats should eventually carry structured status payloads that Grafana can interpret, not raw text strings.
+
+**What we deferred**
+
+- *Tri-state heartbeat payloads:* Phase 5. Grafana dashboard must exist first.
+- *Distributed trace IDs:* Cloud Logging + Cloud Trace at the infrastructure level provides per-request tracing; we don't propagate application-level trace IDs across Pub/Sub message hops. A future improvement is embedding a `trace_id` in `A2AMessage` and propagating it through every child log call.
+- *Replay debugging:* No per-session state snapshot / restore mechanism. LangGraph's checkpointing (phoenix) provides crash recovery but not interactive replay for debugging.
+
+**Result:** 12 tests covering `handle_skill_request` (inbound path, approval resolution, rejection resolution, routing) in `tests/test_skill_request.py`. The node implements the Tool-Based Error Recovery Pattern for the library permission failure class, with human-in-the-loop as the designed escalation tier.
 
 Your progressive summarization hierarchy (raw observations → daily summaries → weekly insights → curated long-term memory) gave us the right framing. We adapted it: we already had a nightly archive job (`handle_archive()`) running at 2 AM. That became the distillation trigger.
 

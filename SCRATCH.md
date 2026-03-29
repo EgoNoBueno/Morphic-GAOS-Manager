@@ -87,7 +87,7 @@ Phase 3 additions (Human Interface Layer)
                  added to config/__init__.py + settings.yaml.template. §15 + §16 added to GAOS-Tools-Spec.md.
 
 Phase 3.5 additions (Innovation Interface Layer)
-├── Step 5: Vision workflow — Project_Incubator tab + VISION_SUBMITTED + PLAN_REVIEW +
+├── ✅ Step 5: Vision workflow — Project_Incubator tab + VISION_SUBMITTED + PLAN_REVIEW +  [DONE — iterate_plan, _run_compaction, handle_poll_comments]
 │            │   COMMENT_RECEIVED + Blueprint Doc generator in Nexus-Prime +
 │            │   ITERATE_PLAN node + Doc comment polling (Cloud Scheduler 5-min job)
 │            └── ✅ DONE: 30 tests passing. vision_blueprint node, iterate_plan node,

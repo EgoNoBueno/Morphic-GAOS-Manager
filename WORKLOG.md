@@ -5,6 +5,46 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-28T-03:00 — BUILD_NOTES Chapters 9 & 10 + Phase 2.5 Step 5 marked complete
+
+### What was done
+
+Wrote BUILD_NOTES.md entries for Chapters 9 (Cost Optimization) and 10 (Debugging
+AI-Native Systems) of the OpenClaw Paradigm Book. Both chapters map to already-shipped
+GAOS code that had not been documented in the build notes.
+
+- **Chapter 9:** Early Compact Pattern (§9.3.1) → `_run_compaction()` in the `iterate_plan`
+  node. Blueprint constraint compaction uses `FAST_MODEL` to compress N constraints into
+  one paragraph before each re-generation, bounding prompt growth to O(1) per Blueprint
+  lifecycle. Budget/circuit-breaker and dynamic routing noted as pending (Chapter 12 list).
+
+- **Chapter 10:** Tool-Based Error Recovery (§10.2.3 User Intervention path) → `handle_skill_request`
+  node. `ModuleNotFoundError` on an unapproved library routes through a structured Chat card,
+  parks the proposal, and resolves via Pub/Sub callback on Approve/Reject. OK/WARN/FAIL
+  tri-state agent heartbeats and distributed trace IDs deferred to Phase 5/future.
+
+Marked Phase 2.5 Step 5 with `✅` at the branch level in SCRATCH.md (the DONE content
+was already there; only the branch header prefix was missing). Updated table disclaimer
+from "Chapters 1, 9, and 10" to "Chapter 1 only."
+
+### Files changed
+
+| File | Change |
+|------|--------|
+| `BUILD_NOTES.md` | Added Chapter 9 + Chapter 10 rows to summary table; updated disclaimer; added full prose sections (~130 lines) |
+| `SCRATCH.md` | Marked Step 5 branch as `✅` |
+
+### Tests
+
+42 tests in `test_skill_request.py` + `test_vision_workflow.py` — all passing (no code changes).
+
+### What's next
+
+Phase 2.5 Step 7 (AppSheet config, no-code) remains unmarked — requires UI config, not code.
+Phase 5 (Grafana sheets sync) is next in the build sequence.
+
+---
+
 ## 2026-03-28T23:45-03:00 — UTF-8 standardisation + doc catch-up — complete
 
 ### What was done
