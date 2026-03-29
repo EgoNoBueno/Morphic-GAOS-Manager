@@ -85,6 +85,8 @@ Every agent action — Sheet writes, Pub/Sub publishes, Cloud Logging entries, M
 
 **Enforcement:** The `project_id` is passed in `AgentInput` and must be forwarded to every downstream call. An agent that drops `project_id` from a sub-call is a bug.
 
+> ⚠️ **Common failure pattern — empty `project_id` on exception paths:** Every `_log_cloud()` call inside an `except` handler must use the `project_id` already in scope — never replace it with `""`. The variable is captured before the `try` block and remains valid even when an exception is raised. An empty string silently routes the log entry to the wrong stream and breaks project-scoped filtering.
+
 ### 2.4 Logging Standard
 
 All agents write structured log entries to Cloud Logging using the labels defined in `GAOS-Manager-Spec.md` §13.2. Minimum required labels on every entry:
@@ -101,6 +103,8 @@ Local (`LOCAL_MODEL`) agents produce a plain-text summary line in addition to th
 ### 2.5 Cost Tracking
 
 Every agent must accumulate `cost_usd` for each model call made during a task and return the total in `AgentOutput`. All three model aliases (`LOCAL_MODEL`, `FAST_MODEL`, and `DEEP_MODEL`) currently return `cost_usd = 0.0` — per-call cost calculation is not implemented. Ollama is free (local); Gemini charges are tracked at the GCP billing level (see `GAOS-Manager-Spec.md` §9.4) rather than per-call. `tokens_used` is still tracked in `ModelResponse` for usage monitoring. Re-evaluate per-call tracking if finer-grained cost attribution is needed.
+
+> ⚠️ **Common failure pattern — `cost_usd` bypassed by `except`:** The `state["cost_usd"] += resp.cost_usd` accumulation must happen **before** any `except` block can bypass it. If `_call_model()` is inside a `try` and the cost is accumulated on a line that follows a statement that raises, that cost is silently lost. Pattern: call `_call_model()`, immediately extract and accumulate `resp.cost_usd`, then use the result.
 
 ---
 
@@ -154,6 +158,8 @@ compiled_graph = graph.compile(checkpointer=memory_checkpointer)
 
 The `park` → `resume` cycle is the human-in-the-loop pattern for the Approval Gate. The orchestrator must **never block** waiting for an approval; it parks and moves on (see `GAOS-Manager-Spec.md` §3.B).
 
+> ⚠️ **Common failure pattern — `park` node declared but unreachable:** `graph.add_node("park", park_node)` registers the node but does not wire it. You must add a `conditional_edge` from another node (typically `report`) that routes to `"park"` when a task requires human approval. An unreachable node compiles without error and fails silently at runtime — the orchestrator never parks and will block or drop the task.
+
 ### 3.3 Pub/Sub Wiring
 
 Each orchestrator owns one outbound topic and must subscribe to Nexus-Prime's broadcast topic and any cross-domain topics required by its workflow policies (see `GAOS-Manager-Spec.md` §10).
@@ -167,6 +173,8 @@ Each orchestrator owns one outbound topic and must subscribe to Nexus-Prime's br
 > **Topic naming note:** The display form uses `/` as the separator (e.g. `agent/beacon/events`). GCP Pub/Sub topic names cannot contain `/`, so `tools/pubsub.py` replaces slashes with dots when building the resource path (e.g. `agent.beacon.events`). The GAOS business `project_id` (e.g. `acme-retail`) is *not* part of the topic name — it travels inside `A2AMessage.project_id`. The GCP project that owns the topic is resolved from `settings.GCP_PROJECT_ID` at publish time.
 
 All published messages must use the `A2AMessage` schema from `GAOS-Manager-Spec.md` §10.2, including `project_id`.
+
+> ⚠️ **Common failure pattern — `_INBOUND_TOPICS` declared but never subscribed:** A module-level `_INBOUND_TOPICS = [...]` constant is documentation, not subscription. Pub/Sub delivery does not start until `tools.pubsub.subscribe(topic, handler)` is called for each entry — explicitly, in the boot sequence (§7, step 5). An orchestrator missing these `subscribe()` calls compiles and starts normally but silently drops all inbound messages.
 
 ### 3.4 Dashboard Heartbeat
 
@@ -195,6 +203,8 @@ When an orchestrator identifies a task requiring human approval:
 5. On receiving the Pub/Sub resume event (`APPROVAL_RESULT`), call `resume_task(task_id)` and continue.
 
 No orchestrator may bypass the Approval Gate for Priority-3, 4, or 5 proposals.
+
+> ⚠️ **Common failure pattern — wrong message type at Approval Gate:** Publish `MessageType.APPROVAL_REQUEST` to `agent/approvals/events`, **not** `TASK_HANDOFF`. `TASK_HANDOFF` is consumed by the target agent's task queue and bypasses the Approval Gate entirely. The `Agent_Approvals` Sheet write (step 2 above) must happen before the publish — there is no automatic retry if the write is skipped.
 
 ### 3.6 Self-Evolution Capability
 

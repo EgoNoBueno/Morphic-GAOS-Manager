@@ -5,6 +5,107 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-29T09:42-03:00 — Applied 8-finding compliance pattern to all 5 remaining orchestrators
+
+### What was done
+
+Continued from the previous session (Beacon fully fixed, 600 tests passing). Applied the same
+8-finding compliance pattern to all 5 remaining orchestrators in a single session:
+
+| Agent | Replacements | Outcome |
+|---|---|---|
+| ledger | 11 | ✅ clean |
+| pursuit | 11 (+1 repair) | ✅ clean (edit-index conflict, repaired) |
+| foreman | 11 | ✅ clean |
+| steward | 12 (extra split for `_plan`) | ✅ clean |
+| scout | 13 | ✅ clean (dict-envelope path preserved) |
+
+**8 compliance fixes per agent:**
+1. Imports: added `hashlib`, `_run_evolution_loop`, `AgentInput`, `AgentOutput`, `ApprovalProposal`
+2. `_boot`: single `ensure_topic_exists` → loop over all topics + WARNING logs; silent memory/episodic exceptions → WARNING
+3. `_plan`: EVOLUTION_REQUEST early-return branch added; `except Exception: pass` → WARNING
+4. `_report`: both silent excepts (`batch_append_rows`, `publish`) → WARNING
+5. `_park`: full rewrite — write to `Agent_Approvals` sheet, compute `code_sha256`, publish `APPROVAL_REQUEST` to `"agent/approvals/events"` at priority 3
+6. `_should_escalate`: added `"evolve"` branch as first check
+7. `_escalate` (foreman, steward, scout): `except Exception: pass` → WARNING log
+8. Added `_should_park_after_write` + `_evolve` functions; updated graph with "evolve" node and conditional edges
+9. Both `run()` methods: `Any` → `AgentInput`/`AgentOutput`; `""` → `initial["project_id"]`; `result={}` → populated result dict
+10. `_initial_state`: removed local import, removed isinstance guard (scout: kept dict-envelope branch for Cloud Run)
+
+**Scout-specific:** preserved `_discover`/`_inject_knowledge` nodes, `_route_after_boot` conditional from "boot", and the dict-envelope branch in `_initial_state` (Cloud Run Pub/Sub push handler calls this with a raw dict — `TestInitialStatePubSub` confirms this). Type hint updated to `AgentInput | Any` to accurately reflect the two call sites.
+
+### Files changed
+
+- `agents/ledger/orchestrator.py`
+- `agents/pursuit/orchestrator.py`
+- `agents/foreman/orchestrator.py`
+- `agents/steward/orchestrator.py`
+- `agents/scout/orchestrator.py`
+
+### Tests
+
+**600 passed, 54 warnings, 0 failed** — suite is green.
+
+Intermediate failure: 2 tests in `TestInitialStatePubSub` failed after the initial scout batch because the `incoming` variable was dropped but the `return {}` dict still referenced it. Fixed by restoring the dual-branch `_initial_state` with the `_log_cloud` call instead of the silent `except Exception: pass`.
+
+### What's next
+
+- Phase 3 doc updates: all 5 agent spec files in `Docs/agents/` need the compliance fix pattern documented
+- Pre-commit hook for `ruff check --fix` + `ruff format` (Rule 16 Phase 4 task)
+
+## 2026-03-29T08:44-03:00 — GAOS-Architect agent + agent-construction instructions + Beacon compliance review
+
+### What was done
+
+**`.github/agents/gaos-architect.agent.md` (created + rewritten):** Created VS Code custom
+agent for scaffolding and reviewing GAOS Tier 2/3 agents. Revised through two iterations:
+trimmed agent body to only the 3 rules not already in `copilot-instructions.md`, added tier
+classification table with 7-signal decision matrix and 3-node test, added a Step 7 Completion
+Gate to the `/create-agent` workflow, made test generation mandatory (Step 6), added exit
+criteria per step, and added Review Mode with its own Result Goal.
+
+**`.github/instructions/agent-construction.instructions.md` (created):** Always-on instructions
+file auto-injected by VS Code when editing `agents/**/*.py`. Leads with cost tracking as the
+#1 rule (inside `try`, before `except` can bypass), then Pydantic schema boundaries, tier-
+specific node requirements, and identity file check.
+
+**`agents/beacon/orchestrator.py` — all 8 blocking findings fixed:**
+1. `run()` typed `AgentInput → AgentOutput` (both ADK + fallback class)
+2. `_log_cloud` empty `project_id` on exception paths → `initial["project_id"]`
+3. `result={}` → meaningful summary dict (`tasks_processed`, `parked_proposals`, `objective`)
+4. `_park` rewritten: `Agent_Approvals` write + `APPROVAL_REQUEST` to `agent/approvals/events` + `code_sha256`
+5. `park` node now reachable via `_should_park_after_write` conditional edge from `write_playbook`
+6. `_INBOUND_TOPICS` now iterated in `_boot` with `ensure_topic_exists()` for each topic
+7. `_evolve` node added: `_run_evolution_loop` → `EvolutionTaskOutcome` log → Priority-4 `APPROVAL_REQUEST`
+8. `_plan` detects `EVOLUTION_REQUEST` → sets `evolution_triggered`, routes via `_should_escalate` → `evolve`
+9. All 8 bare `except Exception: pass` replaced with `_log_cloud` WARNING calls
+
+**`Docs/GAOS-Agent-Spec.md` (5 warning callouts added):** Captured Beacon findings as spec
+warnings at §2.3 (empty project_id on exception paths), §2.5 (cost_usd bypassed by except),
+§3.2 (park node unreachable), §3.3 (inbound topics declared but not subscribed), §3.5 (wrong
+Approval Gate message type).
+
+**`Docs/DOC-INDEX.yaml` (3 edits):** Fixed wrong GAOS-Skill-Compliance-Spec.md description
+(was describing syncSkillsToVertex pipeline — wrong file); added entries for
+`.github/agents/gaos-architect.agent.md` and `.github/instructions/agent-construction.instructions.md`;
+added inverse-index entries for both new `.github/` paths.
+
+### Files changed
+- `.github/agents/gaos-architect.agent.md` — created, then rewritten
+- `.github/instructions/agent-construction.instructions.md` — created
+- `Docs/GAOS-Agent-Spec.md` — 5 warning callouts added at §2.3, §2.5, §3.2, §3.3, §3.5
+- `Docs/DOC-INDEX.yaml` — fixed Skill-Compliance description, added 2 new entries + inverse index
+- `agents/beacon/orchestrator.py` — all 8 blocking spec violations fixed
+
+### Tests
+600 passed, 54 warnings — no regressions.
+
+### What's next
+All beacon blocking findings resolved. Next candidate for compliance review: pick the next
+orchestrator (ledger, pursuit, foreman, steward, or scout) and run the same §8 checklist.
+
+---
+
 ## 2026-03-28T23:59-03:00 — Code hygiene sweep: about-me, conftest, setup_apps_script, scope strings
 
 ### What was done

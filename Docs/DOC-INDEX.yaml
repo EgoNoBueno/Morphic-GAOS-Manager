@@ -170,16 +170,18 @@ documents:
 
   GAOS-Skill-Compliance-Spec.md:
     purpose: >
-      Skill compliance — skill document schema, Vertex AI Search sync,
-      skill validation rules, and the syncSkillsToVertex pipeline.
+      Externally sourced skill compliance — the mandatory 6-gate review process
+      for importing any external Python module (tool, agent, or utility) into the
+      AOS. Defines classification types (A–D) and mandatory gates per type.
+      Companion to GAOS-Agent-Spec.md (internal build requirements).
     code_paths:
-      - apps_script/syncSkillsToVertex.gs
-      - tools/vertex_search.py
+      - agents/
+      - tools/
     triggers:
-      - apps_script/syncSkillsToVertex.gs modified
-      - Skill document schema changed
-      - tools/vertex_search.py skill-path logic changed
-      - New skill validation rule established
+      - New external skill or agent class imported from outside the repository
+      - Compliance gate list changed (Gates 1–6)
+      - Skill classification table (Type A–D) updated
+      - Self-evolution loop changes how agent code is imported
 
   GAOS-Privacy-Spec.md:
     purpose: >
@@ -262,6 +264,30 @@ documents:
       - Existing rule violated and a correction pattern established
       - New tooling standard adopted (formatter, linter, pre-commit hook)
       - DOC-INDEX.yaml schema changed (update §13 pointer)
+
+  ".github/agents/gaos-architect.agent.md":
+    purpose: >
+      VS Code custom agent for GAOS development — scaffolding Tier 2/3 agents,
+      compliance review against GAOS-Agent-Spec.md §8 checklist, and the
+      /create-agent workflow with a 7-step construction + Completion Gate.
+    code_paths:
+      - .github/agents/
+    triggers:
+      - GAOS-Architect workflow, rules, or Result Goals changed
+      - New agent construction pattern or tier classification rule established
+      - GAOS-Agent-Spec.md §8 checklist updated
+
+  ".github/instructions/agent-construction.instructions.md":
+    purpose: >
+      Always-on agent construction rules auto-injected when editing agents/**/*.py —
+      cost tracking placement, Pydantic schema boundary enforcement, tier-specific
+      node requirements, and identity file check.
+    code_paths:
+      - agents/
+    triggers:
+      - New construction rule derived from a lesson learned
+      - Cost tracking or schema enforcement pattern changed
+      - Tier-specific rule added or updated
 
   Morphic-GAOS-Manager-Summary.md:
     purpose: >
@@ -437,6 +463,14 @@ inverse_index:
 
   ".github/copilot-instructions.md":
     - GAOS-Persona-Spec.md              # if Rule 15 changes
+
+  ".github/agents/":
+    - ".github/agents/gaos-architect.agent.md"
+    - GAOS-Agent-Spec.md               # if the §8 checklist embedded in the agent changes
+
+  ".github/instructions/":
+    - ".github/instructions/agent-construction.instructions.md"
+    - GAOS-Agent-Spec.md               # if construction rules reference spec sections
 
   "Docs/DOC-INDEX.yaml":
     - ".github/copilot-instructions.md" # §13 pointer

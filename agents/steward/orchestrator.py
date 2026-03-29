@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -12,10 +13,18 @@ from agents import (
     _call_model,
     _load_identity_file,
     _log_cloud,
+    _run_evolution_loop,
     _write_heartbeat,
     utcnow_iso,
 )
-from models import A2AMessage, AgentWorkingMemory, MessageType
+from models import (
+    A2AMessage,
+    AgentInput,
+    AgentOutput,
+    AgentWorkingMemory,
+    ApprovalProposal,
+    MessageType,
+)
 
 # ── Domain constants ──────────────────────────────────────────────────────────
 
@@ -107,19 +116,27 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
         )
         sys.exit(1)
 
-    # Step 4: Pub/Sub — ensure outbound topic exists
-    try:
-        ensure_topic_exists(_OUTBOUND_TOPIC)
-    except Exception:
-        pass
+    # Step 4 / Step 5: Pub/Sub — ensure outbound and all inbound topics exist
+    for _topic in [_OUTBOUND_TOPIC, *_INBOUND_TOPICS]:
+        try:
+            ensure_topic_exists(_topic)
+        except Exception as exc:
+            _log_cloud(
+                _AGENT_ID,
+                pid,
+                "task",
+                "boot",
+                f"ensure_topic_exists({_topic!r}) failed: {exc}",
+                "WARNING",
+            )
     try:
         state["memory_context"] = load_domain_memory(agent_id=_AGENT_ID, project_id=pid)
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_cloud(_AGENT_ID, pid, "task", "boot", f"load_domain_memory failed: {exc}", "WARNING")
     try:
         state["episodic_cache"] = {"recent": query_episodic(_AGENT_ID, pid, "admin", limit=5)}
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_cloud(_AGENT_ID, pid, "task", "boot", f"query_episodic failed: {exc}", "WARNING")
 
     _write_heartbeat(_AGENT_ID, pid, "IDLE", "Boot complete", 0, "", _SHEET_TAB)
     return state
@@ -137,6 +154,18 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
     now = datetime.now(tz=UTC)
     deadline_cutoff = now + timedelta(days=_COMPLIANCE_LEAD_DAYS)
     overdue_cutoff = now - timedelta(days=_ONBOARDING_OVERDUE_DAYS)
+
+    msg = state.get("incoming_message")
+    if msg and msg.message_type == MessageType.EVOLUTION_REQUEST:
+        state["evolution_triggered"] = True
+        state["current_objective"] = (
+            f"Evolution: {(msg.payload or {}).get('description', 'capability gap')[:80]}"
+        )
+        state["sub_task_results"] = []
+        state["messages"].append(
+            {"role": "system", "content": "EVOLUTION_REQUEST received — skipping normal planning"}
+        )
+        return state
 
     try:
         rows = get_all_records(_SHEET_TAB, pid)
@@ -165,8 +194,15 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 except ValueError:
                     pass
         pending_items = pending_items[:10]
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", ""),
+            f"_plan: sheet read failed: {exc}",
+            "WARNING",
+        )
 
     msg = state.get("incoming_message")
     if msg and msg.message_type in (MessageType.TASK_HANDOFF, MessageType.BROADCAST):
@@ -258,6 +294,8 @@ def _collect(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
 
 def _should_escalate(state: AgentWorkingMemory) -> str:
+    if state.get("evolution_triggered"):
+        return "evolve"
     last = state.get("messages", [{}])[-1]
     if last.get("escalated"):
         return "escalate"
@@ -287,8 +325,15 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
     if rows_to_write:
         try:
             batch_append_rows(_SHEET_TAB, rows_to_write, pid)
-        except Exception:
-            pass
+        except Exception as exc:
+            _log_cloud(
+                _AGENT_ID,
+                pid,
+                "task",
+                state.get("task_id", ""),
+                f"_report: sheet write failed: {exc}",
+                "WARNING",
+            )
     try:
         publish(
             _OUTBOUND_TOPIC,
@@ -302,8 +347,15 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 payload={"status": "WORKING", "cost_usd": state.get("cost_usd", 0.0)},
             ),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", ""),
+            f"_report: STATUS_UPDATE publish failed: {exc}",
+            "WARNING",
+        )
     _write_heartbeat(
         _AGENT_ID,
         pid,
@@ -317,35 +369,71 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
 
 def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
+    """
+    Write to Agent_Approvals and publish Priority-2 APPROVAL_REQUEST
+    (calendar actions require human approval). (GAOS-Agent-Spec.md §3.5)
+    """
+    from tools.google_sheets import append_row
     from tools.pubsub import publish
 
     pid = state["project_id"]
-    proposal_id = str(uuid.uuid4())
-    state["parked_proposals"].append(proposal_id)
+    results = state.get("sub_task_results", [])
+    calendar_tasks = [r for r in results if r.get("status") == "pending_approval"]
+    proposed_content = str(calendar_tasks)[:4000]
+    sha256 = hashlib.sha256(proposed_content.encode()).hexdigest()
+    proposal = ApprovalProposal(
+        agent_id=_AGENT_ID,
+        issue="Calendar API interaction requires human approval",
+        trigger_reason=f"{len(calendar_tasks)} calendar task(s) pending approval",
+        proposed_code=proposed_content,
+        total_cost_usd=state.get("cost_usd", 0.0),
+        code_sha256=sha256,
+    )
+    try:
+        append_row("Agent_Approvals", proposal.to_sheet_row(), pid)
+    except Exception as exc:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", ""),
+            f"_park: Agent_Approvals write failed: {exc}",
+            "ERROR",
+        )
+
+    state["parked_proposals"].append(proposal.id)
     # Priority-2: calendar changes require human approval
     try:
         publish(
-            _OUTBOUND_TOPIC,
+            "agent/approvals/events",
             A2AMessage(
                 source_agent=_AGENT_ID,
                 target_agent="nexus-prime",
                 project_id=pid,
-                task_id=state.get("task_id", proposal_id),
+                task_id=state.get("task_id", proposal.id),
                 message_type=MessageType.APPROVAL_REQUEST,
                 priority=2,
                 payload={
-                    "proposal_id": proposal_id,
+                    "proposal_id": proposal.id,
+                    "code_sha256": sha256,
                     "description": "Calendar API interaction requires approval.",
                 },
             ),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", ""),
+            f"_park: APPROVAL_REQUEST publish failed: {exc}",
+            "ERROR",
+        )
     _write_heartbeat(
         _AGENT_ID,
         pid,
         "PARKED",
-        f"Waiting calendar approval {proposal_id}",
+        f"Waiting calendar approval {proposal.id}",
         len(state["parked_proposals"]),
         "",
         _SHEET_TAB,
@@ -379,8 +467,15 @@ def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 payload={"description": last_error, "error_fingerprint": last_error[:64]},
             ),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", ""),
+            f"_escalate: ESCALATION publish failed: {exc}",
+            "WARNING",
+        )
     _write_heartbeat(
         _AGENT_ID,
         pid,
@@ -394,6 +489,99 @@ def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
 
 # ── Graph assembly ────────────────────────────────────────────────────────────
+
+
+def _should_park_after_write(state: AgentWorkingMemory) -> str:
+    """Route to park if any sub-task result flagged requires_approval; otherwise END."""
+    needs_approval = any(
+        isinstance(r.get("output"), dict) and r["output"].get("requires_approval")
+        for r in state.get("sub_task_results", [])
+    )
+    return "park" if needs_approval else END
+
+
+def _evolve(state: AgentWorkingMemory) -> AgentWorkingMemory:
+    """
+    Write-Test-Refine loop (GAOS-Manager-Spec.md §13).
+    Triggered when EVOLUTION_REQUEST message received in _plan.
+    Runs the loop, logs EvolutionTaskOutcome, and submits a Priority-4 proposal.
+    """
+    from tools.google_sheets import append_row
+    from tools.pubsub import publish
+
+    pid = state["project_id"]
+    msg = state.get("incoming_message")
+    payload = (msg.payload or {}) if msg else {}
+    issue = payload.get("description", "Capability gap: no description provided")
+    context_str = payload.get("context", state.get("current_objective", ""))
+
+    evo = _run_evolution_loop(issue=issue, agent_id=_AGENT_ID, context=context_str)
+    state["cost_usd"] = state.get("cost_usd", 0.0) + evo["cost_usd"]
+    state["iteration_count"] = state.get("iteration_count", 0) + evo["iterations"]
+
+    _log_cloud(
+        _AGENT_ID,
+        pid,
+        "evolution_task",
+        state.get("task_id", ""),
+        (
+            f"EvolutionTaskOutcome agent={_AGENT_ID} "
+            f"iterations={evo['iterations']} "
+            f"stopping_constraint={evo['stopping_constraint']}"
+        ),
+        "INFO",
+    )
+
+    if evo["stopping_constraint"] != "success":
+        return state  # Loop did not converge — no proposal submitted
+
+    proposed_code = evo["code"]
+    sha256 = hashlib.sha256(proposed_code.encode()).hexdigest()
+    proposal = ApprovalProposal(
+        agent_id=_AGENT_ID,
+        issue=issue,
+        trigger_reason="EVOLUTION_REQUEST",
+        proposed_code=proposed_code,
+        iterations_run=evo["iterations"],
+        total_cost_usd=evo["cost_usd"],
+        code_sha256=sha256,
+    )
+    try:
+        append_row("Agent_Approvals", proposal.to_sheet_row(), pid)
+    except Exception as exc:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", ""),
+            f"_evolve: Agent_Approvals write failed: {exc}",
+            "ERROR",
+        )
+
+    state["parked_proposals"].append(proposal.id)
+    try:
+        publish(
+            "agent/approvals/events",
+            A2AMessage(
+                source_agent=_AGENT_ID,
+                target_agent="nexus-prime",
+                project_id=pid,
+                task_id=state.get("task_id", proposal.id),
+                message_type=MessageType.APPROVAL_REQUEST,
+                priority=4,
+                payload={"proposal_id": proposal.id, "code_sha256": sha256},
+            ),
+        )
+    except Exception as exc:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            state.get("task_id", ""),
+            f"_evolve: APPROVAL_REQUEST publish failed: {exc}",
+            "ERROR",
+        )
+    return state
 
 
 def _write_playbook(state: AgentWorkingMemory) -> AgentWorkingMemory:
@@ -460,6 +648,7 @@ def build_steward_graph() -> Any:
         ("park", _park),
         ("resume", _resume),
         ("escalate", _escalate),
+        ("evolve", _evolve),
     ]:
         graph.add_node(name, fn)
     graph.set_entry_point("boot")
@@ -467,13 +656,18 @@ def build_steward_graph() -> Any:
     graph.add_edge("plan", "dispatch")
     graph.add_edge("dispatch", "collect")
     graph.add_conditional_edges(
-        "collect", _should_escalate, {"escalate": "escalate", "report": "report", "park": "park"}
+        "collect",
+        _should_escalate,
+        {"escalate": "escalate", "report": "report", "park": "park", "evolve": "evolve"},
     )
     graph.add_edge("report", "write_playbook")
-    graph.add_edge("write_playbook", END)
+    graph.add_conditional_edges(
+        "write_playbook", _should_park_after_write, {"park": "park", END: END}
+    )
     graph.add_edge("park", END)
     graph.add_edge("resume", "plan")
     graph.add_edge("escalate", END)
+    graph.add_edge("evolve", END)
     return graph.compile(checkpointer=MemorySaver())
 
 
@@ -504,9 +698,7 @@ if _HAS_ADK:
             super().__init__(**data)
             self._graph = build_steward_graph()
 
-        async def run(self, agent_input: Any) -> Any:
-            from models import AgentOutput
-
+        async def run(self, agent_input: AgentInput) -> AgentOutput:
             initial = _initial_state(agent_input)
             try:
                 final = await self._graph.ainvoke(
@@ -514,7 +706,9 @@ if _HAS_ADK:
                 )
                 status = "failed" if final.get("hard_stop_triggered") else "success"
             except Exception as exc:
-                _log_cloud(_AGENT_ID, "", "task", initial["task_id"], str(exc), "ERROR")
+                _log_cloud(
+                    _AGENT_ID, initial["project_id"], "task", initial["task_id"], str(exc), "ERROR"
+                )
                 status = "failed"
                 final = initial
             return AgentOutput(
@@ -522,7 +716,11 @@ if _HAS_ADK:
                 project_id=final["project_id"],
                 agent_id=_AGENT_ID,
                 status=status,
-                result={},
+                result={
+                    "tasks_processed": len(final.get("sub_task_results", [])),
+                    "parked_proposals": len(final.get("parked_proposals", [])),
+                    "objective": final.get("current_objective", ""),
+                },
                 cost_usd=final.get("cost_usd", 0.0),
             )
 
@@ -534,9 +732,7 @@ else:
         def __init__(self, **_: Any) -> None:
             self._graph = build_steward_graph()
 
-        async def run(self, agent_input: Any) -> Any:
-            from models import AgentOutput
-
+        async def run(self, agent_input: AgentInput) -> AgentOutput:
             initial = _initial_state(agent_input)
             try:
                 final = await self._graph.ainvoke(
@@ -544,7 +740,9 @@ else:
                 )
                 status = "failed" if final.get("hard_stop_triggered") else "success"
             except Exception as exc:
-                _log_cloud(self.name, "", "task", initial["task_id"], str(exc), "ERROR")
+                _log_cloud(
+                    self.name, initial["project_id"], "task", initial["task_id"], str(exc), "ERROR"
+                )
                 status = "failed"
                 final = initial
             return AgentOutput(
@@ -552,16 +750,18 @@ else:
                 project_id=final["project_id"],
                 agent_id=self.name,
                 status=status,
-                result={},
+                result={
+                    "tasks_processed": len(final.get("sub_task_results", [])),
+                    "parked_proposals": len(final.get("parked_proposals", [])),
+                    "objective": final.get("current_objective", ""),
+                },
                 cost_usd=final.get("cost_usd", 0.0),
             )
 
 
-def _initial_state(agent_input: Any) -> AgentWorkingMemory:
-    from models import AgentInput
-
-    pid = agent_input.project_id if isinstance(agent_input, AgentInput) else ""
-    tid = agent_input.task_id if isinstance(agent_input, AgentInput) else str(uuid.uuid4())
+def _initial_state(agent_input: AgentInput) -> AgentWorkingMemory:
+    pid = agent_input.project_id
+    tid = agent_input.task_id
     return {  # type: ignore[return-value]
         "task_id": tid,
         "project_id": pid,
