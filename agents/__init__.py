@@ -25,7 +25,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # ── Agent lifecycle state machine ────────────────────────────────────────────
 
 
-class AgentState(str, Enum):
+class AgentState(StrEnum):
     """Formal lifecycle states for GAOS agent orchestrators.
 
     Models the OODA-loop state machine described in §8.23 of the OpenClaw
