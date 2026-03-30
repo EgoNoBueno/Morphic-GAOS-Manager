@@ -5,6 +5,50 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-29T14:30-03:00 — Fixed nexus-prime APPROVAL_REQUEST routing gap
+
+### What was done
+
+Diagnosed and fixed two bugs that together prevented any domain agent's `_park()` call from
+delivering a Google Chat approval card to the owner.
+
+**Bug 1 — Routing gap in `route()`:**
+`MessageType.APPROVAL_REQUEST` was absent from the `routing_table` dict. Every inbound
+`APPROVAL_REQUEST` from any agent fell through to the `"record"` default — the Chat card
+was never sent. Bug existed from the initial nexus-prime build.
+
+**Bug 2 — Missing edges in `build_nexus_prime_graph()`:**
+`market_watchdog` and `roi_optimizer` were registered as graph nodes but were missing from
+the `add_conditional_edges` routing map. A `STOCK_INSUFFICIENT` or `DEAL_CLOSED` message
+would have raised a LangGraph `KeyError` at runtime.
+
+### What was built
+
+- New `handle_approval_request` node: reads `proposal_id`/`agent_id`/`description` from
+  `msg.payload`; calls `send_approval_card()` to `settings.chat.owner_space`; logs
+  success/failure. Does NOT re-write `Agent_Approvals` (sending agent's `_park()` does that).
+- `route()` routing table: added `MessageType.APPROVAL_REQUEST: "handle_approval_request"`
+- `build_nexus_prime_graph()`: registered node, fixed conditional edges map (added
+  `market_watchdog`, `roi_optimizer`, `handle_approval_request`), added
+  `handle_approval_request → record` edge
+
+### Files changed
+
+- `agents/nexus_prime/orchestrator.py` (78 insertions)
+- `Docs/GAOS-Nexus-Prime-Spec.md` (node count 19→20, routing table, node definition, graph assembly)
+
+### Tests
+
+600 passed, 0 failures (no new tests needed — existing suite covers route() and graph structure).
+
+### What's next
+
+- `_sync_e2e_test.py` Chat-card path: the E2E test currently only exercises `APPROVAL_RESULT →
+  promote`. A `--full-loop` mode that publishes a real `APPROVAL_REQUEST` and waits for the
+  Chat card + manual approval is the remaining gap before §4d can be checked off.
+
+---
+
 ## 2026-03-29T09:42-03:00 — Applied 8-finding compliance pattern to all 5 remaining orchestrators
 
 ### What was done
@@ -20,7 +64,7 @@ Continued from the previous session (Beacon fully fixed, 600 tests passing). App
 | steward | 12 (extra split for `_plan`) | ✅ clean |
 | scout | 13 | ✅ clean (dict-envelope path preserved) |
 
-**8 compliance fixes per agent:**
+**10 compliance fixes per agent:**
 1. Imports: added `hashlib`, `_run_evolution_loop`, `AgentInput`, `AgentOutput`, `ApprovalProposal`
 2. `_boot`: single `ensure_topic_exists` → loop over all topics + WARNING logs; silent memory/episodic exceptions → WARNING
 3. `_plan`: EVOLUTION_REQUEST early-return branch added; `except Exception: pass` → WARNING

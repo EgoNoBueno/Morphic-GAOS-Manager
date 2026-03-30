@@ -93,7 +93,7 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
 
 ### 3.1 Node Inventory
 
-Nexus-Prime's `StateGraph` has 19 nodes. The router node determines which branch to execute based on message type. Added since original design: `market_watchdog`, `roi_optimizer` (Phase 3 reactive routing), `handle_infra_provision` (Phase 4 InfraProvisioner).
+Nexus-Prime's `StateGraph` has 20 nodes. The router node determines which branch to execute based on message type. Added since original design: `market_watchdog`, `roi_optimizer` (Phase 3 reactive routing), `handle_infra_provision` (Phase 4 InfraProvisioner), `handle_approval_request` (Phase 4 — routes inbound `APPROVAL_REQUEST` messages from domain agents to a Chat card notification).
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -200,8 +200,10 @@ def route(state: NexusPrimeWorkingMemory) -> str:
         MessageType.COMMENT_RECEIVED:    "iterate_plan",     # Doc comment poll found new comment
         MessageType.SKILL_REQUEST:       "handle_skill_request",  # Agent requests package install approval
         # ── Phase 3 — Reactive cross-domain routing ────────────────────────────
-        MessageType.STOCK_INSUFFICIENT:  "market_watchdog",  # Foreman stockout → dispatch Scout
-        MessageType.DEAL_CLOSED:         "roi_optimizer",    # Pursuit deal closed → check margin → dispatch Beacon
+        MessageType.STOCK_INSUFFICIENT:  "market_watchdog",       # Foreman stockout → dispatch Scout
+        MessageType.DEAL_CLOSED:         "roi_optimizer",         # Pursuit deal closed → check margin → dispatch Beacon
+        # ── Phase 4 — Approval Gate inbound notifications ──────────────────────
+        MessageType.APPROVAL_REQUEST:    "handle_approval_request",  # Domain agent _park() → send Chat card
     }
     return routing_table.get(msg.message_type, "record")
 
@@ -1091,6 +1093,20 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
 
 ---
 
+#### `handle_approval_request`
+
+*(Phase 4)* Handles `APPROVAL_REQUEST` messages published by any domain agent's `_park()` function to `agent/approvals/events`. The sending agent has already written the `Agent_Approvals` row and computed `code_sha256` — this node's sole responsibility is to notify the owner via Google Chat so they can approve or reject from the sheet.
+
+**What it does:** Reads `proposal_id`, `agent_id`, and `description`/`issue` from `msg.payload`. Calls `send_approval_card()` to `settings.chat.owner_space`. Logs success or failure at `INFO`/`WARNING`. Does **not** re-write `Agent_Approvals`.
+
+**If `owner_space` is empty:** Logs a `WARNING` and returns — no exception raised, graph continues to `record`.
+
+**No LLM call.** Notification-only node.
+
+> ⚠️ **Root cause fixed (2026-03-29):** Prior to this node, `APPROVAL_REQUEST` was absent from the `routing_table` in `route()` and fell through to `"record"` — the Chat card was never sent for any domain agent's approval request. The bug existed from the initial nexus-prime build. See WORKLOG `2026-03-29T` entry for full context.
+
+---
+
 ### 3.3 Graph Assembly
 
 ```python
@@ -1118,6 +1134,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_node("market_watchdog",      market_watchdog)   # Phase 3
     graph.add_node("roi_optimizer",        roi_optimizer)     # Phase 3
     graph.add_node("handle_infra_provision", _infra_provision_node)  # Phase 4
+    graph.add_node("handle_approval_request", handle_approval_request)  # Phase 4
 
     graph.set_entry_point("boot")
     graph.add_edge("boot", "monitor")
@@ -1142,6 +1159,7 @@ def build_nexus_prime_graph() -> Any:
             "market_watchdog":      "market_watchdog",    # Phase 3
             "roi_optimizer":        "roi_optimizer",      # Phase 3
             "handle_infra_provision": "handle_infra_provision",  # Phase 4
+            "handle_approval_request": "handle_approval_request",  # Phase 4
         },
     )
 
@@ -1170,6 +1188,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_edge("market_watchdog",       "record")   # Phase 3
     graph.add_edge("roi_optimizer",         "record")   # Phase 3
     graph.add_edge("handle_infra_provision", "record")  # Phase 4
+    graph.add_edge("handle_approval_request", "record")  # Phase 4
     graph.add_edge("record",               END)
 
     return graph.compile(checkpointer=MemorySaver())
