@@ -635,6 +635,7 @@ def route(state: NexusPrimeWorkingMemory) -> str:
         MessageType.DEAL_CLOSED: "roi_optimizer",
         MessageType.INFRA_PROVISION_APPROVED: "handle_infra_provision",
         MessageType.INFRA_PROVISION_REJECTED: "handle_infra_provision",
+        MessageType.APPROVAL_REQUEST: "handle_approval_request",
     }
     return routing_table.get(msg.message_type, "record")
 
@@ -3080,6 +3081,78 @@ def _infra_provision_node(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMe
     return state
 
 
+def handle_approval_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    """
+    Handles an APPROVAL_REQUEST from any domain agent (published to agent/approvals/events).
+
+    The sending agent's _park() has already written the Agent_Approvals row and computed
+    the code_sha256 hash.  This node notifies the owner via Google Chat card so they can
+    review and approve or reject directly from the Agent_Approvals sheet.
+
+    Args:
+        state: Nexus-Prime working memory with incoming_message populated.
+
+    Returns:
+        Updated working memory (unchanged; this is a notification-only node).
+    """
+    from config import get_settings
+    from tools.google_chat import send_approval_card
+
+    msg = state.get("incoming_message")
+    if msg is None:
+        return state
+
+    payload: dict = msg.payload or {}
+    proposal_id: str = payload.get("proposal_id", msg.task_id or "")
+    agent_id: str = msg.source_agent or "unknown"
+    issue_summary: str = payload.get("description", payload.get("issue", ""))[:280]
+    priority: int = getattr(msg, "priority", 3)
+
+    try:
+        settings = get_settings()
+        owner_space: str = getattr(settings.chat, "owner_space", "") or ""
+        if not owner_space:
+            _log_cloud(
+                "nexus-prime",
+                state["project_id"],
+                "task",
+                state.get("task_id", ""),
+                "handle_approval_request: owner_space not configured — Chat card skipped",
+                "WARNING",
+            )
+            return state
+        send_approval_card(
+            space_name=owner_space,
+            proposal_id=proposal_id,
+            agent_id=agent_id,
+            issue_summary=issue_summary,
+            proposed_action=(
+                f"Agent {agent_id} requests approval. "
+                "Review the Agent_Approvals sheet to approve or reject."
+            )[:280],
+            priority=priority,
+            cost_usd=0.0,
+        )
+        _log_cloud(
+            "nexus-prime",
+            state["project_id"],
+            "task",
+            state.get("task_id", ""),
+            f"handle_approval_request: Chat card sent for proposal {proposal_id} from {agent_id}",
+            "INFO",
+        )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            state["project_id"],
+            "task",
+            state.get("task_id", ""),
+            f"handle_approval_request: Chat card failed — {exc}",
+            "WARNING",
+        )
+    return state
+
+
 def build_nexus_prime_graph() -> Any:
     """
     Assemble and compile the Nexus-Prime StateGraph per
@@ -3106,6 +3179,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_node("market_watchdog", market_watchdog)
     graph.add_node("roi_optimizer", roi_optimizer)
     graph.add_node("handle_infra_provision", _infra_provision_node)
+    graph.add_node("handle_approval_request", handle_approval_request)
 
     graph.set_entry_point("boot")
     graph.add_edge("boot", "monitor")
@@ -3128,6 +3202,9 @@ def build_nexus_prime_graph() -> Any:
             "iterate_plan": "iterate_plan",
             "handle_skill_request": "handle_skill_request",
             "handle_infra_provision": "handle_infra_provision",
+            "market_watchdog": "market_watchdog",
+            "roi_optimizer": "roi_optimizer",
+            "handle_approval_request": "handle_approval_request",
         },
     )
 
@@ -3156,6 +3233,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_edge("iterate_plan", "record")
     graph.add_edge("handle_skill_request", "record")
     graph.add_edge("handle_infra_provision", "record")
+    graph.add_edge("handle_approval_request", "record")
     graph.add_edge("market_watchdog", "record")
     graph.add_edge("roi_optimizer", "record")
     graph.add_edge("record", END)
