@@ -402,6 +402,7 @@ def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
             f"_park: Agent_Approvals write failed: {exc}",
             "ERROR",
         )
+        return state
 
     state["parked_proposals"].append(proposal.id)
     try:
@@ -554,6 +555,7 @@ def _evolve(state: AgentWorkingMemory) -> AgentWorkingMemory:
             f"_evolve: Agent_Approvals write failed: {exc}",
             "ERROR",
         )
+        return state
 
     state["parked_proposals"].append(proposal.id)
     try:

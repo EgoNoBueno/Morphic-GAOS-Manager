@@ -174,7 +174,10 @@ Each orchestrator owns one outbound topic and must subscribe to Nexus-Prime's br
 
 All published messages must use the `A2AMessage` schema from `GAOS-Manager-Spec.md` §10.2, including `project_id`.
 
-> ⚠️ **Common failure pattern — `_INBOUND_TOPICS` declared but never subscribed:** A module-level `_INBOUND_TOPICS = [...]` constant is documentation, not subscription. Pub/Sub delivery does not start until `tools.pubsub.subscribe(topic, handler)` is called for each entry — explicitly, in the boot sequence (§7, step 5). An orchestrator missing these `subscribe()` calls compiles and starts normally but silently drops all inbound messages.
+> **Delivery models — `_INBOUND_TOPICS` is documentation in both cases:** A module-level `_INBOUND_TOPICS = [...]` constant is documentation, not subscription. Two delivery models are supported:
+>
+> - **Pull/subscription model:** Pub/Sub delivery does not start until `tools.pubsub.subscribe(topic, handler)` is called for each entry — explicitly, in the boot sequence (§7, step 5). An orchestrator using this model that is missing `subscribe()` calls compiles and starts normally but silently drops all inbound messages.
+> - **GCP push model (used by existing orchestrators in this repo):** Push subscriptions are provisioned separately (see `GAOS-Deploy-Spec.md`) and GCP delivers inbound messages as HTTP POST requests to the Cloud Run service. In this model `subscribe()` is never called — `_INBOUND_TOPICS` is used only to drive `ensure_topic_exists()` during boot (step 4/5) and serves as self-documentation of expected inbound traffic. The silent-drop risk above does **not** apply to push-configured deployments.
 
 ### 3.4 Dashboard Heartbeat
 
@@ -396,7 +399,7 @@ All agents must pass the following tests before they are considered deployable.
 | # | Test | Pass Condition |
 |---|------|----------------|
 | I1 | Boot sequence completes — IDLE heartbeat appears in Sheet within 60 s | Row present in dashboard tab with `status = IDLE` |
-| I2 | Orchestrator parks a Priority-4 task and publishes `TASK_HANDOFF` to Pub/Sub | Parked task is in LangGraph state; message appears on topic |
+| I2 | Orchestrator parks a Priority-4 task, writes to `Agent_Approvals` Sheet, and publishes `MessageType.APPROVAL_REQUEST` to `agent/approvals/events` | Parked task is in LangGraph state; Sheet row written **before** publish; `MessageType.APPROVAL_REQUEST` (not `TASK_HANDOFF`) appears on topic — no automatic retry if Sheet write is skipped |
 | I3 | Orchestrator resumes correctly when approval event arrives via Pub/Sub | Task ID matched; execution continues from parked state |
 | I4 | Self-evolution loop: iteration cap triggers at iteration 5 | Loop does not start iteration 6; `EvolutionTaskOutcome` logged with `stopping_constraint = iteration_cap` |
 | I5 | No-progress detector fires when error fingerprint repeats | Loop stops on iteration N; `stopping_constraint = no_progress` |

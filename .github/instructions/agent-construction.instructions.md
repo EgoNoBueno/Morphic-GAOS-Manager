@@ -1,6 +1,6 @@
 ---
 description: "Use when editing agent orchestrators or sub-agent task files. Enforces GAOS-Agent-Spec.md construction requirements: tier rules, Pydantic schemas, cost tracking, and identity files."
-applyTo: "agents/**/*.py"
+applyTo: "agents/{beacon,foreman,ledger,pursuit,scout,steward}/**/*.py"
 ---
 # Agent Construction Rules
 
@@ -52,7 +52,10 @@ typed `AgentOutput` (or a subclass). Forbidden at these boundaries:
 **Tier 3** (task files in `agents/<name>/tasks/*.py`):
 - Stateless — no LangGraph, no parked tasks
 - All errors caught and returned as `AgentOutput(status="escalated"|"failed")`
-- `LOCAL_MODEL` only — no `DEEP_MODEL` calls
+- `LOCAL_MODEL` by default — `FAST_MODEL` is allowed only when `LOCAL_MODEL` is
+  unavailable (fallback) or the task explicitly requires web-current knowledge
+  (e.g., search result parsing). See GAOS-Agent-Spec.md §4.4 for the two permitted
+  conditions. `DEEP_MODEL` is never permitted in Tier 3.
 - No direct Sheet writes — return data to orchestrator
 
 ## Identity File

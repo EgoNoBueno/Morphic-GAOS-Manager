@@ -187,7 +187,6 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
             "WARNING",
         )
 
-    msg = state.get("incoming_message")
     if msg and msg.message_type in (MessageType.TASK_HANDOFF, MessageType.BROADCAST):
         pending_items.append(msg.payload or {})
 
@@ -386,6 +385,7 @@ def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
             f"_park: Agent_Approvals write failed: {exc}",
             "ERROR",
         )
+        return state
 
     state["parked_proposals"].append(proposal.id)
     try:
@@ -538,6 +538,7 @@ def _evolve(state: AgentWorkingMemory) -> AgentWorkingMemory:
             f"_evolve: Agent_Approvals write failed: {exc}",
             "ERROR",
         )
+        return state
 
     state["parked_proposals"].append(proposal.id)
     try:
