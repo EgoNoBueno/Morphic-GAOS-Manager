@@ -884,6 +884,22 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
 **Failure behaviour:** If the model call fails, the node returns a fallback string (`"I'm having trouble processing your request right now."`) and logs the exception. If the Chat send fails, it is logged but does not propagate — `record` still runs.
 
+> ⚠️ **Google Chat delivery abandoned — 2026-03-30:** After ~2 weeks of attempted integration, Google Chat was never able to deliver a single mobile message end-to-end. The node code is correct and remains in the graph (to serve future `CHAT_MESSAGE` sources), but the Google Chat webhook delivery path is not operational. Full failure history:
+>
+> 1. **Local 403 — missing `chat.bot` ADC scope:** `send_reply_in_thread()` raises `403 PERMISSION_DENIED` when run locally against real Chat. Expected — ADC does not hold the `https://www.googleapis.com/auth/chat.bot` scope. Workaround: deploy and test on Cloud Run only. Non-blocking but forced all integration testing to be remote.
+>
+> 2. **Cloud Run 500 — `CLOUD_RUN_URL` env var not set:** `_verify_chat_jwt()` validates the JWT `aud` claim against `CLOUD_RUN_URL`. The variable was not included in the initial deploy loop, causing every `/chat` POST to return `500`. Fixed manually via `gcloud run services update nexus-prime --set-env-vars "CLOUD_RUN_URL=https://nexus-prime-975461050387.us-central1.run.app,AGENT_NAME=nexus-prime"` → revision `00057`. The deploy spec has since been updated to include this step.
+>
+> 3. **Cloud Run 401 — `chat@system.gserviceaccount.com` missing from `roles/run.invoker`:** Google Chat delivers webhooks signed by the service account `chat@system.gserviceaccount.com`. This SA must be explicitly granted `roles/run.invoker` on the `nexus-prime` Cloud Run service — it is not covered by the `pubsub-push-sa` binding. Fixed via `gcloud run services add-iam-policy-binding nexus-prime --member="serviceAccount:chat@system.gserviceaccount.com" --role="roles/run.invoker"`.
+>
+> 4. **Google Chat retry exhaustion:** Google Chat attempts delivery 2–3 times within a short window (~30–60 seconds). If the service returns non-200 during those retries, Chat marks the delivery as permanently failed and never re-attempts — even after the underlying problem is fixed. The IAM fix (item 3) took ~2 minutes to propagate; Chat had already exhausted its retry budget by then. Subsequent messages also failed to deliver reliably with no clear error surfaced in the Chat UI.
+>
+> 5. **Stale Cloud Run image:** Prior to revision `00056`, Cloud Run was running a 6-day-old image (revision `00055-m7z`, deployed 2026-03-24). The local fix to raise `RuntimeError` on Ollama failure (disabling Gemini fallback) was not deployed, causing 49+ Gemini fallback invocations hitting 429 rate limits and silently failing every Chat response.
+>
+> 6. **Tunnel URL instability:** The `gaas-ollama.loca.lt` reserved subdomain is not guaranteed — loca.lt grants it on a best-effort basis. When the subdomain lapses, the tunnel runs on a random URL, `OLLAMA_HOST` in Secret Manager becomes stale, and Cloud Run hits a dead endpoint.
+>
+> **Outcome:** Google Chat is abandoned as the user-facing interface. The `chat_respond` node remains in the graph unchanged — it will serve `CHAT_MESSAGE` events from the Gmail polling path (see §X — Gmail integration). The `send_reply_in_thread()` / `send_threaded_reply()` calls will be replaced with `gmail_reply()` once that tool is implemented.
+
 ---
 
 #### `vision_blueprint`

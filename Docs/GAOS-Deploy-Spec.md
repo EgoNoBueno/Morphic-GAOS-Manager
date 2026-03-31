@@ -1653,13 +1653,14 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [x] Cloud Scheduler TTL sweep job exists and can be triggered manually (HTTP 200 response)
 - [x] Cloud Scheduler nightly archive job exists with state `ENABLED` — `POST /archive` implemented in Phase 2 Item 3 (returns HTTP 200)
 - [x] **[Phase 2.5]** Google Chat App created in Google Cloud console; Chat API enabled; `nexus-prime-sa` added to the Chat space as the bot identity (authenticated via service account ADC — no Secret Manager token required)
+- ❌ **[Phase 2.5 — ABANDONED 2026-03-30]** Google Chat end-to-end delivery: never successfully delivered a message from mobile after ~2 weeks. Failure summary: (1) `CLOUD_RUN_URL` env var missing from initial deploy → fixed; (2) `chat@system.gserviceaccount.com` not in `roles/run.invoker` → fixed; (3) Chat exhausts 2–3 retries in ~60s — IAM propagation took longer, retry budget spent; (4) tunnel URL instability caused stale `OLLAMA_HOST` → fallback Gemini calls hitting 429; (5) stale Cloud Run image (6 days old) deployed during active testing. Full post-mortem in `GAOS-Nexus-Prime-Spec.md §3.2 chat_respond` warning block. **Replaced by Gmail polling — see §10.X.**
 - [x] **[Phase 2.5]** Vertex AI Search datastore created and indexed against Drive `Knowledge/` folder; datastore ID stored in `settings.yaml`
 - [x] **[Phase 2.5]** Google Custom Search Engine created; CSE ID and API key stored in Secret Manager as `GOOGLE_SEARCH_CX` and `GOOGLE_SEARCH_API_KEY`
 - [ ] **[Phase 2.5]** AppSheet app deployed and connected to the Google Sheets workbook (`Agent_Approvals` + `Project Registry` tabs at minimum)
 - [x] **[Phase 2.5]** Cloud Scheduler `gaos-daily-sync` job created (6 AM daily, `POST /daily-sync`, returns HTTP 200)
 - [x] **[Phase 2.5]** Cloud Scheduler `doc-comment-poll` job created (every 5 minutes, `POST /poll-comments`, returns HTTP 200)
-- [x] **[Phase 2.5]** `POST /chat` endpoint returns HTTP 200; Nexus-Prime responds in Chat thread within 10 seconds
-- [ ] **[Phase 2.5]** Approval Gate Chat-path validated end-to-end: Chat card button tap → `APPROVAL_RESULT` published to Pub/Sub → Nexus-Prime resumes the parked task → `Agent_Approvals` row updated + audit row written to Logs tab (see §14 unchecked item)
+- [x] **[Phase 2.5]** `POST /chat` endpoint returns HTTP 200; Nexus-Prime responds in Chat thread within 10 seconds — ⚠️ endpoint works (JWT verifies, routes correctly) but Google Chat never reliably delivered messages from mobile. See abandonment note above.
+- ❌ **[Phase 2.5 — ABANDONED]** Approval Gate Chat-path validated end-to-end: Chat card button tap → `APPROVAL_RESULT` published to Pub/Sub → Nexus-Prime resumes the parked task → `Agent_Approvals` row updated + audit row written to Logs tab — blocked by Google Chat delivery failure. Will be re-evaluated with Gmail-based approval path.
 - [x] All webhook smoke tests passing: `python scripts/smoke_test_6_7.py` prints `8/8 tests passed` ✅ (2026-03-18)
 - [x] All 8 individual webhook test cases from `GAOS-Manager-Spec.md §14` confirmed via smoke_test_6_7.py output ✅ (2026-03-18)
 - [x] `setupProtections()` has been run; Status/Code/Hash columns are locked to owner
@@ -1808,6 +1809,8 @@ Phase 3 is complete — and Phase 4 (production validation) may begin — when *
   - `_verify_chat_jwt()` verifies Google-signed JWT (`chat@system.gserviceaccount.com`) on every `/chat` request ✅
   - `/chat` `CARD_CLICKED` handler routes `"approve"/"reject"` → `APPROVAL_RESULT` and `"skill_approve"/"skill_reject"` → `SKILL_REQUEST` (resolved) to Nexus-Prime ✅
   - (2026-03-20)
+  - ⚠️ **Google Chat delivery abandoned 2026-03-30** — the `/chat` endpoint itself is correct and deployed, but Google Chat never reliably delivered messages from mobile. Full post-mortem: `GAOS-Nexus-Prime-Spec.md §3.2 chat_respond`. `chat@system.gserviceaccount.com` has `roles/run.invoker` and `CLOUD_RUN_URL` is set (revision `00057`). Pivoting to Gmail polling.
+- ❌ **[ABANDONED]** Approval Gate Chat-path validated end-to-end: Chat card button tap → `APPROVAL_RESULT` published to Pub/Sub — blocked by Chat delivery failure. Will be re-evaluated with Gmail.
 - [x] `_call_model()` extended with `image_bytes: bytes | None = None`; multimodal content sent as `[Part.from_bytes(...), Part.from_text(...)]` for Gemini; Ollama + `image_bytes` logs `WARNING` and strips bytes ✅ (2026-03-20)
 - [x] OpenTofu IaC blueprint (`infra/main.tf`) and push-to-deploy CI/CD pipeline (`.github/workflows/deploy.yml`) committed to repo ✅ (2026-03-20)
 - [x] WIF (Workload Identity Federation) replaces long-lived `GCP_SA_KEY` in CI/CD; `id-token: write` permission set; `attribute.repository` condition scopes access to this repo only ✅ (2026-03-20)

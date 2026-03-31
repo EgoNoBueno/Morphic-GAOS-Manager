@@ -766,7 +766,7 @@ def _call_model(
 
 | `model` value | Route | Notes |
 |---------------|-------|-------|
-| starts with `ollama/` | `_call_model_ollama()` → local Ollama server | Emits `logger.warning` + increments fallback counter on timeout or connection error; caller receives the fallback Gemini response transparently |
+| starts with `ollama/` | `_call_model_ollama()` → local Ollama server | Increments fallback counter on `httpx.TimeoutException`, `httpx.ConnectError`, or `httpx.HTTPStatusError`; **raises `RuntimeError`** — no Gemini fallback. Callers must catch and handle gracefully; must NOT re-invoke `_call_model()` with a Gemini alias. |
 | any other string | `_call_model_gemini()` → `google.genai` (AI Studio) | Raises `RuntimeError` immediately if `GEMINI_API_KEY` is unavailable; catches `ResourceExhausted` (429) with a `WARNING` log then re-raises |
 
 ### Ollama Call Details

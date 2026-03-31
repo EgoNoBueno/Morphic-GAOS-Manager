@@ -276,10 +276,11 @@ A sub-agent that needs write access to the Sheet must return its result to the o
 ### 4.4 Model Selection
 
 Sub-agents use `LOCAL_MODEL` by default. They may escalate to `FAST_MODEL` only when:
-- The local model is unavailable (fallback per `GAOS-Manager-Spec.md` §5), **or**
 - The task explicitly requires web-current knowledge (e.g., search result parsing).
 
 Sub-agents must **never** call `DEEP_MODEL`.
+
+Sub-agents must **never** re-call `_call_model()` with `FAST_MODEL` or `DEEP_MODEL` as a substitute when `LOCAL_MODEL` is unavailable. `_call_model()` raises `RuntimeError` when Ollama is unreachable — the automatic Gemini fallback is permanently disabled (see §5). Catch the `RuntimeError` and return a graceful degradation result (e.g. a user-facing apology string or a no-op) rather than escalating to a Gemini alias.
 
 ### 4.5 `project_id` Inheritance
 

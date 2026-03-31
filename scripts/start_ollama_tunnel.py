@@ -315,9 +315,10 @@ def _run_tunnel_once(
     if not ok:
         log.warning(
             "Ollama did not respond through the tunnel — is Ollama running on the configured port?"
+            " Skipping Secret Manager update to avoid publishing a dead endpoint."
         )
 
-    if not no_secret:
+    if ok and not no_secret:
         current = _current_secret_url(project)
         if current == tunnel_url:
             log.info("OLLAMA_HOST already set to %r — skipping Secret Manager update.", tunnel_url)
@@ -390,13 +391,23 @@ def main() -> int:
         help="Request a fixed localtunnel subdomain (default: gaos-ollama → https://gaos-ollama.loca.lt). "
         "A stable subdomain means Secret Manager is only updated when the URL actually changes.",
     )
+
+    def _positive_float(value: str) -> float:
+        fval = float(value)
+        if fval <= 0:
+            raise argparse.ArgumentTypeError(
+                f"--health-interval must be a positive number (got {value!r}); "
+                "_health_loop() uses this as Event.wait(timeout=...) and will spin on <= 0."
+            )
+        return fval
+
     p.add_argument(
         "--health-interval",
-        type=float,
+        type=_positive_float,
         default=60.0,
         metavar="SECONDS",
         help="Seconds between health-check polls of /api/tags through the tunnel (default: 60). "
-        "Two consecutive failures kill the tunnel process so the watchdog restarts it.",
+        "Must be > 0. Two consecutive failures kill the tunnel process so the watchdog restarts it.",
     )
     p.add_argument(
         "--no-secret",

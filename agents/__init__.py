@@ -162,8 +162,11 @@ def _call_model(
     If model starts with "ollama/":
       - Optionally prepends web search results when web_access=True
       - POSTs to OLLAMA_HOST/api/generate with LOCAL_MODEL_TIMEOUT_SECONDS timeout
-      - On timeout or connection error, raises RuntimeError — the Gemini fallback is
-        DISABLED. The error propagates to the caller; no Gemini tokens are spent.
+      - On httpx.TimeoutException, httpx.ConnectError, or httpx.HTTPStatusError
+        (including 502 Bad Gateway from a dead tunnel), raises RuntimeError — the
+        Gemini fallback is DISABLED. The error propagates to the caller; no Gemini
+        tokens are spent. Callers must catch RuntimeError and handle gracefully;
+        they must NOT re-invoke _call_model() with a Gemini alias as a substitute.
       - image_bytes are not supported for Ollama; a warning is logged and bytes ignored.
 
     If model is a Gemini alias:

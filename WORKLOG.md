@@ -5,6 +5,65 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-30T22:00-03:00 — Abandoned Google Chat; full post-mortem documented; pivoting to Gmail
+
+### What was done
+
+After ~2 weeks of integration attempts, formally abandoned Google Chat as the user-facing
+interface. Documented the complete failure history and pivoted direction to Gmail polling.
+
+**Root cause timeline — why Chat never worked:**
+
+1. **Local 403** — `send_reply_in_thread()` always returns 403 locally; ADC lacks `chat.bot`
+   scope. Forced all testing to Cloud Run only.
+2. **Stale Cloud Run image (6 days old)** — revision `00055-m7z` (2026-03-24) was live while
+   the Gemini-fallback fix was only local. 49+ Gemini fallback invocations hitting 429 rate
+   limits caused every Chat response to silently fail.
+3. **Missing `CLOUD_RUN_URL` env var** — `_verify_chat_jwt()` verifies JWT `aud` against this
+   variable. Not set → every `/chat` POST returned 500. Fixed: `gcloud run services update
+   nexus-prime --set-env-vars "CLOUD_RUN_URL=...,AGENT_NAME=nexus-prime"` → revision `00057`.
+4. **`chat@system.gserviceaccount.com` not in `roles/run.invoker`** — Google Chat delivers
+   webhooks signed by this SA. Not the same as `pubsub-push-sa`. Fixed: `gcloud run services
+   add-iam-policy-binding nexus-prime --member="serviceAccount:chat@system.gserviceaccount.com"
+   --role="roles/run.invoker"`. IAM propagation takes ~2 minutes.
+5. **Chat retry exhaustion** — Chat attempts 2–3 deliveries within ~60 seconds. During the
+   ~2 min IAM propagation window, Chat spent its entire retry budget on 401 responses and
+   permanently marked the deliveries as failed. Fixing the IAM binding did not help past
+   messages; new messages also failed, suggesting broader reliability issues with Chat delivery.
+6. **Tunnel instability** — `gaas-ollama.loca.lt` subdomain not guaranteed by loca.lt.
+   When lapsed, `OLLAMA_HOST` in Secret Manager becomes stale → Cloud Run hits dead endpoint
+   → prior to Gemini-fallback fix, silent fallback → 429 rate limit.
+
+**Decision:** Google Chat delivery is fundamentally unreliable for this use case. The
+infrastructure complexity (reserved subdomain, Chat IAM quirks, retry exhaustion, stale
+deploys) exceeds the value of the integration. Gmail polling is a simpler, more reliable path.
+
+**What was fixed before abandonment (all deployed, revision `00057`):**
+- Gemini fallback removed from `_call_model_ollama()` (raises RuntimeError)
+- `CLOUD_RUN_URL` and `AGENT_NAME` env vars set on Cloud Run nexus-prime
+- `chat@system.gserviceaccount.com` granted `roles/run.invoker`
+- All 7 services running current image
+
+### What changed
+
+- `Docs/GAOS-Nexus-Prime-Spec.md` — added 6-point warning block to `chat_respond` node
+  documenting complete Google Chat failure history and declaring abandonment
+- `Docs/GAOS-Deploy-Spec.md` — marked Chat checklist items as abandoned with failure summary;
+  updated Phase 3 Interactive Hub checklist; added abandonment note to Phase 1 Chat items
+
+### Tests
+
+600/600 passing (no code changes this session).
+
+### What's next
+
+- Implement Gmail polling: `tools/gmail.py` (list_unread, get_message, mark_read, send_reply)
+- Add `/gmail-poll` endpoint to `main.py`
+- Wire Cloud Scheduler `gmail-poll` job (every 2 minutes)
+- Build, deploy, test end-to-end from mobile email
+
+---
+
 ## 2026-03-30T20:30-03:00 — Hardened tunnel watchdog: kill-tree, atomic PID lock, subdomain fix
 
 ### What was done
