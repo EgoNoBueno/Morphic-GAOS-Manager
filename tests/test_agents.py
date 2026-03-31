@@ -483,45 +483,27 @@ class TestOllamaRouting:
         assert result.text == "hello from ollama"
         assert result.cost_usd == 0.0  # local model has no API cost
 
-    def test_ollama_timeout_falls_back_to_gemini(self):
-        """On TimeoutException from Ollama, must fall back to LOCAL_MODEL_FALLBACK."""
+    def test_ollama_timeout_raises_runtime_error(self):
+        """On TimeoutException from Ollama, must raise RuntimeError (fallback disabled)."""
         import httpx as _httpx
 
         from agents import _call_model
-
-        mock_gemini_resp = MagicMock()
-        mock_gemini_resp.text = "fallback gemini response"
-        mock_gemini_resp.usage_metadata = None
 
         with patch("httpx.post", side_effect=_httpx.TimeoutException("timed out")):
             with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
-                with patch("google.genai.Client") as mock_client_cls:
-                    mock_client = MagicMock()
-                    mock_client.models.generate_content.return_value = mock_gemini_resp
-                    mock_client_cls.return_value = mock_client
-                    result = _call_model("test prompt", model="ollama/llama3.1")
+                with pytest.raises(RuntimeError, match="LOCAL_MODEL unavailable"):
+                    _call_model("test prompt", model="ollama/llama3.1")
 
-        assert result.text == "fallback gemini response"
-
-    def test_ollama_connect_error_falls_back(self):
-        """On ConnectError (Ollama not running), must fall back gracefully."""
+    def test_ollama_connect_error_raises_runtime_error(self):
+        """On ConnectError (Ollama not running), must raise RuntimeError (fallback disabled)."""
         import httpx as _httpx
 
         from agents import _call_model
 
-        mock_gemini_resp = MagicMock()
-        mock_gemini_resp.text = "gemini fallback"
-        mock_gemini_resp.usage_metadata = None
-
         with patch("httpx.post", side_effect=_httpx.ConnectError("refused")):
             with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
-                with patch("google.genai.Client") as mock_client_cls:
-                    mock_client = MagicMock()
-                    mock_client.models.generate_content.return_value = mock_gemini_resp
-                    mock_client_cls.return_value = mock_client
-                    result = _call_model("test prompt", model="ollama/llama3.1")
-
-        assert result.text == "gemini fallback"
+                with pytest.raises(RuntimeError, match="LOCAL_MODEL unavailable"):
+                    _call_model("test prompt", model="ollama/llama3.1")
 
     def test_gemini_model_does_not_call_httpx(self):
         """gemini-2.0-flash must never touch httpx.post."""
@@ -690,16 +672,9 @@ class TestOllamaFallbackCounter:
 
         from agents import _call_model, get_ollama_fallback_count
 
-        mock_gemini_resp = MagicMock()
-        mock_gemini_resp.text = "gemini"
-        mock_gemini_resp.usage_metadata = None
-
         with patch("httpx.post", side_effect=_httpx.TimeoutException("timed out")):
             with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
-                with patch("google.genai.Client") as mock_client_cls:
-                    mock_client = MagicMock()
-                    mock_client.models.generate_content.return_value = mock_gemini_resp
-                    mock_client_cls.return_value = mock_client
+                with pytest.raises(RuntimeError):
                     _call_model("prompt", model="ollama/llama3.1")
 
         assert get_ollama_fallback_count() == 1
@@ -710,37 +685,23 @@ class TestOllamaFallbackCounter:
 
         from agents import _call_model, get_ollama_fallback_count
 
-        mock_gemini_resp = MagicMock()
-        mock_gemini_resp.text = "gemini"
-        mock_gemini_resp.usage_metadata = None
-
         with patch("httpx.post", side_effect=_httpx.ConnectError("refused")):
             with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
-                with patch("google.genai.Client") as mock_client_cls:
-                    mock_client = MagicMock()
-                    mock_client.models.generate_content.return_value = mock_gemini_resp
-                    mock_client_cls.return_value = mock_client
+                with pytest.raises(RuntimeError):
                     _call_model("prompt", model="ollama/llama3.1")
 
         assert get_ollama_fallback_count() == 1
 
     def test_counter_accumulates_across_calls(self):
-        """Counter must add up across multiple fallback events."""
+        """Counter must add up across multiple failure events."""
         import httpx as _httpx
 
         from agents import _call_model, get_ollama_fallback_count
 
-        mock_gemini_resp = MagicMock()
-        mock_gemini_resp.text = "gemini"
-        mock_gemini_resp.usage_metadata = None
-
         for _ in range(3):
             with patch("httpx.post", side_effect=_httpx.ConnectError("refused")):
                 with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
-                    with patch("google.genai.Client") as mock_client_cls:
-                        mock_client = MagicMock()
-                        mock_client.models.generate_content.return_value = mock_gemini_resp
-                        mock_client_cls.return_value = mock_client
+                    with pytest.raises(RuntimeError):
                         _call_model("prompt", model="ollama/llama3.1")
 
         assert get_ollama_fallback_count() == 3
@@ -751,16 +712,9 @@ class TestOllamaFallbackCounter:
 
         from agents import _call_model, get_ollama_fallback_count, reset_ollama_fallback_count
 
-        mock_gemini_resp = MagicMock()
-        mock_gemini_resp.text = "gemini"
-        mock_gemini_resp.usage_metadata = None
-
         with patch("httpx.post", side_effect=_httpx.ConnectError("refused")):
             with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
-                with patch("google.genai.Client") as mock_client_cls:
-                    mock_client = MagicMock()
-                    mock_client.models.generate_content.return_value = mock_gemini_resp
-                    mock_client_cls.return_value = mock_client
+                with pytest.raises(RuntimeError):
                     _call_model("prompt", model="ollama/llama3.1")
 
         assert get_ollama_fallback_count() == 1
@@ -781,32 +735,25 @@ class TestOllamaFallbackCounter:
 
         assert get_ollama_fallback_count() == 0
 
-    def test_warning_logged_on_fallback(self):
-        """A logger.warning must be emitted with exc type, host, and model on fallback."""
+    def test_error_logged_on_ollama_failure(self):
+        """A logger.error must be emitted with exc type, host, and model on Ollama failure."""
         import httpx as _httpx
 
         from agents import _call_model
 
-        mock_gemini_resp = MagicMock()
-        mock_gemini_resp.text = "gemini"
-        mock_gemini_resp.usage_metadata = None
-
         with patch("httpx.post", side_effect=_httpx.ConnectError("refused")):
             with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
-                with patch("google.genai.Client") as mock_client_cls:
-                    mock_client = MagicMock()
-                    mock_client.models.generate_content.return_value = mock_gemini_resp
-                    mock_client_cls.return_value = mock_client
-                    with patch("agents.logger") as mock_logger:
+                with patch("agents.logger") as mock_logger:
+                    with pytest.raises(RuntimeError):
                         _call_model("prompt", model="ollama/llama3.1")
 
-        mock_logger.warning.assert_called_once()
-        ca = mock_logger.warning.call_args
+        mock_logger.error.assert_called_once()
+        ca = mock_logger.error.call_args
         format_str = ca.args[0]
         fmt_args = ca.args[1:]
         formatted = format_str % fmt_args if fmt_args else format_str
         assert "ConnectError" in formatted
-        assert "llama3.1" in formatted
+        assert "llama3" in formatted
 
 
 # ── Web search tool ────────────────────────────────────────────────────────

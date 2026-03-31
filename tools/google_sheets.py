@@ -161,8 +161,7 @@ def init_sheets_client(project_id: str) -> None:
     the workbook for this project. Must be called before any other function
     in this module.
 
-    Locally, ADC is provided by `gcloud auth application-default login`.
-    On Cloud Run, ADC is the attached service account identity.
+    Adds retry logic for transient errors.
 
     Args:
         project_id: The AOS project namespace (matches a key in settings.yaml
@@ -190,13 +189,21 @@ def init_sheets_client(project_id: str) -> None:
     )
     _client = gspread.Client(auth=creds)
 
-    try:
-        _spreadsheet = _client.open_by_key(project.sheet_id)
-    except gspread.exceptions.SpreadsheetNotFound as exc:
-        raise WorkbookNotFoundError(
-            f"Spreadsheet '{project.sheet_id}' not found or inaccessible. "
-            "Ensure the ADC identity has been granted access to the workbook."
-        ) from exc
+    retries = 3
+    for attempt in range(retries):
+        try:
+            _spreadsheet = _client.open_by_key(project.sheet_id)
+            break
+        except (gspread.exceptions.APIError, gspread.exceptions.SpreadsheetNotFound) as exc:
+            if attempt < retries - 1 and not isinstance(
+                exc, gspread.exceptions.SpreadsheetNotFound
+            ):
+                time.sleep(2**attempt)  # Exponential backoff
+            else:
+                raise WorkbookNotFoundError(
+                    f"Spreadsheet '{project.sheet_id}' not found or inaccessible. "
+                    "Ensure the ADC identity has been granted access to the workbook."
+                ) from exc
 
 
 # ── Core functions ─────────────────────────────────────────────────────────

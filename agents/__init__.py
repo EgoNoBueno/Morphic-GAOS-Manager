@@ -89,6 +89,17 @@ def log_state_transition(
 _ollama_fallback_lock = threading.Lock()
 _ollama_fallback_count: int = 0
 
+# ── Non-Ollama LLM alert telemetry ───────────────────────────────────────────
+# Sends a Google Chat notification the first time a non-Ollama model is called,
+# then rate-limits to one alert per model per _GEMINI_ALERT_INTERVAL_SECONDS.
+# Intent: while OLLAMA_HOST is broken, every Gemini call is unexpected — the
+# owner should know immediately without being flooded.
+
+_GEMINI_ALERT_INTERVAL_SECONDS: int = 300  # 5 minutes between alerts per model
+_gemini_alert_lock = threading.Lock()
+# Maps model-name → epoch-seconds of last alert sent
+_gemini_last_alert: dict[str, float] = {}
+
 
 def get_ollama_fallback_count() -> int:
     """Return the number of times the system has fallen back from Ollama to Gemini.
@@ -203,19 +214,18 @@ def _call_model_ollama(
     system_prompt: str,
     parse_json: bool,
     settings: Any,
-    no_fallback: bool = False,
+    no_fallback: bool = False,  # retained for call-site compatibility; always behaves as True
 ) -> ModelResponse:
     """
-    Calls the local Ollama server. Falls back to LOCAL_MODEL_FALLBACK on any error
-    unless *no_fallback* is True, in which case the network exception is re-raised
-    so the caller can handle it without touching Gemini.
-    Model alias format: "ollama/<model-name>" e.g. "ollama/llama3.1"
+    Calls the local Ollama server. Raises RuntimeError on any connection or timeout
+    error — Gemini fallback is permanently disabled until a network-reachable
+    OLLAMA_HOST is configured in Secret Manager.
+    Model alias format: "ollama/<model-name>" e.g. "ollama/llama3"
     """
     import httpx
 
     ollama_model = model.split("/", 1)[1]  # strip "ollama/" prefix
     timeout_s = float(getattr(settings.models, "LOCAL_MODEL_TIMEOUT_SECONDS", 2))
-    fallback_model = settings.models.LOCAL_MODEL_FALLBACK
 
     try:
         from tools.secrets import get_secret
@@ -226,11 +236,18 @@ def _call_model_ollama(
 
     full_prompt = f"System: {system_prompt}\n\n{prompt}" if system_prompt else prompt
 
+    # localtunnel (loca.lt) serves an HTML challenge page to clients that don't
+    # identify themselves as non-browser traffic.  The header below bypasses it.
+    extra_headers: dict[str, str] = {}
+    if ".loca.lt" in host:
+        extra_headers["Bypass-Tunnel-Reminder"] = "true"
+
     try:
         response = httpx.post(
             f"{host}/api/generate",
             json={"model": ollama_model, "prompt": full_prompt, "stream": False},
             timeout=timeout_s,
+            headers=extra_headers,
         )
         response.raise_for_status()
         data = response.json()
@@ -246,22 +263,76 @@ def _call_model_ollama(
         return ModelResponse(text=text, cost_usd=0.0, tokens_used=0, data=parsed)
 
     except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as exc:
-        if no_fallback:
-            raise
+        # Fallback to Gemini is disabled until Ollama is reachable from Cloud Run.
+        # OLLAMA_HOST = http://localhost:11434 is the container loopback — it never
+        # resolves in Cloud Run.  Falling back silently burns Gemini Flash free-tier
+        # quota (20 req/day) causing 429s in chat_respond.  Fail fast instead so the
+        # error surfaces clearly and no Gemini tokens are wasted.
+        # Re-enable by setting LOCAL_MODEL_FALLBACK_DISABLED = false in settings.yaml
+        # once a network-reachable OLLAMA_HOST is configured.
         global _ollama_fallback_count
         with _ollama_fallback_lock:
             _ollama_fallback_count += 1
             current_count = _ollama_fallback_count
-        logger.warning(
-            "Ollama unreachable (%s) at %s for model '%s' — falling back to %s. "
-            "Total fallback count this session: %d.",
+        logger.error(
+            "Ollama unreachable (%s) at %s for model '%s'. "
+            "Fallback to Gemini is DISABLED. Fix OLLAMA_HOST in Secret Manager. "
+            "Total failure count this session: %d.",
             type(exc).__name__,
             host,
             ollama_model,
-            fallback_model,
             current_count,
         )
-        return _call_model_gemini(prompt, fallback_model, system_prompt, parse_json, settings)
+        raise RuntimeError(
+            f"LOCAL_MODEL unavailable ({type(exc).__name__}) and fallback is disabled. "
+            f"Configure a network-reachable OLLAMA_HOST. host={host!r}"
+        ) from exc
+
+
+def _notify_non_ollama_call(model: str, settings: Any) -> None:
+    """Fire a Google Chat alert when a non-Ollama model is about to be called.
+
+    Rate-limited to one alert per *model* per _GEMINI_ALERT_INTERVAL_SECONDS so
+    high-frequency callers (heartbeats, distillation) don't flood the Chat space.
+    Failures are silently swallowed — the alert must never block the model call.
+
+    Args:
+        model:    The resolved model string being invoked (e.g. ``"gemini-2.5-flash"``)
+        settings: Loaded Settings object (used for owner_space and GCP_PROJECT_ID).
+    """
+    now = time.time()
+    with _gemini_alert_lock:
+        last = _gemini_last_alert.get(model, 0.0)
+        if now - last < _GEMINI_ALERT_INTERVAL_SECONDS:
+            return
+        _gemini_last_alert[model] = now
+
+    owner_space: str = getattr(getattr(settings, "chat", None), "owner_space", "") or ""
+    if not owner_space:
+        logger.warning(
+            "NON_OLLAMA_LLM_CALL: model=%r — chat.owner_space not configured, "
+            "cannot send Chat alert.",
+            model,
+        )
+        return
+
+    try:
+        from tools.google_chat import send_message
+
+        send_message(
+            owner_space,
+            f"⚠️ NON-OLLAMA LLM CALL\n"
+            f"Model: {model}\n"
+            f"OLLAMA_HOST is unreachable from Cloud Run. "
+            f"Fix Secret Manager OLLAMA_HOST to point at a network-reachable endpoint "
+            f"and redeploy. Until then, every LOCAL_MODEL task will fail.",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "NON_OLLAMA_LLM_CALL: model=%r — Chat notification failed (non-fatal): %s",
+            model,
+            exc,
+        )
 
 
 def _call_model_gemini(
@@ -303,6 +374,10 @@ def _call_model_gemini(
         google.api_core.exceptions.ResourceExhausted: Re-raised after logging when
             the AI Studio free quota (429) is hit.
     """
+    # Alert the owner that a non-Ollama model is being invoked.
+    # Rate-limited to one message per model per 5 minutes — see _notify_non_ollama_call.
+    _notify_non_ollama_call(model, settings)
+
     import google.genai as genai
     from google.api_core import exceptions as gapi_exc
     from google.genai import types as genai_types
@@ -546,9 +621,7 @@ def _validate_proposal_coherence(
             stopping_constraint=stopping[:400],
             proposed_code_excerpt=(getattr(proposal, "proposed_code", "") or "")[:500],
         )
-        resp = _call_model_ollama(
-            prompt, settings.models.LOCAL_MODEL, "", True, settings, no_fallback=True
-        )
+        resp = _call_model_ollama(prompt, settings.models.LOCAL_MODEL, "", True, settings)
         coherent: bool = bool((resp.data or {}).get("coherent", True))
         llm_reason: str = str((resp.data or {}).get("reason", ""))
         if not coherent:
@@ -619,9 +692,7 @@ def validate_output_coherence(
             goal=goal[:500],
             output=output[:1500],
         )
-        resp = _call_model_ollama(
-            prompt, settings.models.LOCAL_MODEL, "", True, settings, no_fallback=True
-        )
+        resp = _call_model_ollama(prompt, settings.models.LOCAL_MODEL, "", True, settings)
         data = resp.data or {}
         passed = bool(data.get("passed", True))
         confidence = float(data.get("confidence", 0.5))

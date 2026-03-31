@@ -768,23 +768,10 @@ def _initial_state(agent_input: AgentInput) -> AgentWorkingMemory:
 
 foreman_graph = build_foreman_graph()
 
-# ---------------------------------------------------------------------------
-# TODO (Phase 3): Implement Foreman orchestrator.
-#
-# Required per Docs/GAOS-Agent-Spec.md:
-#   - ADK Agent subclass
-#   - LangGraph StateGraph with nodes:
-#       plan, dispatch, collect, report, park, resume, escalate
-#   - Pub/Sub topic:  agent.foreman.events  (publish)
-#   - Pub/Sub subscribe: agent.nexus-prime.events, agent.pursuit.events,
-#                        agent.approvals.events
-#   - Sheet write: Shipping and Receiving tab only
-#   - Memory Bank: read/write (domain: operations)
-#   - model = settings.models.LOCAL_MODEL for status formatting/tracking;
-#             FAST_MODEL for vendor routing decisions
-#   - Agent boot sequence (Docs/GAOS-Agent-Spec.md §6)
-#
-# Business-specific Tier 3 task agents go in agents/foreman/tasks/
-# (gitignored — never committed to the public repo).
-# Examples: inventory_monitor.py, shipment_tracker.py, vendor_notifier.py
-# ---------------------------------------------------------------------------
+# Foreman orchestrator is implemented: ForemanAgent (ADK subclass), foreman_graph
+# (LangGraph StateGraph with nodes plan/dispatch/collect/report/park/resume/
+# escalate/evolve), Pub/Sub topic agent.foreman.events, subscriptions to
+# agent.nexus-prime.events / agent.pursuit.events / agent.approvals.events,
+# Shipping and Receiving Sheet writes, Memory Bank operations, and LOCAL_MODEL /
+# FAST_MODEL selection. Business-specific Tier 3 task agents belong in
+# agents/foreman/tasks/ (gitignored).

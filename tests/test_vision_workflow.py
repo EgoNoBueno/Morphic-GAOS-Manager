@@ -475,6 +475,7 @@ class TestHandlePollComments:
             return comments_map.get(doc_id, [])
 
         with (
+            patch("tools.google_sheets.init_sheets_client"),
             patch("tools.google_sheets.get_all_records", return_value=incubator_rows),
             patch("tools.google_docs.list_comments", side_effect=_fake_list_comments),
             patch("tools.pubsub.publish") as mock_publish,

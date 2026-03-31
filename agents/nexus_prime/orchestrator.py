@@ -1316,26 +1316,31 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
     cost_usd = 0.0
 
     def _parse_ts(ts_str: str) -> datetime:
-        """Parse timestamp string; handles ISO and Google Sheets M/D/YYYY H:MM:SS format.
+        """Parse a timestamp string into a datetime object.
+        Ensures the date is within BigQuery's allowed range.
 
-        Returns epoch on failure so unrecognised rows stay in the Sheet.
+        Args:
+            ts_str: The timestamp string to parse.
+
+        Returns:
+            A datetime object within the allowed range.
         """
-        if not ts_str:
-            return datetime(1970, 1, 1, tzinfo=UTC)
-        # ISO format (preferred): "2026-03-21T20:13:00Z" or "2026-03-21 20:13:00"
         try:
             dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-            return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+            dt = dt if dt.tzinfo else dt.replace(tzinfo=UTC)
         except (ValueError, AttributeError):
-            pass
-        # Google Sheets default: "3/21/2026 20:13:00" or "3/21/2026 0:05:01"
-        # %m/%d/%Y handles both zero-padded and non-zero-padded values in strptime.
-        try:
-            dt = datetime.strptime(ts_str.strip(), "%m/%d/%Y %H:%M:%S")
-            return dt.replace(tzinfo=UTC)
-        except ValueError:
-            pass
-        return datetime(1970, 1, 1, tzinfo=UTC)
+            try:
+                dt = datetime.strptime(ts_str.strip(), "%m/%d/%Y %H:%M:%S").replace(tzinfo=UTC)
+            except ValueError:
+                dt = datetime(1970, 1, 1, tzinfo=UTC)
+
+        # Ensure the date is within BigQuery's allowed range
+        min_date = datetime.now(tz=UTC) - timedelta(days=3650)
+        max_date = datetime.now(tz=UTC) + timedelta(days=366)
+        if dt < min_date or dt > max_date:
+            dt = min_date if dt < min_date else max_date
+
+        return dt
 
     # ── 0. Idempotency guard — skip if archive already ran within last 4 hours ─
     try:
@@ -2344,6 +2349,8 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
 
     Spec: GAOS-Manager-Spec.md §2.5 Step 5
     """
+    from asyncio import Semaphore, gather
+
     from config import get_settings
     from tools.google_docs import list_comments
     from tools.google_sheets import get_all_records, init_sheets_client
@@ -2375,9 +2382,13 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
         if row.get("doc_id") and row.get("status", "") not in ("Archived", "Rejected")
     ]
 
-    for blueprint_id, doc_id in active_docs:
+    semaphore = Semaphore(5)  # Limit concurrent tasks
+
+    async def process_document(blueprint_id: str, doc_id: str) -> None:
+        nonlocal published, errors
         try:
-            comments = list_comments(doc_id=doc_id, project_id=project_id)
+            async with semaphore:
+                comments = list_comments(doc_id=doc_id, project_id=project_id)
         except Exception as exc:
             _log_cloud(
                 "nexus-prime",
@@ -2388,7 +2399,7 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
                 "WARNING",
             )
             errors += 1
-            continue
+            return
 
         for comment in comments:
             if comment.get("resolved"):
@@ -2413,10 +2424,7 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
                 },
             )
             try:
-                publish(
-                    "agent.nexus-prime.events",
-                    msg,
-                )
+                publish("agent.nexus-prime.events", msg)
                 published += 1
             except Exception as exc:
                 _log_cloud(
@@ -2428,6 +2436,8 @@ async def handle_poll_comments(project_id: str) -> dict[str, Any]:
                     "WARNING",
                 )
                 errors += 1
+
+    await gather(*(process_document(blueprint_id, doc_id) for blueprint_id, doc_id in active_docs))
 
     _log_cloud(
         "nexus-prime",

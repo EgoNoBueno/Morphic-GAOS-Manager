@@ -351,6 +351,46 @@ done
 
 **Verification:** `gcloud secrets list --project=$PROJECT` — 6 secrets listed (WEBHOOK_URL added by setup_apps_script.py Phase 1).
 
+### 3.3 Local Ollama Tunneling (localtunnel)
+
+The repository provides a small automation to expose a local Ollama server to the internet and keep the `OLLAMA_HOST` Secret Manager secret up-to-date. This is provided as an operator convenience for local development when Cloud Run instances need to reach a developer's local model.
+
+- Scripts:
+  - `scripts/start_ollama_tunnel.py` — a Python watchdog that spawns `npx localtunnel`, validates the tunnel by probing `/api/tags`, and updates `OLLAMA_HOST` in Secret Manager. It can run once (`--once`) or as a persistent watchdog (default).
+  - `scripts/register_ollama_tunnel_task.ps1` — Windows helper to register the watchdog as a Scheduled Task (auto-start at login).
+
+- Requirements:
+  - Node.js (provides `npx`) available on PATH.
+  - A Python virtual environment with dependencies (see `pyproject.toml`) and access to Google Cloud credentials that can write to Secret Manager.
+  - Ollama running locally on the port used (default: `11434`).
+
+- Quick test (interactive, creates a log):
+```powershell
+& .\.venv\Scripts\python.exe .\scripts\start_ollama_tunnel.py --port 11434 --project morphic-gaos-prod --once --log-file .\logs\ollama-tunnel.log
+Get-Content .\logs\ollama-tunnel.log -Tail 200
+```
+
+- Run persistent watchdog (foreground):
+```powershell
+& .\.venv\Scripts\python.exe .\scripts\start_ollama_tunnel.py --port 11434 --project morphic-gaos-prod --log-file .\logs\ollama-tunnel.log
+```
+
+- Register for login persistence (Windows, requires elevation):
+```powershell
+Start-Process pwsh -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','scripts\register_ollama_tunnel_task.ps1' -Verb RunAs
+```
+
+- Notes and caveats:
+  - The agents include a small bypass header for loca.lt hosts: requests to hosts containing `.loca.lt` include `Bypass-Tunnel-Reminder: true` so the public localtunnel service responds with the API JSON and not an HTML challenge page.
+  - Scheduled Tasks run without a full interactive profile; the watchdog now injects common Node.js locations into `PATH` automatically but ensure Node.js is installed either system-wide (`C:\Program Files\nodejs`) or the user's npm bin (`%APPDATA%\npm`).
+  - The registration helper registers the task to run `python.exe` (not `pythonw.exe`) so logs are written to disk; if you prefer a hidden window, adjust `register_ollama_tunnel_task.ps1` accordingly.
+  - Security: localtunnel exposes a publicly reachable URL. Only use for development and understand the exposure surface — do not use for sensitive production data.
+
+Verify the secret was updated:
+```powershell
+gcloud secrets versions access latest --secret=OLLAMA_HOST --project=morphic-gaos-prod
+```
+
 > ⚠️ **Warning — per-secret IAM bindings may silently fail to propagate:** After running §3.2, verify each critical secret's bindings were actually written before deploying:
 > ```powershell
 > gcloud secrets get-iam-policy GEMINI_API_KEY --project=morphic-gaos-prod
