@@ -4260,9 +4260,10 @@ async def handle_gmail_renew_watch(project_id: str) -> dict[str, Any]:
     """
     from config import get_settings
     from tools.gmail import GmailAPIError, GmailAuthError, setup_watch
-    from tools.google_sheets import append_row, find_row, update_row
+    from tools.google_sheets import append_row, find_row, init_sheets_client, update_row
 
     settings = get_settings()
+    init_sheets_client(project_id)
     task_id = str(uuid.uuid4())
 
     label_id: str = settings.gmail.label_id
@@ -4407,23 +4408,14 @@ async def handle_daily_digest(project_id: str) -> dict[str, Any]:
         except ValueError:
             return datetime(1970, 1, 1, tzinfo=UTC)
 
-    # ── 1. System_State ───────────────────────────────────────────────────────
-    heartbeats: list[dict] = []
+    # ── 1. System_State — gmail watch expiry ──────────────────────────────────
     gmail_watch_expires = ""
     try:
         state_rows = get_all_records("System_State", project_id)
         for row in state_rows:
-            key = row.get("key", "")
-            if key == "gmail_watch_expiration":
+            if row.get("key", "") == "gmail_watch_expiration":
                 gmail_watch_expires = row.get("value", "")
-            elif key.startswith("heartbeat_"):
-                heartbeats.append(
-                    {
-                        "agent": key.replace("heartbeat_", ""),
-                        "status": row.get("value", ""),
-                        "updated_at": row.get("updated_at", ""),
-                    }
-                )
+                break
     except Exception as exc:
         _log_cloud(
             "nexus-prime",
@@ -4431,6 +4423,38 @@ async def handle_daily_digest(project_id: str) -> dict[str, Any]:
             "task",
             task_id,
             f"daily-digest: failed to read System_State: {exc}",
+            "WARNING",
+        )
+
+    # ── 1b. Main Control Plane — agent heartbeats (last 24 h) ─────────────────
+    heartbeats: list[dict] = []
+    try:
+        cp_rows = get_all_records("Main Control Plane", project_id)
+        # Most recent row per agent within the last 24 h
+        latest: dict[str, dict] = {}
+        for row in cp_rows:
+            if _parse_ts(row.get("timestamp", "")) >= cutoff:
+                agent_id = row.get("agent_id", "")
+                if agent_id and (
+                    agent_id not in latest
+                    or row.get("timestamp", "") > latest[agent_id].get("timestamp", "")
+                ):
+                    latest[agent_id] = row
+        heartbeats = [
+            {
+                "agent": r.get("agent_id", ""),
+                "status": r.get("status", ""),
+                "updated_at": r.get("timestamp", ""),
+            }
+            for r in latest.values()
+        ]
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"daily-digest: failed to read Main Control Plane: {exc}",
             "WARNING",
         )
 

@@ -2556,8 +2556,33 @@ class TestDailyDigest:
 
     _STATE_ROWS = [
         {"key": "gmail_watch_expiration", "value": "2026-04-07T10:28:58+00:00", "updated_at": ""},
-        {"key": "heartbeat_nexus-prime", "value": "IDLE", "updated_at": "2026-03-31T12:00:00"},
-        {"key": "heartbeat_scout", "value": "ACTIVE", "updated_at": "2026-03-31T11:55:00"},
+    ]
+    _CP_ROWS = [
+        # Two agents active in last 24h; one old row that should be ignored
+        {
+            "timestamp": "2026-03-31T12:00:00+00:00",
+            "agent_id": "nexus-prime",
+            "status": "IDLE",
+            "current_objective": "",
+            "open_proposals": 0,
+            "last_error": "",
+        },
+        {
+            "timestamp": "2026-03-31T11:55:00+00:00",
+            "agent_id": "scout",
+            "status": "ACTIVE",
+            "current_objective": "",
+            "open_proposals": 0,
+            "last_error": "",
+        },
+        {
+            "timestamp": "2026-03-30T00:00:00+00:00",
+            "agent_id": "ledger",
+            "status": "IDLE",
+            "current_objective": "",
+            "open_proposals": 0,
+            "last_error": "",
+        },
     ]
     _EMAIL_ROWS = [
         {"received_at": "2026-03-31T10:00:00+00:00", "status": "Replied"},
@@ -2586,6 +2611,7 @@ class TestDailyDigest:
         """Return a side_effect callable for get_all_records keyed by tab name."""
         defaults = {
             "System_State": self._STATE_ROWS,
+            "Main Control Plane": self._CP_ROWS,
             "Email Inbox": self._EMAIL_ROWS,
             "Logs": self._LOG_ROWS,
             "Error Logs": self._ERROR_ROWS,
