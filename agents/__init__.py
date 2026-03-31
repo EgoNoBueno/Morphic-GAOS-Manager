@@ -378,10 +378,6 @@ def _call_model_gemini(
         google.api_core.exceptions.ResourceExhausted: Re-raised after logging when
             the AI Studio free quota (429) is hit.
     """
-    # Alert the owner that a non-Ollama model is being invoked.
-    # Rate-limited to one message per model per 5 minutes — see _notify_non_ollama_call.
-    _notify_non_ollama_call(model, settings)
-
     import google.genai as genai
     from google.api_core import exceptions as gapi_exc
     from google.genai import types as genai_types
