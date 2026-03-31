@@ -7,6 +7,9 @@
 # Settings — real config with project IDs must not be committed
 config/settings.yaml
 
+# Runtime logs — machine-specific, never commit
+logs/
+
 # Python
 __pycache__/
 *.py[cod]
