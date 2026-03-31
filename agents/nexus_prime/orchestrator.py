@@ -2864,7 +2864,7 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     try:
         resp = _call_model(
             prompt,
-            model=settings.models.FAST_MODEL,
+            model=settings.models.LOCAL_MODEL,
             system_prompt=system_prompt,
         )
         reply = resp.text.strip() or "I'm processing your request."
