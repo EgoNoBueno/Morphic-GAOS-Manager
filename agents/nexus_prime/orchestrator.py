@@ -639,6 +639,7 @@ def route(state: NexusPrimeWorkingMemory) -> str:
         MessageType.INFRA_PROVISION_APPROVED: "handle_infra_provision",
         MessageType.INFRA_PROVISION_REJECTED: "handle_infra_provision",
         MessageType.GMAIL_NOTIFICATION: "process_gmail",
+        MessageType.EMAIL_RECEIVED: "compose_reply",
         MessageType.APPROVAL_REQUEST: "handle_approval_request",
     }
     return routing_table.get(msg.message_type, "record")
@@ -3112,6 +3113,167 @@ def _process_gmail_node(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemo
     return process_gmail_notification(state)
 
 
+def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    """
+    LangGraph node: draft and send an email reply to an authorized inbound email.
+
+    Triggered by EMAIL_RECEIVED. Uses FAST_MODEL to compose a concise, professional
+    reply using the email body and thread context, then sends via send_email().
+    Updates the Email Inbox row status from "Pending" to "Replied" on success.
+
+    Args:
+        state: Nexus-Prime working memory with incoming_message populated.
+               payload keys: from_addr, subject, body, thread_id, message_id,
+               message_id_header, thread_context, received_at.
+
+    Returns:
+        Updated working memory with outcome set to reply summary dict,
+        or unchanged state on non-fatal failures.
+    """
+    from config import get_settings
+    from tools.gmail import GmailAPIError, GmailAuthError, send_email
+    from tools.google_sheets import find_row, update_row
+
+    project_id: str = state["project_id"]
+    task_id: str = str(uuid.uuid4())
+
+    msg: A2AMessage | None = state.get("incoming_message")
+    if msg is None:
+        return state
+
+    payload: dict = msg.payload or {}
+    from_addr: str = payload.get("from_addr", "")
+    subject: str = payload.get("subject", "")
+    body: str = payload.get("body", "")
+    thread_id: str = payload.get("thread_id", "")
+    message_id: str = payload.get("message_id", "")
+    message_id_header: str = payload.get("message_id_header", "")
+    thread_context: list = payload.get("thread_context", [])
+
+    if not from_addr:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            "compose_reply: missing from_addr in payload — skipping",
+            "WARNING",
+        )
+        return state
+
+    settings = get_settings()
+    context_trio = _load_context_trio()
+
+    # Build thread history context for the LLM (last 3 messages, oldest first)
+    thread_str = ""
+    if thread_context:
+        thread_str = "\n\nThread history (oldest first):\n" + "\n---\n".join(
+            f"From: {m.get('from_addr', '')}\n{m.get('body', '')[:500]}"
+            for m in thread_context[-3:]
+        )
+
+    reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+
+    prompt = (
+        f"You received this email:\n"
+        f"From: {from_addr}\n"
+        f"Subject: {subject}\n"
+        f"Body:\n{body[:1500]}\n"
+        f"{thread_str}\n\n"
+        "Draft a professional, concise reply as Nexus-Prime, the AI Chief of Staff "
+        "for this business. Plain text only. Do not include subject, headers, or "
+        "salutation — just the reply body starting with the first substantive sentence."
+    )
+
+    try:
+        resp = _call_model(
+            prompt,
+            model=settings.models.FAST_MODEL,
+            system_prompt=context_trio,
+        )
+        reply_text: str = resp.text.strip()
+        state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+        state["tokens_used"] = state.get("tokens_used", 0) + resp.tokens_used
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"compose_reply: model call failed — {exc}",
+            "ERROR",
+        )
+        return state
+
+    if not reply_text:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            "compose_reply: model returned empty reply — skipping send",
+            "WARNING",
+        )
+        return state
+
+    sender_address: str = settings.gmail.sender_address or None  # type: ignore[assignment]
+
+    try:
+        sent_id = send_email(
+            project_id=project_id,
+            to=from_addr,
+            subject=reply_subject,
+            body=reply_text,
+            thread_id=thread_id or None,
+            in_reply_to=message_id_header or None,
+            from_addr=sender_address,
+        )
+    except (GmailAuthError, GmailAPIError) as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"compose_reply: send_email failed — {exc}",
+            "ERROR",
+        )
+        return state
+
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"compose_reply: reply sent to {from_addr} (sent_id={sent_id}, chars={len(reply_text)})",
+        "INFO",
+    )
+
+    # Update Email Inbox row status to "Replied"
+    try:
+        existing = find_row("Email Inbox", "message_id", message_id, project_id)
+        if existing:
+            update_row(
+                "Email Inbox",
+                "message_id",
+                {"status": "Replied"},
+                project_id,
+            )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"compose_reply: Email Inbox status update failed — {exc}",
+            "WARNING",
+        )
+
+    return {
+        **state,
+        "outcome": {"replied_to": from_addr, "sent_id": sent_id, "chars": len(reply_text)},
+    }
+
+
 def handle_approval_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     """
     Handles an APPROVAL_REQUEST from any domain agent (published to agent/approvals/events).
@@ -3212,6 +3374,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_node("handle_infra_provision", _infra_provision_node)
     graph.add_node("handle_approval_request", handle_approval_request)
     graph.add_node("process_gmail", _process_gmail_node)
+    graph.add_node("compose_reply", compose_reply)
 
     graph.set_entry_point("boot")
     graph.add_edge("boot", "monitor")
@@ -3238,6 +3401,7 @@ def build_nexus_prime_graph() -> Any:
             "roi_optimizer": "roi_optimizer",
             "handle_approval_request": "handle_approval_request",
             "process_gmail": "process_gmail",
+            "compose_reply": "compose_reply",
         },
     )
 
@@ -3268,6 +3432,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_edge("handle_infra_provision", "record")
     graph.add_edge("handle_approval_request", "record")
     graph.add_edge("process_gmail", "record")
+    graph.add_edge("compose_reply", "record")
     graph.add_edge("market_watchdog", "record")
     graph.add_edge("roi_optimizer", "record")
     graph.add_edge("record", END)

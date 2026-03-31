@@ -2387,3 +2387,152 @@ class TestGmailWebhook:
             ):
                 response = client.post("/gmail-webhook", json={})
         assert response.status_code == 404
+
+
+# ── TestEmailReply ────────────────────────────────────────────────────────────
+
+
+class TestEmailReply:
+    """Tests for the compose_reply LangGraph node."""
+
+    _PROJECT_ID = "test-project"
+
+    def _make_state(self, payload: dict | None = None) -> dict:
+        from models import A2AMessage, MessageType
+
+        default_payload = {
+            "from_addr": "alice@example.com",
+            "subject": "Need a quote",
+            "body": "Hi, can you give me a price for a screen repair?",
+            "thread_id": "thread-abc",
+            "message_id": "msg-001",
+            "message_id_header": "<msg-001@mail.example.com>",
+            "thread_context": [],
+            "received_at": "2026-04-01T12:00:00+00:00",
+        }
+        msg = A2AMessage(
+            project_id=self._PROJECT_ID,
+            source_agent="nexus-prime",
+            target_agent="nexus-prime",
+            message_type=MessageType.EMAIL_RECEIVED,
+            priority=3,
+            payload=payload if payload is not None else default_payload,
+        )
+        return {
+            "project_id": self._PROJECT_ID,
+            "incoming_message": msg,
+            "agent_id": "nexus-prime",
+            "task_id": "t-reply",
+            "cost_usd": 0.0,
+            "tokens_used": 0,
+        }
+
+    @staticmethod
+    def _mock_resp(text: str = "Thank you for reaching out. I will send you a quote shortly."):
+        from agents import ModelResponse
+
+        return ModelResponse(text=text, cost_usd=0.001, tokens_used=40)
+
+    def test_compose_reply_happy(self):
+        """compose_reply sends email, updates Inbox row, returns outcome with sent_id."""
+        from agents.nexus_prime.orchestrator import compose_reply
+
+        state = self._make_state()
+        with (
+            patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
+            patch("tools.gmail.send_email", return_value="sent-id-xyz") as mock_send,
+            patch(
+                "tools.google_sheets.find_row",
+                return_value={"message_id": "msg-001", "_row_index": 2},
+            ),
+            patch("tools.google_sheets.update_row") as mock_update,
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = compose_reply(state)
+
+        assert result["outcome"]["replied_to"] == "alice@example.com"
+        assert result["outcome"]["sent_id"] == "sent-id-xyz"
+        assert result["outcome"]["chars"] > 0
+        mock_send.assert_called_once()
+        call_kwargs = mock_send.call_args[1]
+        assert call_kwargs["to"] == "alice@example.com"
+        assert call_kwargs["subject"] == "Re: Need a quote"
+        assert call_kwargs["thread_id"] == "thread-abc"
+        assert call_kwargs["in_reply_to"] == "<msg-001@mail.example.com>"
+        mock_update.assert_called_once()
+
+    def test_compose_reply_skips_on_model_failure(self):
+        """If _call_model raises, send_email is never called and state is unchanged."""
+        from agents.nexus_prime.orchestrator import compose_reply
+
+        state = self._make_state()
+        with (
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                side_effect=RuntimeError("Ollama unavailable"),
+            ),
+            patch("tools.gmail.send_email") as mock_send,
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = compose_reply(state)
+
+        mock_send.assert_not_called()
+        assert "outcome" not in result or result.get("outcome") == {}
+
+    def test_compose_reply_skips_on_missing_message(self):
+        """If incoming_message is None, node returns state unchanged."""
+        from agents.nexus_prime.orchestrator import compose_reply
+
+        state = {
+            "project_id": self._PROJECT_ID,
+            "incoming_message": None,
+            "agent_id": "nexus-prime",
+            "task_id": "t-none",
+        }
+        with patch("tools.gmail.send_email") as mock_send:
+            result = compose_reply(state)
+
+        mock_send.assert_not_called()
+        assert result is state
+
+    def test_compose_reply_skips_send_on_send_failure(self):
+        """If send_email raises GmailAPIError, node logs and returns state without outcome."""
+        from agents.nexus_prime.orchestrator import compose_reply
+        from tools.gmail import GmailAPIError
+
+        state = self._make_state()
+        with (
+            patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
+            patch("tools.gmail.send_email", side_effect=GmailAPIError("quota exceeded")),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = compose_reply(state)
+
+        assert "outcome" not in result or result.get("outcome") != {
+            "replied_to": "alice@example.com"
+        }
+
+    def test_compose_reply_prefixes_re_only_once(self):
+        """Subject already starting with 'Re:' is not double-prefixed."""
+        from agents.nexus_prime.orchestrator import compose_reply
+
+        payload = {
+            "from_addr": "alice@example.com",
+            "subject": "Re: Need a quote",
+            "body": "Following up.",
+            "thread_id": "thread-abc",
+            "message_id": "msg-002",
+            "message_id_header": "<msg-002@mail>",
+            "thread_context": [],
+        }
+        state = self._make_state(payload)
+        with (
+            patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
+            patch("tools.gmail.send_email", return_value="sent-id-2") as mock_send,
+            patch("tools.google_sheets.find_row", return_value=None),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            compose_reply(state)
+
+        call_kwargs = mock_send.call_args[1]
+        assert call_kwargs["subject"] == "Re: Need a quote"
