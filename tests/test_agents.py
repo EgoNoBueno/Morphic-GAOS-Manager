@@ -2234,3 +2234,156 @@ class TestProgressiveDistillation:
         summary = logs_appends[-1][0][1]
         assert "agents distilled" in summary["message"]
         assert "1 agents distilled" in summary["message"]
+
+
+# ── TestGmailWebhook ──────────────────────────────────────────────────────────
+
+
+class TestGmailWebhook:
+    """Tests for handle_gmail_webhook, process_gmail_notification, and /gmail-webhook endpoint."""
+
+    _PROJECT_ID = "test-project"
+
+    def _make_state(self, history_id: str = "5000") -> dict:
+        from models import A2AMessage, MessageType
+
+        msg = A2AMessage(
+            project_id=self._PROJECT_ID,
+            source_agent="gmail-push",
+            target_agent="nexus-prime",
+            message_type=MessageType.GMAIL_NOTIFICATION,
+            priority=3,
+            payload={"history_id": history_id},
+        )
+        return {
+            "project_id": self._PROJECT_ID,
+            "incoming_message": msg,
+            "agent_id": "nexus-prime",
+            "task_id": "t-gmail",
+        }
+
+    def test_gmail_webhook_handler_enqueues(self):
+        """handle_gmail_webhook publishes GMAIL_NOTIFICATION and returns {status: enqueued}."""
+        from agents.nexus_prime.orchestrator import handle_gmail_webhook
+
+        with patch("tools.pubsub.publish") as mock_pub:
+            result = asyncio.run(handle_gmail_webhook(self._PROJECT_ID, "9876"))
+
+        assert result["status"] == "enqueued"
+        assert result["history_id"] == "9876"
+        mock_pub.assert_called_once()
+        published_msg = mock_pub.call_args[0][1]
+        from models import MessageType
+
+        assert published_msg.message_type == MessageType.GMAIL_NOTIFICATION
+        assert published_msg.payload["history_id"] == "9876"
+
+    def test_gmail_process_node_happy(self):
+        """process_gmail_notification: 2 authorized messages → processed=2, mark_as_read called twice."""
+        from agents.nexus_prime.orchestrator import process_gmail_notification
+
+        fake_messages = [
+            {
+                "message_id": "m1",
+                "thread_id": "t1",
+                "from_addr": "alice@example.com",
+                "subject": "Test 1",
+                "body": "Hello",
+                "received_at": "2026-03-31T12:00:00+00:00",
+                "message_id_header": "<m1@mail>",
+            },
+            {
+                "message_id": "m2",
+                "thread_id": "t2",
+                "from_addr": "alice@example.com",
+                "subject": "Test 2",
+                "body": "World",
+                "received_at": "2026-03-31T12:01:00+00:00",
+                "message_id_header": "<m2@mail>",
+            },
+        ]
+
+        state = self._make_state("5000")
+        with (
+            patch(
+                "tools.secrets.get_secret",
+                return_value="alice@example.com",
+            ),
+            patch(
+                "tools.gmail.fetch_new_messages",
+                return_value=(fake_messages, "5100"),
+            ),
+            patch(
+                "tools.gmail.get_thread_context",
+                return_value=[],
+            ),
+            patch("tools.google_sheets.append_row"),
+            patch("tools.pubsub.publish"),
+            patch("tools.gmail.mark_as_read") as mock_mark,
+            patch("tools.google_sheets.find_row", return_value=None),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result_state = process_gmail_notification(state)
+
+        assert result_state["outcome"]["processed"] == 2
+        assert result_state["outcome"]["skipped"] == 0
+        assert mock_mark.call_count == 2
+
+    def test_gmail_process_node_skips_unauthorized(self):
+        """process_gmail_notification: message from unauthorized sender → processed=0, skipped=1."""
+        from agents.nexus_prime.orchestrator import process_gmail_notification
+
+        fake_messages = [
+            {
+                "message_id": "m3",
+                "thread_id": "t3",
+                "from_addr": "stranger@evil.com",
+                "subject": "Hack",
+                "body": "Click here",
+                "received_at": "2026-03-31T13:00:00+00:00",
+                "message_id_header": "<m3@mail>",
+            }
+        ]
+
+        state = self._make_state("5000")
+        with (
+            patch(
+                "tools.secrets.get_secret",
+                return_value="alice@example.com",
+            ),
+            patch(
+                "tools.gmail.fetch_new_messages",
+                return_value=(fake_messages, "5200"),
+            ),
+            patch("tools.google_sheets.append_row") as mock_append,
+            patch("tools.google_sheets.find_row", return_value=None),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result_state = process_gmail_notification(state)
+
+        assert result_state["outcome"]["processed"] == 0
+        assert result_state["outcome"]["skipped"] == 1
+        # Email Inbox must NOT be written for unauthorized senders
+        inbox_calls = [c for c in mock_append.call_args_list if c[0][0] == "Email Inbox"]
+        assert inbox_calls == []
+
+    def test_gmail_webhook_endpoint_wrong_agent(self, load_test_settings):
+        """POST /gmail-webhook with non-nexus-prime AGENT_NAME returns 404."""
+        import os
+
+        from fastapi.testclient import TestClient
+
+        with patch.dict(os.environ, {"AGENT_NAME": "beacon"}):
+            # Re-import app after env var change so _AGENT_NAME is re-evaluated
+            import importlib
+
+            import main as main_mod
+
+            importlib.reload(main_mod)
+            client = TestClient(main_mod.app)
+            with patch(
+                "main._verify_pubsub_audience",
+                return_value=None,
+            ):
+                response = client.post("/gmail-webhook", json={})
+        assert response.status_code == 404

@@ -91,6 +91,9 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
     _next_node: str  # Set by think(); routes to diagnose or knowledge_review
     monologue_frame: dict | None  # Last MonologueFrame dict; used by tests for assertion
 
+    # General-purpose task outcome (set by action nodes, read by record)
+    outcome: dict
+
 
 # ── Constraint compaction threshold ──────────────────────────────────────────
 
@@ -635,6 +638,7 @@ def route(state: NexusPrimeWorkingMemory) -> str:
         MessageType.DEAL_CLOSED: "roi_optimizer",
         MessageType.INFRA_PROVISION_APPROVED: "handle_infra_provision",
         MessageType.INFRA_PROVISION_REJECTED: "handle_infra_provision",
+        MessageType.GMAIL_NOTIFICATION: "process_gmail",
         MessageType.APPROVAL_REQUEST: "handle_approval_request",
     }
     return routing_table.get(msg.message_type, "record")
@@ -3098,6 +3102,16 @@ def _infra_provision_node(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMe
     return state
 
 
+def _process_gmail_node(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    """LangGraph node adapter for process_gmail_notification().
+
+    Defined before the module-level graph build so the reference is available
+    at graph construction time. Delegates immediately to the function defined
+    later in the module (resolved at call time, not definition time).
+    """
+    return process_gmail_notification(state)
+
+
 def handle_approval_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     """
     Handles an APPROVAL_REQUEST from any domain agent (published to agent/approvals/events).
@@ -3197,6 +3211,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_node("roi_optimizer", roi_optimizer)
     graph.add_node("handle_infra_provision", _infra_provision_node)
     graph.add_node("handle_approval_request", handle_approval_request)
+    graph.add_node("process_gmail", _process_gmail_node)
 
     graph.set_entry_point("boot")
     graph.add_edge("boot", "monitor")
@@ -3222,6 +3237,7 @@ def build_nexus_prime_graph() -> Any:
             "market_watchdog": "market_watchdog",
             "roi_optimizer": "roi_optimizer",
             "handle_approval_request": "handle_approval_request",
+            "process_gmail": "process_gmail",
         },
     )
 
@@ -3251,6 +3267,7 @@ def build_nexus_prime_graph() -> Any:
     graph.add_edge("handle_skill_request", "record")
     graph.add_edge("handle_infra_provision", "record")
     graph.add_edge("handle_approval_request", "record")
+    graph.add_edge("process_gmail", "record")
     graph.add_edge("market_watchdog", "record")
     graph.add_edge("roi_optimizer", "record")
     graph.add_edge("record", END)
@@ -3523,7 +3540,7 @@ async def handle_infra_plan(
         status=ApprovalStatus.PENDING,
     )
     row = proposal.to_sheet_row()
-    append_row("Agent_Approvals", list(row.values()), project_id)
+    append_row("Agent_Approvals", row, project_id)
 
     # Build human-readable change lines for the card.
     change_lines = [e.human_description for e in manifest.actionable]
@@ -3754,3 +3771,423 @@ async def handle_infra_provision(
             "All health checks passed. Grafana will show live data within 5 minutes.",
         )
     return {"status": "applied", "proposal_id": proposal_id}
+
+
+# ── process_gmail_notification ────────────────────────────────────────────────
+
+
+def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    """Process a Gmail watch notification as a LangGraph node.
+
+    Reads the history delta from Gmail, filters by authorized senders, logs
+    each valid email to the Email Inbox Sheet tab, publishes an EMAIL_RECEIVED
+    message for downstream routing, marks messages as read, and persists the
+    new history ID to System_State.
+
+    Args:
+        state: Current Nexus-Prime working memory; ``incoming_message``
+               must have ``payload["history_id"]``.
+
+    Returns:
+        Updated working memory with ``outcome`` set to a summary dict.
+    """
+    from config import get_settings
+    from tools.gmail import (
+        GmailAPIError,
+        GmailAuthError,
+        fetch_new_messages,
+        get_thread_context,
+        mark_as_read,
+    )
+    from tools.google_sheets import append_row, find_row, update_row
+    from tools.pubsub import publish
+    from tools.secrets import SecretNotFoundError, get_secret
+
+    settings = get_settings()
+    msg: A2AMessage | None = state["incoming_message"]
+    project_id: str = state["project_id"]
+    task_id = str(uuid.uuid4())
+
+    if msg is None:
+        return {**state, "outcome": {"processed": 0, "skipped": 0, "new_history_id": ""}}
+
+    # ── Resolve last known history_id ────────────────────────────────────────
+    try:
+        row = find_row("System_State", "key", "gmail_last_history_id", project_id)
+        last_history_id: str = str(row["value"]) if row else ""
+    except Exception:
+        last_history_id = ""
+
+    if not last_history_id:
+        # Fallback: use the notification's historyId as startHistoryId.
+        # Gmail history.list(startHistoryId=X) returns records AFTER X, so this
+        # returns empty on first run (nothing is newer than the current watermark).
+        # This path should only trigger if handle_gmail_renew_watch failed to seed
+        # gmail_last_history_id in System_State — investigate if this WARNING appears.
+        last_history_id = msg.payload.get("history_id", "")
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            "process_gmail: gmail_last_history_id not in System_State — falling back to "
+            f"notification historyId={last_history_id}. Delta fetch will likely return empty. "
+            "Ensure handle_gmail_renew_watch ran successfully and seeded System_State.",
+            "WARNING",
+        )
+
+    if not last_history_id:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            "process_gmail: no history_id available — skipping delta fetch",
+            "WARNING",
+        )
+        return {**state, "outcome": {"processed": 0, "skipped": 0, "new_history_id": ""}}
+
+    # ── Sender allowlist ─────────────────────────────────────────────────────
+    try:
+        authorized_raw = get_secret("GMAIL_AUTHORIZED_SENDERS", project_id)
+        authorized_senders = {s.strip().lower() for s in authorized_raw.split(",") if s.strip()}
+    except SecretNotFoundError:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            "process_gmail: GMAIL_AUTHORIZED_SENDERS secret missing — rejecting all senders",
+            "ERROR",
+        )
+        return {**state, "outcome": {"processed": 0, "skipped": 0, "new_history_id": ""}}
+
+    monitored_address: str = ""
+    gmail_cfg = getattr(settings, "gmail", None)
+    if gmail_cfg is not None:
+        monitored_address = getattr(gmail_cfg, "monitored_address", "")
+
+    # ── Fetch delta ──────────────────────────────────────────────────────────
+    try:
+        messages, new_history_id = fetch_new_messages(project_id, last_history_id)
+    except (GmailAuthError, GmailAPIError) as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"process_gmail: Gmail API error — {exc}",
+            "ERROR",
+        )
+        return {**state, "outcome": {"processed": 0, "skipped": 0, "new_history_id": ""}}
+
+    processed = 0
+    skipped = 0
+
+    for message in messages:
+        from_addr: str = message.get("from_addr", "").lower()
+
+        # Loop prevention
+        if monitored_address and from_addr == monitored_address.lower():
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"process_gmail: skipping own outbound message from {from_addr}",
+                "WARNING",
+            )
+            skipped += 1
+            continue
+
+        # Sender auth gate
+        if from_addr not in authorized_senders:
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"process_gmail: unauthorized sender {from_addr} — skipping",
+                "WARNING",
+            )
+            skipped += 1
+            continue
+
+        thread_id: str = message.get("thread_id", "")
+        message_id: str = message.get("message_id", "")
+        subject: str = message.get("subject", "")
+        body: str = message.get("body", "")
+        received_at: str = message.get("received_at", utcnow_iso())
+
+        # Thread context for downstream LLM nodes
+        try:
+            thread_context = get_thread_context(project_id, thread_id)
+        except (GmailAuthError, GmailAPIError) as exc:
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"process_gmail: get_thread_context failed for {thread_id} — {exc}",
+                "WARNING",
+            )
+            thread_context = []
+
+        # Log to Email Inbox Sheet
+        preview = body[:200]
+        try:
+            append_row(
+                "Email Inbox",
+                {
+                    "timestamp": received_at,
+                    "from_addr": from_addr,
+                    "subject": subject,
+                    "preview": preview,
+                    "message_id": message_id,
+                    "thread_id": thread_id,
+                    "status": "Pending",
+                },
+                project_id,
+            )
+        except Exception as exc:
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"process_gmail: append_row Email Inbox failed — {exc}",
+                "WARNING",
+            )
+
+        # Publish EMAIL_RECEIVED for downstream routing
+        email_msg = A2AMessage(
+            project_id=project_id,
+            source_agent="nexus-prime",
+            target_agent="nexus-prime",
+            message_type=MessageType.EMAIL_RECEIVED,
+            priority=3,
+            payload={**message, "thread_context": thread_context},
+        )
+        try:
+            publish("agent/nexus-prime/events", email_msg)
+        except Exception as exc:
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"process_gmail: publish EMAIL_RECEIVED failed — {exc}",
+                "ERROR",
+            )
+
+        # Mark as read
+        try:
+            mark_as_read(project_id, message_id)
+        except (GmailAuthError, GmailAPIError) as exc:
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"process_gmail: mark_as_read failed for {message_id} — {exc}",
+                "WARNING",
+            )
+
+        processed += 1
+
+    # ── Persist new history_id ────────────────────────────────────────────────
+    if new_history_id:
+        now_iso = utcnow_iso()
+        try:
+            existing = find_row("System_State", "key", "gmail_last_history_id", project_id)
+            if existing:
+                update_row(
+                    "System_State",
+                    "gmail_last_history_id",
+                    {"value": new_history_id, "updated_at": now_iso},
+                    project_id,
+                )
+            else:
+                append_row(
+                    "System_State",
+                    {
+                        "key": "gmail_last_history_id",
+                        "value": new_history_id,
+                        "updated_at": now_iso,
+                    },
+                    project_id,
+                )
+        except Exception as exc:
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"process_gmail: failed to persist history_id — {exc}",
+                "ERROR",
+            )
+
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"process_gmail: processed={processed} skipped={skipped} new_history_id={new_history_id}",
+        "INFO",
+    )
+    return {
+        **state,
+        "outcome": {
+            "processed": processed,
+            "skipped": skipped,
+            "new_history_id": new_history_id,
+        },
+    }
+
+
+# ── handle_gmail_webhook ──────────────────────────────────────────────────────
+
+
+async def handle_gmail_webhook(project_id: str, history_id: str) -> dict[str, Any]:
+    """Enqueue a Gmail push notification for async processing.
+
+    Fast-path only — publishes a single GMAIL_NOTIFICATION message and
+    returns immediately. Zero Gmail API calls, zero Sheet access, zero LLM.
+    Designed to complete well under the Gmail Pub/Sub 10-second push timeout.
+
+    Args:
+        project_id: Active GAOS project ID.
+        history_id: Gmail historyId extracted from the Pub/Sub push payload.
+
+    Returns:
+        Dict with ``status`` and ``history_id``.
+    """
+    from tools.pubsub import publish
+
+    notification = A2AMessage(
+        project_id=project_id,
+        source_agent="gmail-push",
+        target_agent="nexus-prime",
+        message_type=MessageType.GMAIL_NOTIFICATION,
+        priority=3,
+        payload={"history_id": history_id},
+    )
+    publish("agent/nexus-prime/events", notification)
+    return {"status": "enqueued", "history_id": history_id}
+
+
+# ── handle_gmail_renew_watch ──────────────────────────────────────────────────
+
+
+async def handle_gmail_renew_watch(project_id: str) -> dict[str, Any]:
+    """Renew the Gmail push watch subscription.
+
+    Gmail watch() subscriptions expire after a maximum of 7 days.
+    Cloud Scheduler calls this endpoint every 23 hours to ensure continuous
+    push notifications. On success, persists both the new expiration and the
+    initial historyId to System_State Sheet. Seeding ``gmail_last_history_id``
+    is critical: without it, the first push notification falls back to the
+    notification's own historyId as startHistoryId, which returns an empty
+    delta because no records exist after the current watermark.
+
+    Args:
+        project_id: Active GAOS project ID.
+
+    Returns:
+        Dict with ``expires_at`` (ISO-8601) and ``initial_history_id`` (str).
+    """
+    from config import get_settings
+    from tools.gmail import GmailAPIError, GmailAuthError, setup_watch
+    from tools.google_sheets import append_row, find_row, update_row
+
+    settings = get_settings()
+    task_id = str(uuid.uuid4())
+
+    gmail_cfg = getattr(settings, "gmail", None)
+    label_id: str = getattr(gmail_cfg, "label_id", "") if gmail_cfg else ""
+    pubsub_topic: str = getattr(gmail_cfg, "pubsub_topic", "") if gmail_cfg else ""
+
+    try:
+        expiration_ms_str, initial_history_id = setup_watch(project_id, pubsub_topic, label_id)
+        expiration_ms = int(expiration_ms_str)
+        expires_at = datetime.fromtimestamp(expiration_ms / 1000, tz=UTC).isoformat()
+    except (GmailAuthError, GmailAPIError) as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"handle_gmail_renew_watch: setup_watch failed — {exc}",
+            "ERROR",
+        )
+        raise
+
+    now_iso = utcnow_iso()
+    try:
+        existing = find_row("System_State", "key", "gmail_watch_expiration", project_id)
+        if existing:
+            update_row(
+                "System_State",
+                "gmail_watch_expiration",
+                {"value": expires_at, "updated_at": now_iso},
+                project_id,
+            )
+        else:
+            append_row(
+                "System_State",
+                {"key": "gmail_watch_expiration", "value": expires_at, "updated_at": now_iso},
+                project_id,
+            )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"handle_gmail_renew_watch: failed to persist expiration — {exc}",
+            "WARNING",
+        )
+
+    # Seed the history watermark so the first push notification can compute
+    # a valid delta. gmail_last_history_id must be set BEFORE the first
+    # notification fires; without it process_gmail_notification falls back
+    # to the notification's own historyId which returns an empty delta.
+    if initial_history_id:
+        try:
+            existing_hist = find_row("System_State", "key", "gmail_last_history_id", project_id)
+            if existing_hist:
+                update_row(
+                    "System_State",
+                    "gmail_last_history_id",
+                    {"value": initial_history_id, "updated_at": now_iso},
+                    project_id,
+                )
+            else:
+                append_row(
+                    "System_State",
+                    {
+                        "key": "gmail_last_history_id",
+                        "value": initial_history_id,
+                        "updated_at": now_iso,
+                    },
+                    project_id,
+                )
+        except Exception as exc:
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"handle_gmail_renew_watch: failed to persist initial history_id — {exc}",
+                "WARNING",
+            )
+
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"handle_gmail_renew_watch: watch renewed, expires_at={expires_at} initial_history_id={initial_history_id}",
+        "INFO",
+    )
+    return {"expires_at": expires_at, "initial_history_id": initial_history_id}

@@ -65,6 +65,8 @@ TABS = [
     "Research Products",
     "Pending_Knowledge",
     "Memory Repository Size",
+    "System_State",
+    "Email Inbox",
 ]
 
 HEADERS: dict[str, list[str]] = {
@@ -133,6 +135,20 @@ HEADERS: dict[str, list[str]] = {
         "document_count",
         "size_bytes",
         "project_id",
+    ],
+    "System_State": [
+        "key",
+        "value",
+        "updated_at",
+    ],
+    "Email Inbox": [
+        "timestamp",
+        "from_addr",
+        "subject",
+        "preview",
+        "message_id",
+        "thread_id",
+        "status",
     ],
 }
 

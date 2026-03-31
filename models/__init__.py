@@ -51,6 +51,9 @@ class MessageType(StrEnum):
     # ── Infrastructure Provisioner (Infra Provisioner §20) ─────────────────
     INFRA_PROVISION_APPROVED = "INFRA_PROVISION_APPROVED"  # Owner approved infra change card
     INFRA_PROVISION_REJECTED = "INFRA_PROVISION_REJECTED"  # Owner rejected infra change card
+    # ── Gmail integration ──────────────────────────────────────────────────
+    GMAIL_NOTIFICATION = "GMAIL_NOTIFICATION"  # Gmail watch fired — process historyId (internal)
+    EMAIL_RECEIVED = "EMAIL_RECEIVED"  # Authorized email parsed and ready for routing
 
 
 # ── A2AMessage ─────────────────────────────────────────────────────────────

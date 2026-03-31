@@ -282,7 +282,8 @@ def read_range(tab: str, a1_range: str, project_id: str) -> list[list[Any]]:
     Raises:
         TabNotFoundError, RateLimitError, SheetsReadError.
     """
-    _get_worksheet(tab)  # validates tab exists
+    _get_worksheet(tab)  # validates tab exists — raises if _spreadsheet is None
+    assert _spreadsheet is not None
     if not _bucket.consume():
         raise RateLimitError("Token bucket exhausted.")
     full_range = _range(tab, a1_range)

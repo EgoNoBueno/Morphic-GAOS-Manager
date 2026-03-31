@@ -15,6 +15,8 @@ Endpoints:
   POST /vision        Owner vision submission → Blueprint Doc generator (Nexus-Prime only)
   POST /poll-comments    Cloud Scheduler 5-min doc-comment poll (Nexus-Prime only)
   POST /infra-provision  Trigger infrastructure diff + proposal card (Nexus-Prime only)
+  POST /gmail-webhook    Gmail Pub/Sub push notification — enqueues for async processing (Nexus-Prime only)
+  POST /gmail-renew-watch  Renew Gmail watch() subscription — called every 23 h by Cloud Scheduler (Nexus-Prime only)
   GET  /health           Cloud Run health check (always 200)
 
 All POST endpoints verify the OIDC token in the Authorization header before
@@ -1058,6 +1060,96 @@ async def infra_provision(request: Request) -> JSONResponse:
         )
     except Exception as exc:
         log.exception("infra-provision plan failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return JSONResponse(content={"status": "ok", **result})
+
+
+@app.post("/gmail-webhook")
+async def gmail_webhook(request: Request) -> JSONResponse:
+    """
+    Gmail Pub/Sub push notification — watch fired, new mail arrived.
+
+    Validates the push token, extracts historyId from the base64-encoded Pub/Sub
+    message data, and enqueues a GMAIL_NOTIFICATION for async processing.
+    Returns 200 immediately — never runs LLM logic in this request cycle.
+    Gmail push timeout is 10 seconds; this handler completes in < 200ms.
+    Nexus-Prime only.
+
+    Spec: Docs/email-comm-plan.md Phase 5
+    """
+    _verify_pubsub_audience(request)
+
+    if _AGENT_NAME != "nexus-prime":
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{_AGENT_NAME}' does not support /gmail-webhook.",
+        )
+
+    import base64
+    import json
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    # Extract historyId from base64-encoded Pub/Sub message data
+    try:
+        data_b64 = body.get("message", {}).get("data", "")
+        data_str = base64.b64decode(data_b64).decode("utf-8")
+        data_json = json.loads(data_str)
+        history_id: str = str(data_json.get("historyId", ""))
+    except Exception as exc:
+        log.warning("gmail-webhook: failed to decode Pub/Sub message data: %s", exc)
+        history_id = ""
+
+    if not history_id:
+        log.warning(
+            "gmail-webhook: missing historyId — returning 200 to prevent Pub/Sub retry storm"
+        )
+        return JSONResponse(content={"status": "ok", "history_id": ""})
+
+    from agents.nexus_prime.orchestrator import handle_gmail_webhook
+
+    project_id = _get_project_id()
+    try:
+        result = await handle_gmail_webhook(project_id, history_id)
+    except Exception as exc:
+        log.exception("gmail-webhook: enqueue failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return JSONResponse(content={"status": "ok", **result})
+
+
+@app.post("/gmail-renew-watch")
+async def gmail_renew_watch(request: Request) -> JSONResponse:
+    """
+    Renew the Gmail push watch() subscription.
+
+    Cloud Scheduler calls this endpoint every 23 hours to ensure the Gmail
+    watch does not expire (Gmail maximum is 7 days). On success, persists
+    the new expiration timestamp to System_State Sheet.
+    Nexus-Prime only.
+
+    Spec: Docs/email-comm-plan.md Phase 5
+    """
+    _verify_pubsub_audience(request)
+
+    if _AGENT_NAME != "nexus-prime":
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{_AGENT_NAME}' does not support /gmail-renew-watch.",
+        )
+
+    from agents.nexus_prime.orchestrator import handle_gmail_renew_watch
+
+    project_id = _get_project_id()
+    try:
+        result = await handle_gmail_renew_watch(project_id)
+        log.info("gmail-renew-watch: watch renewed, expires_at=%s", result.get("expires_at", ""))
+    except Exception as exc:
+        log.exception("gmail-renew-watch failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return JSONResponse(content={"status": "ok", **result})

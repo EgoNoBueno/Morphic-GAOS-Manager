@@ -499,11 +499,11 @@ After clicking Allow, the web app is live and `WEBHOOK_URL` is in Secret Manager
 >
 > ⚠️ **Warning — bound-script Execution API 403:** The Apps Script project is created
 > with `parentId: spreadsheet_id` (bound to the Sheet). Bound scripts inherit the
-> spreadsheet's auto-assigned GCP project, which is different from the OAuth client
-> project (`490183704378` — the GCP project that owns `oauth-client.json`; see §0.4). The `scripts.run()` Execution API cannot cross that project
-> boundary with ADC credentials — it returns 403 permanently regardless of scopes,
-> editor consent, or re-auth. Do not spend time debugging this; the three Phase 2
-> tasks must always be completed manually in the Apps Script editor.
+> spreadsheet's auto-assigned GCP project, which differs from `morphic-gaos-prod`.
+> The `scripts.run()` Execution API cannot cross that project boundary with ADC
+> credentials — it returns 403 permanently regardless of scopes, editor consent,
+> or re-auth. Do not spend time debugging this; the three Phase 2 tasks must
+> always be completed manually in the Apps Script editor.
 
 **Step 1 — Set Script Properties**
 Note: The URLs mentioned in this section are dynamically generated based on the specific Google Cloud project and deployment configuration. They will differ for each new deployment.
@@ -741,11 +741,10 @@ python scripts/_seed_knowledge_files.py
 >
 > ⚠️ **Warning — script.scriptapp and chat.spaces.readonly required:** The `setup_apps_script.py --post-auth` command calls `scripts.run()` (requires `script.scriptapp`) and discovers the owner DM space (requires `chat.spaces.readonly`). Both must be in the `--scopes` list above. If you used the old scope set (without these), re-auth with the command above before running `--post-auth`.
 
-> ⚠️ **Warning — Drive API must be enabled in the OAuth client project:** `oauth-client.json` belongs to GCP project `490183704378` (the project that owns the OAuth 2.0 client). The Drive API must be enabled in **that** project, not just in `morphic-gaos-prod`. If you get a 403 `accessNotConfigured` error from the Drive API, run:
+> ⚠️ **Warning — Drive API must be enabled in `morphic-gaos-prod`:** `oauth-client.json` belongs to `morphic-gaos-prod`. If you get a 403 `accessNotConfigured` error from the Drive API, run:
 > ```powershell
-> gcloud services enable drive.googleapis.com --project=490183704378
+> gcloud services enable drive.googleapis.com --project=morphic-gaos-prod
 > ```
-> This is separate from any Drive API enablement in `morphic-gaos-prod`.
 
 ### 6.3 Service Account Access
 
@@ -1635,9 +1634,9 @@ Phase 1 is complete when all of the following pass. Run them in order.
 | 5 | Secret access | `python -c "from tools.secrets import get_secret; v = get_secret('GEMINI_API_KEY', 'morphic-gaos-prod'); print(v[:8] + '...')"` | First 8 chars of API key printed |
 | 6+7+8tests | Webhook HMAC (all 8 cases) | Run `python scripts/smoke_test_6_7.py` — automated; runs all 8 webhook test cases from `GAOS-Manager-Spec.md §14` (valid payload, tampered sig, missing sig, bad schema, bad project_id, priority OOB, empty body, replay) | `8/8 tests passed` printed; cleanup note shows smoke rows to delete from `Agent_Approvals` |
 
-> ⚠️ **Warning — APIs must be enabled in the OAuth client project:** When running smoke tests locally with ADC refreshed via `--client-id-file=oauth-client.json`, API calls are billed/quota-tracked against project `490183704378` (the OAuth client's owning project), **not** `morphic-gaos-prod`. Each GCP API (Sheets, Drive, Pub/Sub, Secret Manager, BigQuery) must be enabled in **both** projects. If you get a 403 `accessNotConfigured` error during any smoke test, run:
+> ⚠️ **Warning — APIs must be enabled in `morphic-gaos-prod`:** All API calls from `oauth-client.json` are billed/quota-tracked against `morphic-gaos-prod`. If you get a 403 `accessNotConfigured` error during any smoke test, run:
 > ```powershell
-> gcloud services enable sheets.googleapis.com drive.googleapis.com pubsub.googleapis.com secretmanager.googleapis.com bigquery.googleapis.com script.googleapis.com --project=490183704378
+> gcloud services enable sheets.googleapis.com drive.googleapis.com pubsub.googleapis.com secretmanager.googleapis.com bigquery.googleapis.com script.googleapis.com --project=morphic-gaos-prod
 > ```
 
 ---

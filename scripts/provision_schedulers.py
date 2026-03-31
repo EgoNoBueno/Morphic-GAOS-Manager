@@ -58,6 +58,12 @@ JOBS: list[dict] = [
         "path": "/sheets-sync",
         "description": "Near-real-time Sheet → BQ staging sync for Grafana (every 5 min)",
     },
+    {
+        "id": "gaos-gmail-renew-watch",
+        "schedule": "0 */23 * * *",
+        "path": "/gmail-renew-watch",
+        "description": "Renew Gmail watch() subscription (expires every 7 days max)",
+    },
 ]
 
 SCOPES = [
