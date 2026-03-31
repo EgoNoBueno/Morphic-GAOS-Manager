@@ -3862,10 +3862,7 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
         )
         return {**state, "outcome": {"processed": 0, "skipped": 0, "new_history_id": ""}}
 
-    monitored_address: str = ""
-    gmail_cfg = getattr(settings, "gmail", None)
-    if gmail_cfg is not None:
-        monitored_address = getattr(gmail_cfg, "monitored_address", "")
+    monitored_address: str = settings.gmail.monitored_address
 
     # ── Fetch delta ──────────────────────────────────────────────────────────
     try:
@@ -4103,9 +4100,8 @@ async def handle_gmail_renew_watch(project_id: str) -> dict[str, Any]:
     settings = get_settings()
     task_id = str(uuid.uuid4())
 
-    gmail_cfg = getattr(settings, "gmail", None)
-    label_id: str = getattr(gmail_cfg, "label_id", "") if gmail_cfg else ""
-    pubsub_topic: str = getattr(gmail_cfg, "pubsub_topic", "") if gmail_cfg else ""
+    label_id: str = settings.gmail.label_id
+    pubsub_topic: str = settings.gmail.pubsub_topic
 
     try:
         expiration_ms_str, initial_history_id = setup_watch(project_id, pubsub_topic, label_id)

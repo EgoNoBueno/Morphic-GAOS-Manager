@@ -86,6 +86,14 @@ class MemoryConfig(BaseModel):
     max_boot_chars: int = 32_000
 
 
+class GmailConfig(BaseModel):
+    monitored_address: str = ""  # Inbox watched by Gmail push
+    sender_address: str = ""  # Authorised reply-from address
+    label_id: str = ""  # Gmail label ID (e.g. Label_6)
+    pubsub_topic: str = ""  # Full topic path: projects/<pid>/topics/...
+    max_results: int = 50
+
+
 class Settings(BaseModel):
     gcp: GCPConfig
     sheet: SheetConfig
@@ -99,6 +107,7 @@ class Settings(BaseModel):
     docs: DocsConfig = Field(default_factory=DocsConfig)
     google_search: GoogleSearchConfig = Field(default_factory=GoogleSearchConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    gmail: GmailConfig = Field(default_factory=GmailConfig)
 
     @property
     def GCP_PROJECT_ID(self) -> str:
