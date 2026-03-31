@@ -36,7 +36,8 @@
 param(
     [int]    $Port           = 11434,
     [string] $Project        = "morphic-gaos-prod",
-    [int]    $RetryDelaySec  = 10
+    [int]    $RetryDelaySec  = 10,
+    [string] $Subdomain      = "gaos-ollama"   # fixed URL: https://gaos-ollama.loca.lt
 )
 
 Set-StrictMode -Version Latest
@@ -65,6 +66,7 @@ $TaskDesc   = "Morphic-GAOS: keeps the localtunnel to Ollama alive and syncs OLL
 # pythonw.exe drops inherited handles, so pass --log-file directly; no shell redirect needed
 $CmdArgs = "`"$ScriptPath`" " +
            "--port $Port --project $Project --retry-delay $RetryDelaySec " +
+           "--subdomain $Subdomain " +
            "--log-file `"$LogFile`""
 
 $Action  = New-ScheduledTaskAction `
@@ -72,7 +74,11 @@ $Action  = New-ScheduledTaskAction `
     -Argument $CmdArgs `
     -WorkingDirectory $RepoRoot
 
-$Trigger = New-ScheduledTaskTrigger -AtLogOn
+# Two triggers: one at startup (no user needed), one at logon (catches re-logins).
+# Both are needed because AtLogOn never fires if the machine doesn't reboot after task
+# registration — and AtStartup alone would miss cases where only the user re-logs.
+$TriggerLogon  = New-ScheduledTaskTrigger -AtLogOn
+$TriggerBoot   = New-ScheduledTaskTrigger -AtStartup
 
 $Settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 0) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable -MultipleInstances IgnoreNew
 
@@ -84,12 +90,12 @@ if ($existing) {
 }
 
 Register-ScheduledTask `
-    -TaskName   $TaskName `
+    -TaskName    $TaskName `
     -Description $TaskDesc `
-    -Action     $Action `
-    -Trigger    $Trigger `
-    -Settings   $Settings `
-    -RunLevel   Limited | Out-Null   # runs as current user, no elevation needed
+    -Action      $Action `
+    -Trigger     @($TriggerLogon, $TriggerBoot) `
+    -Settings    $Settings `
+    -RunLevel    Limited | Out-Null   # runs as current user, no elevation needed
 
 Write-Host ""
 Write-Host "[task] Registered: $TaskName"
@@ -99,9 +105,16 @@ Write-Host "       Log file:   $LogFile"
 Write-Host "       Port:       $Port"
 Write-Host "       Project:    $Project"
 Write-Host ""
-Write-Host "The tunnel will start automatically at your next login."
-Write-Host "To start it right now without logging out:"
-Write-Host "    Start-ScheduledTask -TaskName '$TaskName'"
+Write-Host "The tunnel will start automatically at your next login OR next reboot."
+Write-Host "Starting task now..."
+try {
+    Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+    Write-Host "[task] Started: $TaskName"
+} catch {
+    Write-Host "[task] Could not start immediately (may already be running): $_"
+}
+Write-Host "To restart manually:"
+Write-Host "    Stop-ScheduledTask -TaskName '$TaskName' -ErrorAction SilentlyContinue; Start-ScheduledTask -TaskName '$TaskName'"
 Write-Host ""
 Write-Host "To tail the log:"
 Write-Host "    Get-Content '$LogFile' -Wait"

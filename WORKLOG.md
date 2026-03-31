@@ -5,6 +5,86 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-30T20:30-03:00 — Hardened tunnel watchdog: kill-tree, atomic PID lock, subdomain fix
+
+### What was done
+
+Investigated persistent `gaos-ollama` subdomain failures and orphaned process accumulation.
+Diagnosed root cause: `proc.terminate()` only kills the direct child (cmd.exe from npx.CMD),
+leaving node.exe grandchildren as orphans that hold the loca.lt subdomain indefinitely.
+
+Found 35 orphaned localtunnel node processes from previous 14 watchdog instances killed in
+the prior session. Killed all orphans, fixing the subdomain claim permanently.
+
+**Result:** `gaos-ollama.loca.lt` now granted on every fresh start and verified live.
+
+### What changed
+
+- `scripts/start_ollama_tunnel.py`:
+  - Added `_kill_tree(pid)` — uses `taskkill /F /T /PID` to kill process and all descendants
+  - Replaced `proc.terminate()` with `_kill_tree(proc.pid)` in health-check failure handler
+  - Added `try/finally` around the drain loop to call `_kill_tree` on any exit path
+  - Replaced TOCTOU-prone PID lock with atomic `os.O_CREAT | os.O_EXCL` approach
+- `scripts/register_ollama_tunnel_task.ps1` — already committed in prior session
+- `Docs/GAOS-Nexus-Prime-Spec.md` — already committed in prior session
+- `agents/nexus_prime/orchestrator.py` — already committed in prior session
+
+### What was learned
+
+- `proc.terminate()` leaving orphaned grandchildren is the core instability of the watchdog
+- `taskkill /F /T /PID` must be used instead of `proc.terminate()` for any npx/node chain
+- loca.lt holds subdomains server-side as long as ANY descendant node process is alive —
+  killing only the Python parent leaves node processes holding the name for indefinite time
+- `Start-Process -WindowStyle Hidden` on Windows always creates an extra launcher python.exe
+  as the parent of the actual script process — this is normal (CPU ≈ 0), not a bug
+
+### What's next
+
+- Monitor `gaos-ollama.loca.lt` across the next scheduled task restart to confirm
+  `_kill_tree` properly frees the subdomain on each cycle
+- Run pytest to confirm 600/600 still green
+
+---
+
+## 2026-03-30T00:00-03:00 — Documented Ollama-first mode and re-enable checklist
+
+### What was done
+
+Documented the deliberate decision to run `chat_respond` on `LOCAL_MODEL`
+(Ollama) while the localtunnel infrastructure is being stabilised, and wrote
+the process for re-enabling premium Gemini responses when Ollama is reliable.
+
+**Context:** `chat_respond` was changed from `FAST_MODEL` → `LOCAL_MODEL` in
+commit `e4a67cb` (2026-03-29) to stop burning Gemini tokens while the
+localtunnel watchdog (`GAOS-OllamaTunnel` scheduled task) is not yet proven
+stable.  The Gemini fallback inside `_call_model_ollama()` was also permanently
+disabled in a prior session, so if Ollama is unreachable the node returns a
+graceful fallback string rather than silently switching back to Gemini.
+
+### What changed
+
+- `agents/nexus_prime/orchestrator.py` — Fixed stale docstring in
+  `chat_respond()`: removed claim that it uses `FAST_MODEL`, replaced with
+  accurate `LOCAL_MODEL` description and pointer to the re-enable checklist.
+- `Docs/GAOS-Nexus-Prime-Spec.md`:
+  - §3.1: Updated node count 20 → 21; added `chat_respond` to the inventory
+    description.
+  - §3.2: Added full `#### chat_respond` node definition (was completely absent
+    from the spec despite existing in the orchestrator since Phase 2).
+  - §4.2: Replaced skeleton code block with a proper routing table, corrected
+    `FORMAT_NODES` to include `chat_respond`, added ⚠️ Ollama-first mode note,
+    and added the 8-step re-enable checklist.
+
+### What's next
+
+- When Ollama tunnel reliability is confirmed: follow §4.2 re-enable checklist
+  to move `chat_respond` back to `FAST_MODEL`.
+- Until then: any "I'm having trouble processing your request" response from a
+  chat DM means the Ollama tunnel is down — check the watchdog and
+  `OLLAMA_HOST` secret freshness before debugging the orchestrator.
+
+---
+
 ## 2026-03-29T14:30-03:00 — Fixed nexus-prime APPROVAL_REQUEST routing gap
 
 ### What was done

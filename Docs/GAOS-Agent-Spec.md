@@ -304,7 +304,7 @@ Every agent selects its model via a `settings.yaml` alias — never a hardcoded 
 
 **`LOCAL_MODEL` with web access:** Pass `web_access=True` to `_call_model()` when the task references real-world current data (prices, events, competitor activity) and Gemini-quality reasoning is not required. See `GAOS-Tools-Spec.md` §10 for the full design. Do not use `web_access=True` with `FAST_MODEL` or `DEEP_MODEL`.
 
-**Fallback behaviour:** If Ollama is unreachable, `_call_model()` automatically falls back to `LOCAL_MODEL_FALLBACK` (`gemini-2.5-flash`). Agents do not need to handle this — it is transparent.
+**Fallback behaviour:** If Ollama is unreachable, `_call_model()` **raises `RuntimeError`** — the automatic Gemini fallback is permanently disabled. Agents calling `LOCAL_MODEL` must catch `Exception` and decide on a graceful degradation path (e.g. return a user-facing apology string). Never re-call `_call_model()` with a Gemini alias as a substitute — that defeats the no-fallback policy.
 
 ---
 

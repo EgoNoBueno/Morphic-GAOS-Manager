@@ -773,8 +773,9 @@ def _call_model(
 
 - **Host:** fetched from Secret Manager as `OLLAMA_HOST` at call-time; defaults to `http://localhost:11434` if the secret fetch fails (intentional local-dev fallback)
 - **Timeout:** `LOCAL_MODEL_TIMEOUT_SECONDS` from `settings.yaml` (default: 30 seconds)
-- **Fallback:** on `httpx.TimeoutException`, `httpx.ConnectError`, or `httpx.HTTPStatusError`, the function emits a `logger.warning` (including exception type, host URL, model name, fallback model, and cumulative session fallback count) then transparently retries via `_call_model_gemini()` with the `LOCAL_MODEL_FALLBACK` alias — the caller receives a valid `ModelResponse`
-- **Fallback telemetry:** a module-level thread-safe counter tracks all Ollama-to-Gemini fallbacks in the current process lifetime. Use `get_ollama_fallback_count()` to read it and `reset_ollama_fallback_count()` to clear it
+- **On failure:** on `httpx.TimeoutException`, `httpx.ConnectError`, or `httpx.HTTPStatusError`, the function emits a `logger.error` (exception type, host URL, model name, failure count) then **raises `RuntimeError`** — the Gemini fallback is permanently disabled. No Gemini tokens are spent. The failure counter (`get_ollama_fallback_count()`) still increments so operations can detect repeated failures.
+
+> ⚠️ **Fallback is disabled:** The Gemini fallback that existed in early development (auto-routing to `LOCAL_MODEL_FALLBACK` on Ollama timeout) was permanently removed. All Ollama failures now surface as `RuntimeError` so the caller decides how to handle them. Callers that handle the error gracefully (e.g. `chat_respond` returns a user-facing apology string) must catch `Exception` and respond appropriately — they must NOT re-call `_call_model()` with a Gemini alias as a substitute.
 - **Streaming:** always disabled (`stream=False`) — agents process complete responses, not token streams
 
 ### `web_access` Parameter

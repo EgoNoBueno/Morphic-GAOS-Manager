@@ -2792,11 +2792,18 @@ def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     """
     Conversational response node for CHAT_MESSAGE events.
 
-    Calls FAST_MODEL with the Strategic Architect context trio and the user's
-    chat message, then sends the reply back to the originating Chat space.
-    Routes here from think() when msg_type is CHAT_MESSAGE.
+    Calls LOCAL_MODEL (Ollama) with the Strategic Architect context trio and
+    the user's chat message, then sends the reply back to the originating Chat
+    space.  Routes here from think() when msg_type is CHAT_MESSAGE.
 
-    Spec: GAOS-Nexus-Prime-Spec.md §3.3 — chat_respond node
+    **Ollama-first mode (active as of 2026-03-30):** This node intentionally
+    uses LOCAL_MODEL rather than FAST_MODEL to avoid burning Gemini tokens
+    while the Ollama localtunnel is being stabilised.  To re-enable premium
+    responses, change the ``model=`` argument below to
+    ``settings.models.FAST_MODEL`` and follow the re-enable checklist in
+    GAOS-Nexus-Prime-Spec.md §4.2.
+
+    Spec: GAOS-Nexus-Prime-Spec.md §3.2 — chat_respond node
     """
     from config import get_settings
     from tools.google_chat import send_reply_in_thread, send_threaded_reply

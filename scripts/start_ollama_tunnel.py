@@ -10,13 +10,18 @@ Usage:
     python scripts/start_ollama_tunnel.py --port 11434 --project morphic-gaos-prod
 
 The script:
-  1. Spawns:  npx localtunnel --port <PORT>
+  1. Spawns:  npx localtunnel --port <PORT> --subdomain <SUBDOMAIN>
   2. Waits for the "your url is: https://..." line
   3. Verifies Ollama is reachable through the tunnel
-  4. Updates the OLLAMA_HOST secret in Secret Manager
-  5. Blocks, streaming tunnel output
-  6. On any crash or unexpected exit, waits --retry-delay seconds and restarts from step 1
-     (loca.lt issues a new URL on each restart — Secret Manager is updated automatically)
+  4. Updates OLLAMA_HOST in Secret Manager (only when the URL has changed)
+  5. Runs a background health-check thread that polls /api/tags every --health-interval
+     seconds and kills the process if two consecutive checks fail (catches silent 502s)
+  6. Blocks, streaming tunnel output
+  7. On any crash or unexpected exit, waits --retry-delay seconds and restarts from step 1
+
+With --subdomain (default: gaos-ollama), the URL is always https://gaos-ollama.loca.lt.
+Secret Manager is only written when the URL differs from the stored value, so restarts
+don't create new secret versions.
 
 To run at Windows login without a visible terminal window, register it with:
     powershell -ExecutionPolicy Bypass scripts\\register_ollama_tunnel_task.ps1
@@ -28,20 +33,84 @@ is added automatically by _call_model_ollama when the host contains '.loca.lt'.
 from __future__ import annotations
 
 import argparse
+import atexit
 import logging
 import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 import httpx
 
 _TUNNEL_URL_RE = re.compile(r"your url is:\s*(https?://\S+)", re.IGNORECASE)
 _STARTUP_TIMEOUT_S = 60
+_PID_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "ollama-tunnel.pid"
+)
 
 log = logging.getLogger("ollama-tunnel")
+
+
+def _acquire_pid_lock() -> bool:
+    """Atomically write the current PID to the lock file if no other instance is running.
+
+    Uses O_CREAT | O_EXCL for an atomic create (avoids the TOCTOU race where two
+    processes both pass the "file missing" check before either writes its PID).
+
+    Returns:
+        True if the lock was acquired (safe to proceed).
+        False if another live instance is already running (caller should exit).
+    """
+    import ctypes
+
+    os.makedirs(os.path.dirname(_PID_FILE), exist_ok=True)
+
+    def _is_pid_alive(pid: int) -> bool:
+        # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+        if handle:
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+        return False
+
+    while True:
+        try:
+            # Atomic create: fails with FileExistsError if file already exists
+            fd = os.open(_PID_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w") as f:
+                f.write(str(os.getpid()))
+            atexit.register(lambda: os.unlink(_PID_FILE) if os.path.exists(_PID_FILE) else None)
+            return True
+        except FileExistsError:
+            # File exists — check if the stored PID is still alive
+            try:
+                with open(_PID_FILE) as _f:
+                    existing_pid = int(_f.read().strip())
+            except (ValueError, OSError):
+                # Unreadable/empty file — remove and retry the atomic create
+                try:
+                    os.unlink(_PID_FILE)
+                except OSError:
+                    pass
+                continue
+            if _is_pid_alive(existing_pid):
+                log.error(
+                    "Another tunnel watchdog is already running (PID %d). "
+                    "Kill it first or delete %s to override.",
+                    existing_pid,
+                    _PID_FILE,
+                )
+                return False
+            # Stale PID (process dead) — remove and retry
+            try:
+                os.unlink(_PID_FILE)
+            except OSError:
+                pass
+            continue
+
 
 _NODE_SEARCH_DIRS = [
     r"C:\Program Files\nodejs",
@@ -60,6 +129,27 @@ def _ensure_node_on_path() -> None:
         log.info("Added Node.js dirs to PATH: %s", ", ".join(additions))
 
 
+def _kill_tree(pid: int) -> None:
+    """Kill a process and all its descendants using taskkill /F /T (Windows).
+
+    proc.terminate() only kills the direct child (cmd.exe when npx.CMD is used).
+    Without /T the grandchildren (node.exe localtunnel workers) are left as orphans,
+    holding the loca.lt subdomain and preventing re-claim on restart.
+
+    Args:
+        pid: Root process ID of the tree to terminate.
+    """
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True,
+            creationflags=0x08000000,  # CREATE_NO_WINDOW — no console flash on Windows
+        )
+        log.info("Killed process tree rooted at PID %d.", pid)
+    except Exception as exc:
+        log.warning("taskkill /T for PID %d failed: %s", pid, exc)
+
+
 def _configure_logging(log_file: str | None = None) -> None:
     """Configure root logger: always to stderr, optionally also to a file."""
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%dT%H:%M:%S")
@@ -75,6 +165,26 @@ def _configure_logging(log_file: str | None = None) -> None:
         fh = logging.FileHandler(log_file, encoding="utf-8")
         fh.setFormatter(fmt)
         root.addHandler(fh)
+
+
+def _current_secret_url(project: str) -> str | None:
+    """Read the current OLLAMA_HOST value from Secret Manager, or None on any error.
+
+    Args:
+        project: GCP project that owns the secret.
+
+    Returns:
+        The stored URL string, or None if the secret doesn't exist or can't be read.
+    """
+    try:
+        from google.cloud import secretmanager
+
+        client = secretmanager.SecretManagerServiceClient()
+        name = f"projects/{project}/secrets/OLLAMA_HOST/versions/latest"
+        resp = client.access_secret_version(request={"name": name})
+        return resp.payload.data.decode("utf-8").strip()
+    except Exception:
+        return None
 
 
 def _update_secret(url: str, project: str) -> None:
@@ -138,13 +248,23 @@ def _verify_tunnel(url: str, retries: int = 5, delay: float = 3.0) -> bool:
     return False
 
 
-def _run_tunnel_once(cmd: list[str], no_secret: bool, project: str) -> None:
+def _run_tunnel_once(
+    cmd: list[str],
+    no_secret: bool,
+    project: str,
+    health_interval: float = 60.0,
+) -> None:
     """Spawn one localtunnel process, push the URL, drain output until it dies.
 
+    A background health-check thread polls Ollama every *health_interval* seconds.
+    If two consecutive checks fail the tunnel process is killed so the watchdog
+    loop can restart it immediately (catches silent 502 / Bad Gateway states).
+
     Args:
-        cmd:       Full command list to spawn (e.g. ["npx", "localtunnel", ...]).
-        no_secret: When True, skip the Secret Manager update.
-        project:   GCP project id for the secret update.
+        cmd:             Full command list to spawn (e.g. ["npx", "localtunnel", ...]).
+        no_secret:       When True, skip the Secret Manager update.
+        project:         GCP project id for the secret update.
+        health_interval: Seconds between /api/tags health polls (default 60).
 
     Raises:
         FileNotFoundError: If npx is not on PATH.
@@ -179,6 +299,16 @@ def _run_tunnel_once(cmd: list[str], no_secret: bool, project: str) -> None:
         raise RuntimeError("localtunnel exited before providing a URL.")
 
     log.info("Tunnel URL: %s", tunnel_url)
+    if (
+        tunnel_url.split("//")[-1].split(".")[0] != cmd[cmd.index("--subdomain") + 1]
+        if "--subdomain" in cmd
+        else False
+    ):
+        log.warning(
+            "Requested subdomain was not granted by loca.lt — got %r instead. "
+            "This probably means another process already claimed the subdomain.",
+            tunnel_url,
+        )
     time.sleep(2)  # let the tunnel stabilise
 
     ok = _verify_tunnel(tunnel_url)
@@ -188,19 +318,61 @@ def _run_tunnel_once(cmd: list[str], no_secret: bool, project: str) -> None:
         )
 
     if not no_secret:
-        _update_secret(tunnel_url, project)
+        current = _current_secret_url(project)
+        if current == tunnel_url:
+            log.info("OLLAMA_HOST already set to %r — skipping Secret Manager update.", tunnel_url)
+        else:
+            _update_secret(tunnel_url, project)
 
     log.info(
-        "Tunnel active. OLLAMA_HOST=%r — Secret Manager updated. "
-        "Cloud Run picks the new URL on next _call_model_ollama invocation.",
+        "Tunnel active. OLLAMA_HOST=%r — Cloud Run picks the new URL on next "
+        "_call_model_ollama invocation.",
         tunnel_url,
     )
 
-    # Drain remaining output until the process exits
-    for line in proc.stdout:  # type: ignore[union-attr]
-        log.info("[lt] %s", line.rstrip())
+    # ── Health-check thread ────────────────────────────────────────────────
+    # Polls /api/tags every health_interval seconds. Two consecutive failures
+    # kill the process so the outer watchdog loop restarts it immediately.
+    # This catches the silent 502 / Bad Gateway state localtunnel enters without
+    # crashing the process.
+    stop_health = threading.Event()
 
-    proc.wait()
+    def _health_loop() -> None:
+        consecutive_failures = 0
+        while not stop_health.is_set():
+            stop_health.wait(timeout=health_interval)
+            if stop_health.is_set():
+                break
+            try:
+                r = httpx.get(
+                    f"{tunnel_url}/api/tags",
+                    timeout=10.0,
+                    headers={"Bypass-Tunnel-Reminder": "true"},
+                )
+                r.raise_for_status()
+                consecutive_failures = 0
+                log.info("[health] Ollama OK via %s", tunnel_url)
+            except Exception as exc:
+                consecutive_failures += 1
+                log.warning("[health] Check %d/2 failed: %s", consecutive_failures, exc)
+                if consecutive_failures >= 2:
+                    log.error(
+                        "[health] 2 consecutive failures — killing tunnel process to force restart."
+                    )
+                    _kill_tree(proc.pid)
+                    return
+
+    health_thread = threading.Thread(target=_health_loop, daemon=True, name="tunnel-health")
+    health_thread.start()
+
+    # Drain remaining output until the process exits
+    try:
+        for line in proc.stdout:  # type: ignore[union-attr]
+            log.info("[lt] %s", line.rstrip())
+        proc.wait()
+    finally:
+        stop_health.set()
+        _kill_tree(proc.pid)  # ensure entire cmd.exe → node.exe chain is dead
     log.warning("localtunnel process exited with code %d.", proc.returncode)
 
 
@@ -211,6 +383,21 @@ def main() -> int:
     )
     p.add_argument("--port", type=int, default=11434, help="Local Ollama port (default: 11434)")
     p.add_argument("--project", default="morphic-gaos-prod", help="GCP project id")
+    p.add_argument(
+        "--subdomain",
+        default="gaos-ollama",
+        metavar="NAME",
+        help="Request a fixed localtunnel subdomain (default: gaos-ollama → https://gaos-ollama.loca.lt). "
+        "A stable subdomain means Secret Manager is only updated when the URL actually changes.",
+    )
+    p.add_argument(
+        "--health-interval",
+        type=float,
+        default=60.0,
+        metavar="SECONDS",
+        help="Seconds between health-check polls of /api/tags through the tunnel (default: 60). "
+        "Two consecutive failures kill the tunnel process so the watchdog restarts it.",
+    )
     p.add_argument(
         "--no-secret",
         action="store_true",
@@ -237,13 +424,28 @@ def main() -> int:
     args = p.parse_args()
     _configure_logging(args.log_file)
 
+    if not _acquire_pid_lock():
+        return 1
+    log.info("PID lock acquired (%d) — single instance confirmed.", os.getpid())
+
     _ensure_node_on_path()
     npx_path = shutil.which("npx")
     if not npx_path:
         log.error("npx not found on PATH. Install Node.js from https://nodejs.org")
         return 1
     log.info("Using npx at: %s", npx_path)
-    cmd = [npx_path, "--yes", "localtunnel", "--port", str(args.port)]
+    cmd = [
+        npx_path,
+        "--yes",
+        "localtunnel",
+        "--port",
+        str(args.port),
+        "--subdomain",
+        args.subdomain,
+    ]
+    log.info(
+        "Requesting subdomain: %s (URL will be https://%s.loca.lt)", args.subdomain, args.subdomain
+    )
 
     try:
         attempt = 0
@@ -251,7 +453,7 @@ def main() -> int:
             attempt += 1
             log.info("--- Tunnel attempt %d ---", attempt)
             try:
-                _run_tunnel_once(cmd, args.no_secret, args.project)
+                _run_tunnel_once(cmd, args.no_secret, args.project, args.health_interval)
             except FileNotFoundError:
                 log.error("npx not found. Install Node.js from https://nodejs.org")
                 return 1

@@ -93,7 +93,7 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
 
 ### 3.1 Node Inventory
 
-Nexus-Prime's `StateGraph` has 20 nodes. The router node determines which branch to execute based on message type. Added since original design: `market_watchdog`, `roi_optimizer` (Phase 3 reactive routing), `handle_infra_provision` (Phase 4 InfraProvisioner), `handle_approval_request` (Phase 4 — routes inbound `APPROVAL_REQUEST` messages from domain agents to a Chat card notification).
+Nexus-Prime's `StateGraph` has 21 nodes. The router node determines which branch to execute based on message type. Added since original design: `market_watchdog`, `roi_optimizer` (Phase 3 reactive routing), `handle_infra_provision` (Phase 4 InfraProvisioner), `handle_approval_request` (Phase 4 — routes inbound `APPROVAL_REQUEST` messages from domain agents to a Chat card notification), `chat_respond` (conversational DM reply node — routes here from `think()` when `msg_type == CHAT_MESSAGE`).
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -115,7 +115,7 @@ Nexus-Prime's `StateGraph` has 20 nodes. The router node determines which branch
 └────────────────────────────────────────────────────────────────┘
 ```
 
-Node abbreviations: diag=diagnose, know=knowledge\_review, init=init\_project, conf=conflict\_resolve, park=park\_or\_broadcast, vision=vision\_blueprint, iter=iterate\_plan, skill=handle\_skill\_request, prop=propose\_gate, prom=promote, notif=notify\_agents, think=think
+Node abbreviations: diag=diagnose, know=knowledge\_review, init=init\_project, conf=conflict\_resolve, park=park\_or\_broadcast, vision=vision\_blueprint, iter=iterate\_plan, skill=handle\_skill\_request, prop=propose\_gate, prom=promote, notif=notify\_agents, think=think, chat=chat\_respond
 
 ### 3.2 Node Definitions
 
@@ -867,6 +867,25 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     return state
 ```
 
+#### `chat_respond`
+
+Conversational response node. Routes here directly from `think()` when `msg_type == CHAT_MESSAGE`. `think()` itself fast-paths CHAT_MESSAGE (no LLM call — sets `response_mode="Direct"` and `next_node="chat_respond"` deterministically) so this is the only LLM call in the entire CHAT_MESSAGE path.
+
+**What it does:** Loads the Context Trio as system prompt, appends Google Chat formatting rules (no Markdown), calls `_call_model()`, and delivers the reply via `send_reply_in_thread()` (preferred) or `send_threaded_reply()` (fallback for messages without a server-assigned thread name). All failures are caught and logged — the node never raises.
+
+**Current model:** `LOCAL_MODEL` (Ollama). See §4.2 for the Ollama-first policy and re-enable checklist.
+
+```python
+def chat_respond(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
+    # Builds prompt from context_trio + chat_format_rules + user_text
+    # Calls _call_model(prompt, model=settings.models.LOCAL_MODEL, system_prompt=...)
+    # Sends reply via send_reply_in_thread / send_threaded_reply
+```
+
+**Failure behaviour:** If the model call fails, the node returns a fallback string (`"I'm having trouble processing your request right now."`) and logs the exception. If the Chat send fails, it is logged but does not propagate — `record` still runs.
+
+---
+
 #### `vision_blueprint`
 
 *(Phase 2.5 Step 5)* Handles `VISION_SUBMITTED` messages. Calls `DEEP_MODEL` to generate a structured Blueprint Doc from the owner's vision text, creates the Google Doc via `tools/google_docs.create_document()`, appends a row to the `Project_Incubator` Sheet tab, and sends an Approve/Reject Chat card to the owner's space (falling back to `settings.chat.owner_space` when `space_name` is absent from the payload). The `blueprint_id` (task_id) → `doc_id` mapping is stored in `active_blueprints`. All downstream failures (Docs API, Sheets, Chat) are caught and logged — the node never raises.
@@ -1213,18 +1232,39 @@ These are enforcement rules — not configurable behavior. Each must be verified
 
 ### 4.2 Model Selection Rules
 
+**Current routing table (last updated 2026-03-30):**
+
+| Node | Model alias | Rationale |
+|------|-------------|----------|
+| `diagnose`, `knowledge_review`, `conflict_resolve` | `DEEP_MODEL` | High-stakes decisions — full reasoning quality required |
+| `record`, `chat_respond` | `LOCAL_MODEL` | Cost optimisation — formatting and conversational replies run on Ollama |
+| `think`, `propose_gate`, `promote`, and all other nodes | `FAST_MODEL` | Lightweight routing / utility calls |
+
 ```python
 DECISION_NODES = {"diagnose", "knowledge_review", "conflict_resolve"}
-FORMAT_NODES   = {"record"}
+FORMAT_NODES   = {"record", "chat_respond"}  # Both use LOCAL_MODEL
 
-def get_model_for_node(node_name: str) -> str:
+def _model_for_node(node_name: str) -> str:
     if node_name in DECISION_NODES:
         return settings.models.DEEP_MODEL
     if node_name in FORMAT_NODES:
-        # LOCAL_MODEL with fallback to FAST_MODEL on timeout
         return settings.models.LOCAL_MODEL
-    return settings.models.FAST_MODEL  # Routing and utility nodes
+    return settings.models.FAST_MODEL
 ```
+
+> ⚠️ **Note — Ollama-first mode (active as of 2026-03-30):** `chat_respond` uses `LOCAL_MODEL` instead of `FAST_MODEL` to avoid burning Gemini tokens while the Ollama localtunnel reliability is being stabilised. The original intent was `FAST_MODEL` for conversational responses; it was changed in commit `e4a67cb`. If `_call_model()` cannot reach Ollama, `chat_respond` returns a fallback string rather than silently escalating to Gemini — the Gemini fallback inside `_call_model_ollama()` was permanently disabled in a prior session.
+
+**Re-enable premium (FAST_MODEL) for `chat_respond` — checklist:**
+
+1. Confirm `OLLAMA_HOST` Secret Manager value is a live tunnel URL — `curl {OLLAMA_HOST}/api/tags` returns HTTP 200 with a model list.
+2. Confirm the tunnel watchdog task `GAOS-OllamaTunnel` is running and auto-restarting after reboots — `Get-ScheduledTask -TaskName GAOS-OllamaTunnel | Select-Object State`.
+3. Run two manual DM tests via `chat_emulator.py` and confirm Ollama replies are coherent and within the latency budget (< 8 seconds end-to-end).
+4. In `agents/nexus_prime/orchestrator.py`, in `chat_respond()`, change:
+   `model=settings.models.LOCAL_MODEL` → `model=settings.models.FAST_MODEL`
+5. Update this table — move `chat_respond` from `LOCAL_MODEL` row to `FAST_MODEL` row.
+6. Update `FORMAT_NODES` constant above to remove `chat_respond`.
+7. Run `pytest --tb=short` — confirm 600/600 pass.
+8. Commit: `fix: restore chat_respond to FAST_MODEL — Ollama tunnel stable`.
 
 ### 4.3 Hard Stop Behavior
 
