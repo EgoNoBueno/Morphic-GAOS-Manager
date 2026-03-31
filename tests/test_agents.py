@@ -50,6 +50,14 @@ projects:
   default:
     sheet_id: spreadsheet-123
     drive_folder_id: folder-abc
+gmail:
+  monitored_address: 'owner@example.com'
+  sender_address: 'aos@example.com'
+  label_id: 'Label_6'
+  pubsub_topic: 'projects/test-project/topics/gmail-notifications'
+  max_results: 50
+chat:
+  owner_space: 'spaces/test-space'
 """
 
 _REPO_ROOT = Path(__file__).parent.parent
@@ -2536,3 +2544,190 @@ class TestEmailReply:
 
         call_kwargs = mock_send.call_args[1]
         assert call_kwargs["subject"] == "Re: Need a quote"
+
+
+# ── TestDailyDigest ──────────────────────────────────────────────────────────
+
+
+class TestDailyDigest:
+    """Tests for handle_daily_digest — daily health + activity email."""
+
+    _PROJECT_ID = "test-project"
+
+    _STATE_ROWS = [
+        {"key": "gmail_watch_expiration", "value": "2026-04-07T10:28:58+00:00", "updated_at": ""},
+        {"key": "heartbeat_nexus-prime", "value": "IDLE", "updated_at": "2026-03-31T12:00:00"},
+        {"key": "heartbeat_scout", "value": "ACTIVE", "updated_at": "2026-03-31T11:55:00"},
+    ]
+    _EMAIL_ROWS = [
+        {"received_at": "2026-03-31T10:00:00+00:00", "status": "Replied"},
+        {"received_at": "2026-03-31T08:00:00+00:00", "status": "Pending"},
+        # old row (>24h) — should not be counted
+        {"received_at": "2026-03-30T00:00:00+00:00", "status": "Replied"},
+    ]
+    _LOG_ROWS = [
+        {"timestamp": "2026-03-31T10:00:00+00:00", "agent_id": "nexus-prime"},
+        {"timestamp": "2026-03-31T09:00:00+00:00", "agent_id": "scout"},
+        {"timestamp": "2026-03-30T00:00:00+00:00", "agent_id": "ledger"},  # old
+    ]
+    _ERROR_ROWS: list = []
+    _APPROVAL_ROWS = [
+        {"status": "pending"},
+        {"status": "approved"},
+    ]
+
+    @staticmethod
+    def _mock_resp(text: str = "All systems operational.\n\nYour AOS team"):
+        from agents import ModelResponse
+
+        return ModelResponse(text=text, cost_usd=0.001, tokens_used=80)
+
+    def _patch_sheets(self, tab_map: dict | None = None):
+        """Return a side_effect callable for get_all_records keyed by tab name."""
+        defaults = {
+            "System_State": self._STATE_ROWS,
+            "Email Inbox": self._EMAIL_ROWS,
+            "Logs": self._LOG_ROWS,
+            "Error Logs": self._ERROR_ROWS,
+            "Agent_Approvals": self._APPROVAL_ROWS,
+        }
+        if tab_map:
+            defaults.update(tab_map)
+
+        def _get_all(tab: str, project_id: str) -> list:  # noqa: ARG001
+            return list(defaults.get(tab, []))
+
+        return _get_all
+
+    def test_happy_path_sends_email(self):
+        """handle_daily_digest sends email and returns correct counts."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_daily_digest
+
+        with (
+            patch(
+                "tools.google_sheets.get_all_records",
+                side_effect=self._patch_sheets(),
+            ),
+            patch("tools.google_sheets.init_sheets_client"),
+            patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
+            patch("tools.gmail.send_email", return_value="sent-001"),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = asyncio.run(handle_daily_digest(self._PROJECT_ID))
+
+        assert result["sent"] is True
+        assert result["sent_id"] == "sent-001"
+        assert result["emails_24h"] == 2
+        assert result["emails_replied"] == 1
+        assert result["emails_pending"] == 1
+        assert result["logs_24h"] == 2
+        assert result["errors_24h"] == 0
+        assert result["pending_approvals"] == 1
+
+    def test_send_email_failure_returns_sent_false(self):
+        """GmailAPIError on send_email sets sent=False but does not raise."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_daily_digest
+        from tools.gmail import GmailAPIError
+
+        with (
+            patch(
+                "tools.google_sheets.get_all_records",
+                side_effect=self._patch_sheets(),
+            ),
+            patch("tools.google_sheets.init_sheets_client"),
+            patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
+            patch(
+                "tools.gmail.send_email",
+                side_effect=GmailAPIError("quota exceeded"),
+            ),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = asyncio.run(handle_daily_digest(self._PROJECT_ID))
+
+        assert result["sent"] is False
+        assert result["sent_id"] == ""
+
+    def test_model_failure_falls_back_to_raw_data(self):
+        """FAST_MODEL failure sends raw telemetry text instead of LLM digest."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_daily_digest
+
+        with (
+            patch(
+                "tools.google_sheets.get_all_records",
+                side_effect=self._patch_sheets(),
+            ),
+            patch("tools.google_sheets.init_sheets_client"),
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                side_effect=RuntimeError("timeout"),
+            ),
+            patch("tools.gmail.send_email", return_value="sent-002") as m,
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = asyncio.run(handle_daily_digest(self._PROJECT_ID))
+
+        assert result["sent"] is True
+        body_sent = m.call_args[1]["body"]
+        assert "GAOS Daily Digest" in body_sent  # raw data fallback contains header
+
+    def test_sheets_failure_degrades_gracefully(self):
+        """If all sheet reads fail, digest still sends with zeroed counts."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_daily_digest
+
+        with (
+            patch(
+                "tools.google_sheets.get_all_records",
+                side_effect=RuntimeError("Sheets unavailable"),
+            ),
+            patch("tools.google_sheets.init_sheets_client"),
+            patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
+            patch("tools.gmail.send_email", return_value="sent-003"),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = asyncio.run(handle_daily_digest(self._PROJECT_ID))
+
+        assert result["sent"] is True
+        assert result["emails_24h"] == 0
+        assert result["logs_24h"] == 0
+        assert result["errors_24h"] == 0
+        assert result["pending_approvals"] == 0
+
+    def test_no_recipient_skips_send(self):
+        """If gmail.monitored_address is empty, send_email is never called."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_daily_digest
+        from config import get_settings
+
+        settings = get_settings()
+        original = settings.gmail.monitored_address
+        settings.gmail.monitored_address = ""
+
+        try:
+            with (
+                patch(
+                    "tools.google_sheets.get_all_records",
+                    side_effect=self._patch_sheets(),
+                ),
+                patch("tools.google_sheets.init_sheets_client"),
+                patch(
+                    "agents.nexus_prime.orchestrator._call_model",
+                    return_value=self._mock_resp(),
+                ),
+                patch("tools.gmail.send_email") as mock_send,
+                patch("agents.nexus_prime.orchestrator._log_cloud"),
+            ):
+                result = asyncio.run(handle_daily_digest(self._PROJECT_ID))
+        finally:
+            settings.gmail.monitored_address = original
+
+        mock_send.assert_not_called()
+        assert result["sent"] is False

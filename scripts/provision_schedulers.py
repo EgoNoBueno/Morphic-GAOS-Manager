@@ -64,6 +64,12 @@ JOBS: list[dict] = [
         "path": "/gmail-renew-watch",
         "description": "Renew Gmail watch() subscription (expires every 7 days max)",
     },
+    {
+        "id": "gaos-daily-digest",
+        "schedule": "0 14 * * *",  # 6 AM PST (UTC-8) = 14:00 UTC
+        "path": "/daily-digest",
+        "description": "Daily system health + activity digest emailed to owner at 6 AM PST",
+    },
 ]
 
 SCOPES = [

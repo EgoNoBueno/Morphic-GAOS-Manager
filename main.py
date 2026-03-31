@@ -1122,6 +1122,46 @@ async def gmail_webhook(request: Request) -> JSONResponse:
     return JSONResponse(content={"status": "ok", **result})
 
 
+@app.post("/daily-digest")
+async def daily_digest(request: Request) -> JSONResponse:
+    """
+    Compile and email the daily system health + activity digest.
+
+    Cloud Scheduler calls this endpoint at 6 AM PST daily. Reads the last
+    24 h of Logs, Error Logs, Email Inbox, Agent_Approvals, and System_State,
+    composes a plain-text digest via FAST_MODEL, and emails it to the owner.
+    Nexus-Prime only.
+
+    Spec: Docs/GAOS-Deploy-Spec.md §10
+    """
+    _verify_pubsub_audience(request)
+
+    if _AGENT_NAME != "nexus-prime":
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{_AGENT_NAME}' does not support /daily-digest.",
+        )
+
+    from agents.nexus_prime.orchestrator import handle_daily_digest
+
+    project_id = _get_project_id()
+    try:
+        result = await handle_daily_digest(project_id)
+        log.info(
+            "daily-digest complete: sent=%s logs=%d errors=%d emails=%d pending_approvals=%d",
+            result.get("sent"),
+            result.get("logs_24h", 0),
+            result.get("errors_24h", 0),
+            result.get("emails_24h", 0),
+            result.get("pending_approvals", 0),
+        )
+    except Exception as exc:
+        log.exception("daily-digest failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return JSONResponse(content={"status": "ok", **result})
+
+
 @app.post("/gmail-renew-watch")
 async def gmail_renew_watch(request: Request) -> JSONResponse:
     """

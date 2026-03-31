@@ -4352,3 +4352,300 @@ async def handle_gmail_renew_watch(project_id: str) -> dict[str, Any]:
         "INFO",
     )
     return {"expires_at": expires_at, "initial_history_id": initial_history_id}
+
+
+# ── handle_daily_digest ───────────────────────────────────────────────────────
+
+
+async def handle_daily_digest(project_id: str) -> dict[str, Any]:
+    """Compile and email the daily system health and activity digest.
+
+    Called by POST /daily-digest (Cloud Scheduler, 6 AM PST daily).
+    Not a LangGraph graph node — runs outside the state machine.
+
+    Steps:
+      1. Read System_State tab — extract agent heartbeats and Gmail watch expiry
+      2. Read Email Inbox tab — count 24 h email activity by status
+      3. Read Logs tab — count 24 h task activity by agent
+      4. Read Error Logs tab — count 24 h errors
+      5. Read Agent_Approvals tab — count pending proposals
+      6. Compose plain-text digest using FAST_MODEL
+      7. Send email to the configured monitored_address
+      8. Return summary dict
+
+    Args:
+        project_id: Active GAOS project ID.
+
+    Returns:
+        Dict with counts and send status: emails_24h, errors_24h, logs_24h,
+        pending_approvals, sent_to, task_id.
+    """
+    from datetime import datetime, timedelta
+
+    from config import get_settings
+    from tools.gmail import GmailAPIError, GmailAuthError, send_email
+    from tools.google_sheets import get_all_records, init_sheets_client
+
+    settings = get_settings()
+    init_sheets_client(project_id)
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(hours=24)
+    task_id = str(uuid.uuid4())
+    date_str = now.strftime("%A, %B %d, %Y").replace(" 0", " ")
+
+    def _parse_ts(ts_str: str) -> datetime:
+        """Parse ISO or Google Sheets M/D/YYYY H:MM:SS timestamp strings."""
+        if not ts_str:
+            return datetime(1970, 1, 1, tzinfo=UTC)
+        try:
+            dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+        except (ValueError, AttributeError):
+            pass
+        try:
+            return datetime.strptime(ts_str.strip(), "%m/%d/%Y %H:%M:%S").replace(tzinfo=UTC)
+        except ValueError:
+            return datetime(1970, 1, 1, tzinfo=UTC)
+
+    # ── 1. System_State ───────────────────────────────────────────────────────
+    heartbeats: list[dict] = []
+    gmail_watch_expires = ""
+    try:
+        state_rows = get_all_records("System_State", project_id)
+        for row in state_rows:
+            key = row.get("key", "")
+            if key == "gmail_watch_expiration":
+                gmail_watch_expires = row.get("value", "")
+            elif key.startswith("heartbeat_"):
+                heartbeats.append(
+                    {
+                        "agent": key.replace("heartbeat_", ""),
+                        "status": row.get("value", ""),
+                        "updated_at": row.get("updated_at", ""),
+                    }
+                )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"daily-digest: failed to read System_State: {exc}",
+            "WARNING",
+        )
+
+    # ── 2. Email Inbox (last 24 h) ────────────────────────────────────────────
+    emails_replied = 0
+    emails_pending = 0
+    emails_total_24h = 0
+    try:
+        email_rows = get_all_records("Email Inbox", project_id)
+        for row in email_rows:
+            row_ts = _parse_ts(row.get("received_at", "") or row.get("timestamp", ""))
+            if row_ts >= cutoff:
+                emails_total_24h += 1
+                status = row.get("status", "").lower()
+                if status == "replied":
+                    emails_replied += 1
+                else:
+                    emails_pending += 1
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"daily-digest: failed to read Email Inbox: {exc}",
+            "WARNING",
+        )
+
+    # ── 3. Logs (last 24 h) ───────────────────────────────────────────────────
+    logs_24h: list[dict] = []
+    active_agents: set[str] = set()
+    try:
+        all_logs = get_all_records("Logs", project_id)
+        for row in all_logs:
+            if _parse_ts(row.get("timestamp", "")) >= cutoff:
+                logs_24h.append(row)
+                if row.get("agent_id"):
+                    active_agents.add(row["agent_id"])
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"daily-digest: failed to read Logs: {exc}",
+            "WARNING",
+        )
+
+    # ── 4. Error Logs (last 24 h) ─────────────────────────────────────────────
+    errors_24h = 0
+    error_samples: list[str] = []
+    try:
+        all_errors = get_all_records("Error Logs", project_id)
+        for row in all_errors:
+            if _parse_ts(row.get("timestamp", "")) >= cutoff:
+                errors_24h += 1
+                if len(error_samples) < 3:
+                    error_samples.append(str(row.get("message", ""))[:120])
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"daily-digest: failed to read Error Logs: {exc}",
+            "WARNING",
+        )
+
+    # ── 5. Agent_Approvals ────────────────────────────────────────────────────
+    pending_approvals = 0
+    try:
+        approvals = get_all_records("Agent_Approvals", project_id)
+        pending_approvals = sum(
+            1 for r in approvals if r.get("status", "").lower() in ("pending", "")
+        )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"daily-digest: failed to read Agent_Approvals: {exc}",
+            "WARNING",
+        )
+
+    # ── 6. Compose digest with FAST_MODEL ─────────────────────────────────────
+    workbook_url = (
+        f"https://docs.google.com/spreadsheets/d/{settings.sheet.workbook_id}/edit"
+        if settings.sheet.workbook_id
+        else ""
+    )
+
+    heartbeat_lines = (
+        "\n".join(
+            f"  • {hb['agent']}: {hb['status']} (last seen {hb['updated_at'][:16]})"
+            for hb in heartbeats
+        )
+        or "  (no heartbeat data)"
+    )
+    error_sample_lines = (
+        "\n".join(f"  - {s}" for s in error_samples) if error_samples else "  (none)"
+    )
+    gmail_watch_line = (
+        f"Gmail watch expires: {gmail_watch_expires[:19].replace('T', ' ')} UTC"
+        if gmail_watch_expires
+        else "Gmail watch: expiry unknown"
+    )
+
+    raw_data = f"""GAOS Daily Digest — {date_str}
+Generated at: {now.strftime("%H:%M UTC")}
+
+=== SYSTEM HEALTH ===
+{gmail_watch_line}
+Active agents (24 h): {", ".join(sorted(active_agents)) or "none"}
+Agent heartbeats:
+{heartbeat_lines}
+
+=== LAST 24-HOUR ACTIVITY ===
+Log entries: {len(logs_24h)}
+Errors: {errors_24h}
+  Recent error samples:
+{error_sample_lines}
+
+Email traffic:
+  Received: {emails_total_24h}
+  Replied:  {emails_replied}
+  Pending:  {emails_pending}
+
+Pending approvals: {pending_approvals}
+
+Sheet URL: {workbook_url}"""
+
+    digest_prompt = (
+        f"You are AOS (Autonomous Operating System), the AI general manager for SL10 Repair Techs. "
+        f"Below is raw system telemetry from the last 24 hours. Compose a concise, professional "
+        f"daily digest email for the business owner. Use plain text only — no markdown, no code "
+        f"fences. Structure with clear section headers (use === SECTION === style). Lead with a "
+        f"one-sentence executive summary. Flag any errors or pending approvals prominently. Keep "
+        f"it under 400 words. Close with 'Your AOS team'.\n\n"
+        f"RAW DATA:\n{raw_data}"
+    )
+
+    digest_body = raw_data  # fallback if LLM fails
+    try:
+        resp = _call_model(digest_prompt, model=settings.models.FAST_MODEL)
+        if resp.text and len(resp.text.strip()) > 50:
+            digest_body = resp.text.strip()
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"daily-digest: FAST_MODEL formatting failed — sending raw data: {exc}",
+            "WARNING",
+        )
+
+    # ── 7. Send email ─────────────────────────────────────────────────────────
+    recipient = settings.gmail.monitored_address
+    sender = settings.gmail.sender_address
+    subject = f"AOS Daily Digest — {date_str}"
+
+    sent_id = ""
+    send_ok = False
+    if not recipient:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            "daily-digest: gmail.monitored_address not configured — digest not sent",
+            "WARNING",
+        )
+    else:
+        try:
+            sent_id = send_email(
+                project_id=project_id,
+                to=recipient,
+                subject=subject,
+                body=digest_body,
+                from_addr=sender or None,
+            )
+            send_ok = True
+        except (GmailAuthError, GmailAPIError) as exc:
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"daily-digest: send_email failed — {exc}",
+                "ERROR",
+            )
+
+    # ── 8. Log + return ───────────────────────────────────────────────────────
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        (
+            f"daily-digest: sent_ok={send_ok} to={recipient} "
+            f"logs={len(logs_24h)} errors={errors_24h} emails={emails_total_24h} "
+            f"pending_approvals={pending_approvals}"
+        ),
+        "INFO",
+    )
+    return {
+        "sent": send_ok,
+        "sent_to": recipient,
+        "sent_id": sent_id,
+        "logs_24h": len(logs_24h),
+        "errors_24h": errors_24h,
+        "emails_24h": emails_total_24h,
+        "emails_replied": emails_replied,
+        "emails_pending": emails_pending,
+        "pending_approvals": pending_approvals,
+        "task_id": task_id,
+    }
