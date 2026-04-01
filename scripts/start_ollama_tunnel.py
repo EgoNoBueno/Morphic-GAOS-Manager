@@ -226,13 +226,17 @@ def _update_secret(url: str, project: str) -> None:
 def _verify_tunnel(url: str, retries: int = 5, initial_delay: float = 2.0) -> bool:
     """Probe Ollama /api/tags through the tunnel with retries and exponential backoff.
 
-    Uses a short initial timeout that doubles on each failure: 2s → 4s → 8s → ...
-    This lets fast tunnel startups proceed quickly while still handling slow ones.
+    The HTTP request timeout is fixed at 8 s per attempt. What doubles on each
+    failure is the *sleep between attempts* (the retry delay): initial_delay →
+    initial_delay * 2 → initial_delay * 4 → ..., capped at 30 s. This lets fast
+    tunnel startups proceed with a short first wait while still giving slow ones
+    enough time to stabilise.
 
     Args:
         url:           The public tunnel base URL.
         retries:       Number of attempts before giving up.
-        initial_delay: Seconds to wait after the first failure (doubles each attempt).
+        initial_delay: Seconds to sleep after the first failure. Doubles on each
+                       subsequent failure (min(backoff * 2, 30.0)).
 
     Returns:
         True when Ollama responds successfully, False after all retries fail.
@@ -260,7 +264,7 @@ def _run_tunnel_once(
     cmd: list[str],
     no_secret: bool,
     project: str,
-    health_interval: float = 60.0,
+    health_interval: float = 30.0,
 ) -> None:
     """Spawn one localtunnel process, push the URL, drain output until it dies.
 
@@ -272,7 +276,7 @@ def _run_tunnel_once(
         cmd:             Full command list to spawn (e.g. ["npx", "localtunnel", ...]).
         no_secret:       When True, skip the Secret Manager update.
         project:         GCP project id for the secret update.
-        health_interval: Seconds between /api/tags health polls (default 60).
+        health_interval: Seconds between /api/tags health polls (default 30).
 
     Raises:
         FileNotFoundError: If npx is not on PATH.

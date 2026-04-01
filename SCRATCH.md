@@ -733,4 +733,32 @@ Datasource uid `bigquery-morphic-gaos` (existing — no changes to `provisioning
 
 ---
 
-*Last updated: 2026-03-28*
+## Agent Backlog — Low-Activity Tasks to Automate or Delegate
+
+Captured 2026-04-01. Each row is a task category, the planned resolution, and any agent to build.
+
+| Task | Plan | Agent / Notes |
+|------|------|---------------|
+| **Filing** | Automate | New agent: receives documents, organizes, files, and indexes them. No other responsibility. |
+| **Organizing** | Automate | New agent: general-purpose organizing agent (scope TBD — likely overlaps with Filing agent; evaluate whether one agent covers both). |
+| **Admin** | TBD | Scope unclear — needs definition before an agent can be designed. |
+| **Bank Deposits** | Automate via Stripe | Stripe API integration — no new agent needed; existing tooling or a Stripe webhook handler. |
+| **Cleaning** | Human | Hire housekeeper (daily). Not automatable. |
+| **Research** | Automate | Agent to run research queries, aggregate results, and surface summaries for owner review. |
+| **Writing Tasks** | Automate | Agent to draft all written content (emails, docs, copy). Owner approval queue. |
+| **Edit Website** | Automate | Agent to make website edits from structured instructions. |
+| **Inventory Management** | Human PA | Human PA manages physical supplies. Not automatable. |
+| **Sending Emails** | Automate (with approval) | Agent drafts all outbound emails. Owner approves via existing approval queue before send. |
+| **Marketing Phone Calls** | Automate | Agent handles outbound marketing call setup and scheduling. |
+| **Video Editing** | Agent | AI-assisted video editing agent. |
+| **Graphics** | AI | AI-generated graphics (no persistent agent needed — trigger on demand). |
+| **Shopping** | Agent (with approval) | Agent sources and proposes purchases. Human approves before any transaction. |
+| **Data Entry** | Agent | Agent handles all structured data entry tasks. |
+| **Cold Calling** | AI | AI-driven outbound cold calling. |
+| **Social Media** | Agent | Agent manages posts, scheduling, and engagement drafts. |
+
+**Next step:** Define scope for Admin and Organizing agents, then spec the Filing agent first (clearest scope, highest reuse potential).
+
+---
+
+*Last updated: 2026-04-01*
