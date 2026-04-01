@@ -32,7 +32,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import logging.handlers
 import os
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -42,6 +44,25 @@ from fastapi.responses import JSONResponse
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
+
+# Centralised error log — WARNING+ to logs/errors.log (5 MB × 3 backups)
+_LOG_DIR = Path(__file__).resolve().parent / "logs"
+_LOG_DIR.mkdir(exist_ok=True)
+
+_error_handler = logging.handlers.RotatingFileHandler(
+    _LOG_DIR / "errors.log",
+    maxBytes=5 * 1024 * 1024,  # 5 MB
+    backupCount=3,
+    encoding="utf-8",
+)
+_error_handler.setLevel(logging.WARNING)
+_error_handler.setFormatter(
+    logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+)
+logging.getLogger().addHandler(_error_handler)
 
 # ── Cached JWT transport ─────────────────────────────────────────────────────
 # Google's id_token.verify_token() fetches public certificates from Google on
