@@ -50,9 +50,6 @@ desktop.ini
 oauth-client.json
 config/keys/
 
-# Private task agents (not committed; excluded for safety)
-agents/*/tasks/
-
 # Test & lint artefacts (not needed at runtime)
 .pytest_cache/
 .coverage

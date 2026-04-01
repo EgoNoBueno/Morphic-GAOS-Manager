@@ -27,6 +27,9 @@
 | Approval Gate proposals | ✅ | ✅ | ✗ escalates to orchestrator |
 | Static analysis gate before deploy | ✅ | ✅ | ✅ (if producing code) |
 | Model selection rule | DEEP_MODEL | context-dependent (see §5) | LOCAL_MODEL first |
+| Max identity file prompt | — | 1,000 words | 300 words (hard limit — see §4.1) |
+| Max tool count | — | Unconstrained | ≤ 3 recommended; > 5 requires Complexity Justification (§4.6) |
+| Single-node logic constraint | ✗ | ✗ | ✅ No internal `plan` node permitted — see §4.7 |
 | Human-visible on dashboard | ✅ | ✅ | ✗ |
 
 ---
@@ -79,6 +82,8 @@ class AgentOutput(BaseModel):
     timestamp: datetime
 ```
 
+**Input/Output Purity rule (enforced for all tiers):** Concrete agent schemas must replace `context: dict` and `result: dict` with explicit, named typed sub-models. Schemas must set `model_config = ConfigDict(extra="forbid")` so that undeclared fields are rejected at the boundary. A schema that accepts arbitrary keys is a design smell — it signals the agent is being asked to do too many things at once. If adding a new field requires a fundamentally different `context` shape, that is a strong signal the task should be split into a separate agent.
+
 ### 2.3 `project_id` Scoping
 
 Every agent action — Sheet writes, Pub/Sub publishes, Cloud Logging entries, Memory Bank reads/writes — must include the `project_id`. No agent may read or write data from a namespace it was not dispatched to.
@@ -105,6 +110,17 @@ Local (`LOCAL_MODEL`) agents produce a plain-text summary line in addition to th
 Every agent must accumulate `cost_usd` for each model call made during a task and return the total in `AgentOutput`. All three model aliases (`LOCAL_MODEL`, `FAST_MODEL`, and `DEEP_MODEL`) currently return `cost_usd = 0.0` — per-call cost calculation is not implemented. Ollama is free (local); Gemini charges are tracked at the GCP billing level (see `GAOS-Manager-Spec.md` §9.4) rather than per-call. `tokens_used` is still tracked in `ModelResponse` for usage monitoring. Re-evaluate per-call tracking if finer-grained cost attribution is needed.
 
 > ⚠️ **Common failure pattern — `cost_usd` bypassed by `except`:** The `state["cost_usd"] += resp.cost_usd` accumulation must happen **before** any `except` block can bypass it. If `_call_model()` is inside a `try` and the cost is accumulated on a line that follows a statement that raises, that cost is silently lost. Pattern: call `_call_model()`, immediately extract and accumulate `resp.cost_usd`, then use the result.
+
+### 2.6 Tool-to-Agent Ratio
+
+To prevent agents from silently expanding into multi-domain utilities, tool count is a hard constraint — not a guideline.
+
+| Tier | Recommended Max | Hard Cap | Consequence |
+|------|----------------|----------|-------------|
+| Tier 3 (Sub-Agent) | 3 tools | 5 tools | > 5 requires a **Complexity Justification** in the identity file and a **Priority-5 Human Approval** before deployment (see §4.6) |
+| Tier 2 (Orchestrator) | Unconstrained | — | Tool scope documented in identity file resources table |
+
+> **Design rule:** If a Tier 3 agent requires more than 5 tools to complete its stated task, it is no longer atomic. Decompose it into multiple Tier 3 agents coordinated by a Tier 2 orchestrator, or promote it to Tier 2.
 
 ---
 
@@ -238,9 +254,19 @@ Sub-agents are stateless, single-purpose task runners spawned by an orchestrator
 
 A complete `Docs/agents/<name>.md` file is still required for Tier 3 agents, but the template is simplified. Required sections: **Persona**, **Goal**, **Specification**, **Guardrails**. Escalation Rules and Pub/Sub Resources are not required (Tier 3 escalates by returning `status: "escalated"` in `AgentOutput`).
 
+**Identity file word limit: 300 words (hard).** If the identity file exceeds 300 words, the agent's scope is too broad — split the task or promote to Tier 2.
+
+Every Tier 3 identity file **must** include the following two Hard Stop Guardrails verbatim in its Guardrails section:
+
+> **Structural Barrier:** I am a specialist. If a sub-task is identified that falls outside my primary goal, I must exit and return `status: "escalated"` with `reason: "SKILL_REQUEST"` to my Orchestrator rather than attempting to solve it inline.
+>
+> **Cost Barrier:** Any single execution path that requires more than 500 tokens of internal reasoning must be flagged. The correct resolution is to refactor into two separate agents, not to expand this agent's logic.
+
 ### 4.2 Stateless Design
 
 Sub-agents must be **stateless** — no LangGraph graph, no parked tasks. They receive an `AgentInput`, complete the task, and return an `AgentOutput`. If the task cannot be completed within one call (e.g., external API is unavailable), they return `status: "escalated"` and the orchestrator decides whether to retry, park, or escalate further.
+
+**Single-Node Constraint (see §4.7):** A Tier 3 agent contains exactly one functional logic node — the execution step. It must not contain an internal `plan` node. If the agent requires its own planning pass before executing, that is a sign it should be promoted to Tier 2 or decomposed into two Tier 3 agents (one for planning output, one for execution).
 
 ```python
 async def run(self, agent_input: AgentInput) -> AgentOutput:
@@ -259,7 +285,7 @@ Sub-agents must **not** raise unhandled exceptions to the orchestrator. All erro
 
 ### 4.3 Tool Scope
 
-Sub-agents have the narrowest possible tool scope. Tools must be declared explicitly; no tool is inherited from the parent orchestrator unless explicitly passed in the `tools` list.
+Sub-agents have the narrowest possible tool scope. Tools must be declared explicitly; no tool is inherited from the parent orchestrator unless explicitly passed in the `tools` list. The recommended maximum is **3 tools**; the hard cap is **5 tools** — exceeding it triggers §4.6.
 
 ```python
 # Example: Invoice Parser (Tier 3 under Ledger)
@@ -285,6 +311,26 @@ Sub-agents must **never** re-call `_call_model()` with `FAST_MODEL` or `DEEP_MOD
 ### 4.5 `project_id` Inheritance
 
 Sub-agents receive `project_id` from the orchestrator's `AgentInput`. They must pass it through to every tool call. They cannot operate across multiple `project_id` values in a single invocation.
+
+### 4.6 Complexity Justification Gate
+
+A Tier 3 agent that declares more than 5 tools in its `tools` list is flagged as over-complex. Before it may be deployed:
+
+1. The identity file (`Docs/agents/<name>.md`) must contain a **Complexity Justification** section explaining why each tool beyond the 3-tool recommendation is strictly necessary and why the agent cannot be decomposed.
+2. The Complexity Justification triggers a **Priority-5 Human Approval** proposal written to `Agent_Approvals` before deployment — the orchestrator submits this on behalf of the Tier 3 agent.
+3. If the justification is rejected, the agent must be decomposed before it may be deployed.
+
+> **Rationale:** Five tools is the operational maximum because beyond that point a single agent is almost certainly handling multiple distinct concerns. Forcing a written justification surfaces the design smell before it becomes a production problem.
+
+### 4.7 Single-Node Constraint
+
+Tier 3 agents may contain exactly **one** functional logic node: the execution step. Specifically:
+
+- **Forbidden:** An internal `plan` node, a `dispatch` node, or any node that spawns or routes to sub-tasks.
+- **Permitted:** Pre-execution validation (input parsing, credential check) and post-execution cleanup (result formatting), but these are lifecycle steps — not logic nodes.
+- **Promotion rule:** If adding a `plan` node feels necessary, the agent must be promoted to Tier 2 (stateful orchestrator) or broken into two Tier 3 agents — one producing the plan as output, one consuming it as input.
+
+> **Why this prevents monolith creep:** A single plan-capable agent naturally attracts sub-tasks. By making `plan` a structural boundary rather than a style preference, the spec makes it impossible to grow a Tier 3 agent into an orchestrator without a deliberate architecture decision.
 
 ---
 
@@ -367,10 +413,13 @@ An agent is **not complete** until every item below is checked. This checklist m
 ### Tier 3 Sub-Agent Checklist
 
 - [ ] Identity file (`Docs/agents/<name>.md`) complete — Persona, Goal, Specification, Guardrails present
+- [ ] Identity file is ≤ 300 words (§4.1 hard limit)
+- [ ] Identity file includes both Hard Stop Guardrails verbatim (Structural Barrier + Cost Barrier — §4.1)
 - [ ] ADK `Agent` class created — `name`, `model` (LOCAL_MODEL), `instruction`, `tools` declared
-- [ ] Pydantic `Input` and `Output` schemas defined
+- [ ] Pydantic `Input` and `Output` schemas defined with `extra="forbid"` and no bare `dict` or `Any` fields (§2.2)
 - [ ] Stateless design — no LangGraph; all errors returned via `AgentOutput.status`
-- [ ] Tool scope minimised — only tools required for the single task
+- [ ] No internal `plan` node (§4.7 single-node constraint)
+- [ ] Tool count ≤ 3 (recommended); if > 5, Complexity Justification written and Priority-5 approval obtained (§4.6)
 - [ ] No `DEEP_MODEL` calls anywhere in agent code or tools
 - [ ] `project_id` inherited from orchestrator and forwarded to all tool calls
 - [ ] Cloud Logging labels applied

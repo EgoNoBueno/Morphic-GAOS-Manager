@@ -259,6 +259,88 @@ def _make_fake_agent(agent_module, run_method_name="run"):
     return stub
 
 
+# ── U-Steward-Collect: _collect sets needs_park for drive_maintenance approval ─
+
+
+class TestStewardCollectDriveApproval:
+    """Verifies _collect routes Drive move proposals to _park (needs_park=True)."""
+
+    def _base_state(self) -> dict:
+        import time
+
+        return {
+            "project_id": "test-proj",
+            "task_id": "t-collect",
+            "sub_task_results": [],
+            "parked_proposals": [],
+            "error_history": [],
+            "messages": [],
+            "cost_usd": 0.0,
+            "iteration_count": 0,
+            "step_count": 0,
+            "tokens_used": 0,
+            "hard_stop_triggered": False,
+            "evolution_triggered": False,
+            "_started_at": time.time(),
+        }
+
+    def test_drive_maintenance_requires_approval_sets_needs_park(self):
+        from agents.steward.orchestrator import _collect
+
+        state = self._base_state()
+        state["sub_task_results"] = [
+            {
+                "task_type": "drive_maintenance",
+                "status": "success",
+                "output": {"requires_approval": True, "approved_moves": [{"file": "a.pdf"}]},
+                "cost_usd": 0.0,
+            }
+        ]
+        result = _collect(state)
+        assert result["messages"][-1]["needs_park"] is True
+
+    def test_drive_maintenance_no_approval_does_not_set_needs_park(self):
+        from agents.steward.orchestrator import _collect
+
+        state = self._base_state()
+        state["sub_task_results"] = [
+            {
+                "task_type": "drive_maintenance",
+                "status": "success",
+                "output": {"requires_approval": False, "approved_moves": []},
+                "cost_usd": 0.0,
+            }
+        ]
+        result = _collect(state)
+        assert result["messages"][-1]["needs_park"] is False
+
+    def test_calendar_pending_approval_still_sets_needs_park(self):
+        from agents.steward.orchestrator import _collect
+
+        state = self._base_state()
+        state["sub_task_results"] = [
+            {"task_type": "calendar_add", "status": "pending_approval", "output": {}}
+        ]
+        result = _collect(state)
+        assert result["messages"][-1]["needs_park"] is True
+
+    def test_both_drive_and_calendar_approval_sets_needs_park(self):
+        from agents.steward.orchestrator import _collect
+
+        state = self._base_state()
+        state["sub_task_results"] = [
+            {"task_type": "calendar_add", "status": "pending_approval", "output": {}},
+            {
+                "task_type": "drive_maintenance",
+                "status": "success",
+                "output": {"requires_approval": True, "approved_moves": []},
+                "cost_usd": 0.0,
+            },
+        ]
+        result = _collect(state)
+        assert result["messages"][-1]["needs_park"] is True
+
+
 class TestU5UnknownProjectIdFails:
     def _run_with_mocked_graph(self, orchestrator_module, initial_state_fn, inp_kw: dict):
         """
@@ -2757,3 +2839,361 @@ class TestDailyDigest:
 
         mock_send.assert_not_called()
         assert result["sent"] is False
+
+
+# ── Email intent dispatch (_dispatch_task_from_email) ─────────────────────────
+
+
+class TestDispatchTaskFromEmail:
+    """Unit tests for the intent router that fires TASK_HANDOFF after compose_reply."""
+
+    _PROJECT = "test-project"
+
+    @staticmethod
+    def _state() -> dict:
+        return {
+            "project_id": "test-project",
+            "task_id": "task-intent-001",
+            "cost_usd": 0.0,
+            "incoming_message": None,
+            "messages": [],
+        }
+
+    @staticmethod
+    def _mock_resp(text: str):
+        from agents import ModelResponse
+
+        r = ModelResponse.__new__(ModelResponse)
+        r.text = text
+        r.cost_usd = 0.0
+        r.tokens_used = 10
+        r.model = "test"
+        return r
+
+    def test_drive_intent_publishes_task_handoff(self):
+        from agents.nexus_prime.orchestrator import _dispatch_task_from_email
+        from config import get_settings
+
+        intent_json = '{"is_task": true, "task_type": "drive_maintenance", "task_context": {}}'
+        published = []
+
+        with (
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                return_value=self._mock_resp(intent_json),
+            ),
+            patch(
+                "tools.pubsub.publish",
+                side_effect=lambda topic, msg: published.append((topic, msg)),
+            ),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            _dispatch_task_from_email(
+                state=self._state(),
+                project_id=self._PROJECT,
+                task_id="task-001",
+                from_addr="owner@example.com",
+                subject="Organize my Drive",
+                body="Can you please organize my Google Drive?",
+                settings=get_settings(),
+            )
+
+        assert len(published) == 1
+        topic, msg = published[0]
+        assert "steward" in topic
+        assert msg.message_type.value == "TASK_HANDOFF"
+        assert msg.payload["task_type"] == "drive_maintenance"
+        assert msg.payload["requested_by"] == "owner@example.com"
+
+    def test_non_task_email_publishes_nothing(self):
+        from agents.nexus_prime.orchestrator import _dispatch_task_from_email
+        from config import get_settings
+
+        intent_json = '{"is_task": false, "task_type": null, "task_context": {}}'
+        published = []
+
+        with (
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                return_value=self._mock_resp(intent_json),
+            ),
+            patch(
+                "tools.pubsub.publish",
+                side_effect=lambda topic, msg: published.append((topic, msg)),
+            ),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            _dispatch_task_from_email(
+                state=self._state(),
+                project_id=self._PROJECT,
+                task_id="task-001",
+                from_addr="owner@example.com",
+                subject="Thanks!",
+                body="Got it, thanks for the update.",
+                settings=get_settings(),
+            )
+
+        assert published == []
+
+    def test_model_failure_does_not_raise(self):
+        from agents.nexus_prime.orchestrator import _dispatch_task_from_email
+        from config import get_settings
+
+        with (
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                side_effect=Exception("model unavailable"),
+            ),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            # Must not raise — failures are swallowed with a WARNING log
+            _dispatch_task_from_email(
+                state=self._state(),
+                project_id=self._PROJECT,
+                task_id="task-001",
+                from_addr="owner@example.com",
+                subject="Organize my Drive",
+                body="Clean up my files please.",
+                settings=get_settings(),
+            )
+
+    def test_unknown_task_type_publishes_nothing(self):
+        from agents.nexus_prime.orchestrator import _dispatch_task_from_email
+        from config import get_settings
+
+        intent_json = '{"is_task": true, "task_type": "make_coffee", "task_context": {}}'
+        published = []
+
+        with (
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                return_value=self._mock_resp(intent_json),
+            ),
+            patch(
+                "tools.pubsub.publish",
+                side_effect=lambda topic, msg: published.append((topic, msg)),
+            ),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            _dispatch_task_from_email(
+                state=self._state(),
+                project_id=self._PROJECT,
+                task_id="task-001",
+                from_addr="owner@example.com",
+                subject="Do something weird",
+                body="Make me a coffee.",
+                settings=get_settings(),
+            )
+
+        assert published == []
+
+    def test_project_id_forwarded_to_published_message(self):
+        from agents.nexus_prime.orchestrator import _dispatch_task_from_email
+        from config import get_settings
+
+        intent_json = '{"is_task": true, "task_type": "drive_maintenance", "task_context": {}}'
+        published = []
+
+        with (
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                return_value=self._mock_resp(intent_json),
+            ),
+            patch(
+                "tools.pubsub.publish",
+                side_effect=lambda topic, msg: published.append((topic, msg)),
+            ),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            _dispatch_task_from_email(
+                state=self._state(),
+                project_id="my-specific-project",
+                task_id="task-001",
+                from_addr="owner@example.com",
+                subject="Drive cleanup",
+                body="Sort my files.",
+                settings=get_settings(),
+            )
+
+        assert published[0][1].project_id == "my-specific-project"
+
+    def test_markdown_fenced_json_is_parsed(self):
+        """Model sometimes wraps JSON in ```json fences — strip them."""
+        from agents.nexus_prime.orchestrator import _dispatch_task_from_email
+        from config import get_settings
+
+        fenced = (
+            '```json\n{"is_task": true, "task_type": "drive_maintenance", "task_context": {}}\n```'
+        )
+        published = []
+
+        with (
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                return_value=self._mock_resp(fenced),
+            ),
+            patch(
+                "tools.pubsub.publish",
+                side_effect=lambda topic, msg: published.append((topic, msg)),
+            ),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            _dispatch_task_from_email(
+                state=self._state(),
+                project_id=self._PROJECT,
+                task_id="task-001",
+                from_addr="owner@example.com",
+                subject="Drive cleanup",
+                body="Sort my files.",
+                settings=get_settings(),
+            )
+
+        assert len(published) == 1
+
+
+# ── Steward _execute_drive_moves ──────────────────────────────────────────────
+
+
+class TestStewardExecuteDriveMoves:
+    """Unit tests for _execute_drive_moves and _resume execution path."""
+
+    _PROJECT = "test-project"
+
+    @staticmethod
+    def _make_state(proposal_id: str, moves: list[dict]) -> dict:
+        return {
+            "project_id": "test-project",
+            "task_id": "task-steward-exec-001",
+            "cost_usd": 0.0,
+            "parked_proposals": [proposal_id],
+            "_drive_move_cache": {
+                proposal_id: [
+                    {
+                        "task_type": "drive_maintenance",
+                        "output": {
+                            "approved_moves": moves,
+                            "requires_approval": True,
+                        },
+                    }
+                ]
+            },
+        }
+
+    def test_happy_path_executes_all_moves(self):
+        from agents.steward.orchestrator import _execute_drive_moves
+
+        moves = [
+            {
+                "source_path": "Inbound/photo.jpg",
+                "destination_path": "Knowledge/Pictures/photo.jpg",
+            },
+            {"source_path": "Inbound/doc.pdf", "destination_path": "Projects/Q1/doc.pdf"},
+        ]
+        state = self._make_state("prop-001", moves)
+
+        with (
+            patch("tools.drive.move_file", return_value="new-file-id") as mock_move,
+            patch("agents.steward.orchestrator._log_cloud"),
+        ):
+            succeeded, failed = _execute_drive_moves(state, "prop-001")
+
+        assert succeeded == 2
+        assert failed == 0
+        assert mock_move.call_count == 2
+
+    def test_move_failure_is_counted_not_raised(self):
+        from agents.steward.orchestrator import _execute_drive_moves
+        from tools.drive import DriveWriteError
+
+        moves = [
+            {"source_path": "Inbound/bad.jpg", "destination_path": "Knowledge/X/bad.jpg"},
+        ]
+        state = self._make_state("prop-002", moves)
+
+        with (
+            patch("tools.drive.move_file", side_effect=DriveWriteError("api error")),
+            patch("agents.steward.orchestrator._log_cloud"),
+        ):
+            succeeded, failed = _execute_drive_moves(state, "prop-002")
+
+        assert succeeded == 0
+        assert failed == 1
+
+    def test_empty_proposal_returns_zero_zero(self):
+        from agents.steward.orchestrator import _execute_drive_moves
+
+        state = self._make_state("prop-003", [])
+
+        with patch("agents.steward.orchestrator._log_cloud"):
+            succeeded, failed = _execute_drive_moves(state, "prop-003")
+
+        assert succeeded == 0
+        assert failed == 0
+
+    def test_missing_source_path_counted_as_failed(self):
+        from agents.steward.orchestrator import _execute_drive_moves
+
+        moves = [{"source_path": "", "destination_path": "Knowledge/X/file.txt"}]
+        state = self._make_state("prop-004", moves)
+
+        with (
+            patch("tools.drive.move_file") as mock_move,
+            patch("agents.steward.orchestrator._log_cloud"),
+        ):
+            succeeded, failed = _execute_drive_moves(state, "prop-004")
+
+        assert failed == 1
+        mock_move.assert_not_called()
+
+    def test_resume_approved_triggers_execute(self):
+        """_resume calls _execute_drive_moves when APPROVAL_RESULT status is Approved."""
+        from agents.steward.orchestrator import _resume
+        from models import A2AMessage, MessageType
+
+        proposal_id = "prop-resume-001"
+        moves = [{"source_path": "Inbound/a.txt", "destination_path": "Knowledge/Docs/a.txt"}]
+        state = self._make_state(proposal_id, moves)
+        state["incoming_message"] = A2AMessage(
+            source_agent="nexus-prime",
+            target_agent="steward",
+            project_id=self._PROJECT,
+            message_type=MessageType.APPROVAL_RESULT,
+            priority=3,
+            payload={"proposal_id": proposal_id, "status": "Approved"},
+        )
+
+        with (
+            patch("tools.drive.move_file", return_value="moved-id") as mock_move,
+            patch("agents.steward.orchestrator._log_cloud"),
+        ):
+            new_state = _resume(state)
+
+        mock_move.assert_called_once()
+        assert proposal_id not in new_state["parked_proposals"]
+
+    def test_resume_rejected_skips_execute(self):
+        """_resume does NOT call move_file when status is Rejected."""
+        from agents.steward.orchestrator import _resume
+        from models import A2AMessage, MessageType
+
+        proposal_id = "prop-reject-001"
+        moves = [{"source_path": "Inbound/a.txt", "destination_path": "Knowledge/Docs/a.txt"}]
+        state = self._make_state(proposal_id, moves)
+        state["incoming_message"] = A2AMessage(
+            source_agent="nexus-prime",
+            target_agent="steward",
+            project_id=self._PROJECT,
+            message_type=MessageType.APPROVAL_RESULT,
+            priority=3,
+            payload={"proposal_id": proposal_id, "status": "Rejected"},
+        )
+
+        with (
+            patch("tools.drive.move_file") as mock_move,
+            patch("agents.steward.orchestrator._log_cloud"),
+        ):
+            new_state = _resume(state)
+
+        mock_move.assert_not_called()
+        # Proposal is still removed from parked list regardless of outcome
+        assert proposal_id not in new_state["parked_proposals"]

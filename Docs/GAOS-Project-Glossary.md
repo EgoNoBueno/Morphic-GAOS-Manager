@@ -15,6 +15,7 @@ This glossary defines every abbreviation, acronym, and technical term used in Mo
 - **API (Application Programming Interface)**: A standardized "plug" that lets two pieces of software talk to each other — for example, every time an agent reads from or writes to your dashboard, it calls Google's Sheets API.
 - **Approval Gate**: The human review checkpoint in the system. When an agent wants to deploy code, make a payment, send a communication, or change system behavior, it writes a proposal to the `Agent_Approvals` Sheet tab and waits for the owner's approval before proceeding.
 - **AR (Accounts Receivable)**: Money customers owe the business; Ledger opens an AR entry when a deal closes and marks it fulfilled once Foreman confirms the shipment has been sent.
+- **Archivist**: A Tier 3 sub-agent under Steward that classifies unorganised Drive files and returns structured move proposals. Operates on up to 50 files per batch using `LOCAL_MODEL` only; performs no writes and no deletions. Identity file: `Docs/agents/Archivist.md`.
 - **AST (Abstract Syntax Tree)**: A structural map of a piece of Python code that the system walks automatically to detect dangerous commands before any agent-written code is submitted to the Approval Gate.
 
 ## B

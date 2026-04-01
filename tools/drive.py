@@ -343,6 +343,65 @@ def write_playbook(doc: Any, body: str, project_id: str) -> str:
     return write_file(filename, front_matter + body, project_id)
 
 
+def move_file(
+    source_path: str,
+    dest_folder_path: str,
+    project_id: str,
+    new_name: str | None = None,
+) -> str:
+    """Move a file within the Knowledge/ Drive tree and optionally rename it.
+
+    Resolves both paths relative to the project's Knowledge/ root folder.
+    Creates destination folder(s) if they do not exist. The file's existing
+    name is preserved when new_name is None.
+
+    Args:
+        source_path:      Path of the file to move, relative to Knowledge/ root
+                          (e.g. "Inbound/photo.jpg").
+        dest_folder_path: Path of the destination folder, relative to Knowledge/
+                          root (e.g. "Knowledge/Pictures").
+        project_id:       AOS project namespace.
+        new_name:         Filename after move. Keeps existing name when None.
+
+    Returns:
+        drive_file_id: The Google Drive file ID of the moved file.
+
+    Raises:
+        KnowledgeFileNotFoundError: If source_path does not resolve to a file.
+        DriveWriteError:            If the Drive API move call fails.
+        DrivePermissionError:       If the SA lacks the required Drive scope.
+    """
+    service = _build_service(project_id)
+    root = _get_drive_root(project_id)
+
+    source_id = _resolve_path(service, root, source_path)
+    if source_id is None:
+        raise KnowledgeFileNotFoundError(f"Source file not found: {source_path}")
+
+    # Fetch current parents so we can remove them after re-parenting
+    file_meta = _retry_drive(
+        lambda: service.files().get(fileId=source_id, fields="parents,name").execute()
+    )
+    current_parents = ",".join(file_meta.get("parents", []))
+    resolved_name = new_name or file_meta.get("name") or source_path.rsplit("/", 1)[-1]
+
+    dest_folder_id = _ensure_folder_path(service, root, dest_folder_path)
+
+    result = _retry_drive(
+        lambda: service.files()
+        .update(
+            fileId=source_id,
+            addParents=dest_folder_id,
+            removeParents=current_parents,
+            body={"name": resolved_name},
+            fields="id",
+        )
+        .execute(),
+        error_cls=DriveWriteError,
+    )
+    return result["id"]
+
+
 def _collect_files(service: Any, folder_id: str, prefix: str, out: list[str]) -> None:
     """Recursively collect relative file paths under folder_id."""
     query = f"'{folder_id}' in parents and trashed = false"

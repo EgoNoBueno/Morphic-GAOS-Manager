@@ -219,6 +219,8 @@ def _plan(state: AgentWorkingMemory) -> AgentWorkingMemory:
     prompt = (
         f"Admin/HR plan. Urgent items: {summary}\n"
         f"Memory keys: {list(state.get('memory_context', {}).keys())[:5]}\n"
+        "Known task_type values: coordinate_calendar, send_reminder, "
+        "drive_maintenance (scan Drive Inbound/ and classify unorganised files), other.\n"
         'Top 3 tasks as JSON: [{"task_type": str, "item": dict, "needs_calendar": bool}]'
     )
     resp = _call_model(prompt, model=_fast(), parse_json=True)
@@ -279,15 +281,28 @@ def _dispatch(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
 def _collect(state: AgentWorkingMemory) -> AgentWorkingMemory:
     results = state.get("sub_task_results", [])
-    # Calendar approval requests become a proposal for _park
+    # Calendar approval requests (Priority-2)
     pending_approval = [r for r in results if r.get("status") == "pending_approval"]
+    # Drive move proposals from Archivist (Priority-3)
+    drive_approval = [
+        r
+        for r in results
+        if r.get("task_type") == "drive_maintenance"
+        and isinstance(r.get("output"), dict)
+        and r["output"].get("requires_approval")
+    ]
     escalated = [r for r in results if r.get("status") == "escalated"]
+    needs_park = bool(pending_approval) or bool(drive_approval)
+    approval_count = len(pending_approval) + len(drive_approval)
     state["messages"].append(
         {
             "role": "system",
-            "content": f"Cycle: {len(results)} tasks, {len(escalated)} escalated, {len(pending_approval)} pending approval.",
+            "content": (
+                f"Cycle: {len(results)} tasks, {len(escalated)} escalated, "
+                f"{approval_count} pending approval."
+            ),
             "escalated": escalated,
-            "needs_park": bool(pending_approval),
+            "needs_park": needs_park,
         }
     )
     return state
@@ -370,70 +385,142 @@ def _report(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
 def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
     """
-    Write to Agent_Approvals and publish Priority-2 APPROVAL_REQUEST
-    (calendar actions require human approval). (GAOS-Agent-Spec.md §3.5)
+    Write to Agent_Approvals and publish APPROVAL_REQUEST.
+
+    Handles two proposal types:
+    - Priority-2: calendar API interactions (needs_calendar tasks)
+    - Priority-3: Drive file move proposals from drive_maintenance tasks
+
+    (GAOS-Agent-Spec.md §3.5)
     """
     from tools.google_sheets import append_row
     from tools.pubsub import publish
 
     pid = state["project_id"]
     results = state.get("sub_task_results", [])
-    calendar_tasks = [r for r in results if r.get("status") == "pending_approval"]
-    proposed_content = str(calendar_tasks)[:4000]
-    sha256 = hashlib.sha256(proposed_content.encode()).hexdigest()
-    proposal = ApprovalProposal(
-        agent_id=_AGENT_ID,
-        issue="Calendar API interaction requires human approval",
-        trigger_reason=f"{len(calendar_tasks)} calendar task(s) pending approval",
-        proposed_code=proposed_content,
-        total_cost_usd=state.get("cost_usd", 0.0),
-        code_sha256=sha256,
-    )
-    try:
-        append_row("Agent_Approvals", proposal.to_sheet_row(), pid)
-    except Exception as exc:
-        _log_cloud(
-            _AGENT_ID,
-            pid,
-            "task",
-            state.get("task_id", ""),
-            f"_park: Agent_Approvals write failed: {exc}",
-            "ERROR",
-        )
+    task_id = state.get("task_id", "")
 
-    state["parked_proposals"].append(proposal.id)
-    # Priority-2: calendar changes require human approval
-    try:
-        publish(
-            "agent/approvals/events",
-            A2AMessage(
-                source_agent=_AGENT_ID,
-                target_agent="nexus-prime",
-                project_id=pid,
-                task_id=state.get("task_id", proposal.id),
-                message_type=MessageType.APPROVAL_REQUEST,
-                priority=2,
-                payload={
-                    "proposal_id": proposal.id,
-                    "code_sha256": sha256,
-                    "description": "Calendar API interaction requires approval.",
-                },
-            ),
+    # ── Priority-2: calendar tasks ────────────────────────────────────────
+    calendar_tasks = [r for r in results if r.get("status") == "pending_approval"]
+    if calendar_tasks:
+        proposed_content = str(calendar_tasks)[:4000]
+        sha256 = hashlib.sha256(proposed_content.encode()).hexdigest()
+        proposal = ApprovalProposal(
+            agent_id=_AGENT_ID,
+            issue="Calendar API interaction requires human approval",
+            trigger_reason=f"{len(calendar_tasks)} calendar task(s) pending approval",
+            proposed_code=proposed_content,
+            total_cost_usd=state.get("cost_usd", 0.0),
+            code_sha256=sha256,
         )
-    except Exception as exc:
-        _log_cloud(
-            _AGENT_ID,
-            pid,
-            "task",
-            state.get("task_id", ""),
-            f"_park: APPROVAL_REQUEST publish failed: {exc}",
-            "ERROR",
+        try:
+            append_row("Agent_Approvals", proposal.to_sheet_row(), pid)
+        except Exception as exc:
+            _log_cloud(
+                _AGENT_ID,
+                pid,
+                "task",
+                task_id,
+                f"_park: Agent_Approvals write failed (calendar): {exc}",
+                "ERROR",
+            )
+        state["parked_proposals"].append(proposal.id)
+        try:
+            publish(
+                "agent/approvals/events",
+                A2AMessage(
+                    source_agent=_AGENT_ID,
+                    target_agent="nexus-prime",
+                    project_id=pid,
+                    task_id=state.get("task_id", proposal.id),
+                    message_type=MessageType.APPROVAL_REQUEST,
+                    priority=2,
+                    payload={
+                        "proposal_id": proposal.id,
+                        "code_sha256": sha256,
+                        "description": "Calendar API interaction requires approval.",
+                    },
+                ),
+            )
+        except Exception as exc:
+            _log_cloud(
+                _AGENT_ID,
+                pid,
+                "task",
+                task_id,
+                f"_park: APPROVAL_REQUEST publish failed (calendar): {exc}",
+                "ERROR",
+            )
+
+    # ── Priority-3: Drive file move proposals (Archivist output) ─────────
+    drive_tasks = [
+        r
+        for r in results
+        if r.get("task_type") == "drive_maintenance"
+        and isinstance(r.get("output"), dict)
+        and r["output"].get("requires_approval")
+    ]
+    if drive_tasks:
+        move_count = sum(
+            len((r.get("output") or {}).get("approved_moves", [])) for r in drive_tasks
         )
+        proposed_content = str(drive_tasks)[:4000]
+        sha256 = hashlib.sha256(proposed_content.encode()).hexdigest()
+        drive_proposal = ApprovalProposal(
+            agent_id=_AGENT_ID,
+            issue="Drive file migration requires human approval",
+            trigger_reason=f"{move_count} file move(s) proposed by Archivist",
+            proposed_code=proposed_content,
+            total_cost_usd=state.get("cost_usd", 0.0),
+            code_sha256=sha256,
+        )
+        try:
+            append_row("Agent_Approvals", drive_proposal.to_sheet_row(), pid)
+        except Exception as exc:
+            _log_cloud(
+                _AGENT_ID,
+                pid,
+                "task",
+                task_id,
+                f"_park: Agent_Approvals write failed (drive): {exc}",
+                "ERROR",
+            )
+        state["parked_proposals"].append(drive_proposal.id)
+        # Cache the move proposals keyed by proposal_id so _resume can execute
+        # them after the owner approves (Rule 2: project_id preserved through all calls)
+        state.setdefault("_drive_move_cache", {})[drive_proposal.id] = drive_tasks  # type: ignore[typeddict-item]
+        try:
+            publish(
+                "agent/approvals/events",
+                A2AMessage(
+                    source_agent=_AGENT_ID,
+                    target_agent="nexus-prime",
+                    project_id=pid,
+                    task_id=task_id or drive_proposal.id,
+                    message_type=MessageType.APPROVAL_REQUEST,
+                    priority=3,
+                    payload={
+                        "proposal_id": drive_proposal.id,
+                        "code_sha256": sha256,
+                        "description": f"Archivist proposed {move_count} file move(s). Review before execution.",
+                    },
+                ),
+            )
+        except Exception as exc:
+            _log_cloud(
+                _AGENT_ID,
+                pid,
+                "task",
+                task_id,
+                f"_park: APPROVAL_REQUEST publish failed (drive): {exc}",
+                "ERROR",
+            )
+
     _write_heartbeat(
         _AGENT_ID,
         pid,
         "PARKED",
-        f"Waiting calendar approval {proposal.id}",
+        f"{len(state['parked_proposals'])} proposal(s) pending approval",
         len(state["parked_proposals"]),
         "",
         _SHEET_TAB,
@@ -441,11 +528,115 @@ def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
     return state
 
 
+def _execute_drive_moves(
+    state: AgentWorkingMemory,
+    proposal_id: str,
+) -> tuple[int, int]:
+    """Execute file moves for an approved Archivist proposal.
+
+    Reads the cached drive_tasks for proposal_id from state, iterates
+    approved_moves, and calls tools.drive.move_file() for each one.
+    Failed moves are logged individually and counted — a partial failure
+    does not abort the remaining moves.
+
+    Args:
+        state:       Steward working memory containing _drive_move_cache.
+        proposal_id: The ApprovalProposal.id that was just approved.
+
+    Returns:
+        (succeeded, failed) counts.
+    """
+    from tools.drive import (
+        DrivePermissionError,
+        DriveWriteError,
+        KnowledgeFileNotFoundError,
+        move_file,
+    )
+
+    pid = state["project_id"]
+    task_id = state.get("task_id", proposal_id)
+    cache: dict = state.get("_drive_move_cache", {})  # type: ignore[typeddict-item]
+    drive_tasks: list[dict] = cache.get(proposal_id, [])
+
+    succeeded = 0
+    failed = 0
+
+    for task_result in drive_tasks:
+        output = task_result.get("output") or {}
+        approved_moves: list[dict] = output.get("approved_moves", [])
+
+        for move in approved_moves:
+            source_path: str = str(move.get("source_path", "")).strip()
+            destination_path: str = str(move.get("destination_path", "")).strip()
+
+            if not source_path or not destination_path:
+                _log_cloud(
+                    _AGENT_ID,
+                    pid,
+                    "task",
+                    task_id,
+                    "_execute_drive_moves: skipping move with empty source or destination",
+                    "WARNING",
+                )
+                failed += 1
+                continue
+
+            # Split destination_path into folder + filename
+            dest_parts = destination_path.rstrip("/").rsplit("/", 1)
+            dest_folder = dest_parts[0] if len(dest_parts) == 2 else ""
+            new_name = dest_parts[-1]
+
+            try:
+                move_file(source_path, dest_folder, pid, new_name=new_name)
+                _log_cloud(
+                    _AGENT_ID,
+                    pid,
+                    "task",
+                    task_id,
+                    f"_execute_drive_moves: '{source_path}' → '{destination_path}'",
+                    "INFO",
+                )
+                succeeded += 1
+            except (KnowledgeFileNotFoundError, DriveWriteError, DrivePermissionError) as exc:
+                _log_cloud(
+                    _AGENT_ID,
+                    pid,
+                    "task",
+                    task_id,
+                    f"_execute_drive_moves: failed to move '{source_path}': {exc}",
+                    "ERROR",
+                )
+                failed += 1
+
+    return succeeded, failed
+
+
 def _resume(state: AgentWorkingMemory) -> AgentWorkingMemory:
     msg = state.get("incoming_message")
     if msg and msg.message_type == MessageType.APPROVAL_RESULT:
-        pid = (msg.payload or {}).get("proposal_id", "")
-        state["parked_proposals"] = [p for p in state.get("parked_proposals", []) if p != pid]
+        payload = msg.payload or {}
+        proposal_id: str = payload.get("proposal_id", "")
+        approval_status: str = payload.get("status", "")
+
+        state["parked_proposals"] = [
+            p for p in state.get("parked_proposals", []) if p != proposal_id
+        ]
+
+        # Execute approved Drive file moves
+        cache: dict = state.get("_drive_move_cache", {})  # type: ignore[typeddict-item]
+        if approval_status == "Approved" and proposal_id in cache:
+            pid = state["project_id"]
+            task_id = state.get("task_id", proposal_id)
+            succeeded, failed = _execute_drive_moves(state, proposal_id)
+            _log_cloud(
+                _AGENT_ID,
+                pid,
+                "task",
+                task_id,
+                f"_resume: drive moves complete — {succeeded} succeeded, {failed} failed",
+                "INFO",
+            )
+
     return state
 
 

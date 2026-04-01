@@ -3268,10 +3268,154 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             "WARNING",
         )
 
+    # ── Intent extraction: dispatch actionable tasks to domain agents ─────
+    _dispatch_task_from_email(
+        state=state,
+        project_id=project_id,
+        task_id=task_id,
+        from_addr=from_addr,
+        subject=subject,
+        body=body,
+        settings=settings,
+    )
+
     return {
         **state,
         "outcome": {"replied_to": from_addr, "sent_id": sent_id, "chars": len(reply_text)},
     }
+
+
+# Task types the intent router knows how to dispatch.
+# Maps task_type → (target_agent, pubsub_topic).
+_EMAIL_TASK_ROUTING: dict[str, tuple[str, str]] = {
+    "drive_maintenance": ("steward", "agent.steward.events"),
+    "inventory_check": ("foreman", "agent.foreman.events"),
+    "deal_closed": ("pursuit", "agent.pursuit.events"),
+}
+
+_INTENT_PROMPT = """\
+Analyze this email and return JSON only — no explanation, no markdown.
+Email subject: {subject}
+Email body:
+{body}
+
+Return exactly: {{"is_task": <bool>, "task_type": <str or null>, "task_context": <dict>}}
+
+Known task_type values:
+- "drive_maintenance" — any request to organize, sort, clean up, file, \
+or move files/folders in Google Drive
+- "inventory_check"  — any request to check stock levels or inventory
+- null — the email is a question, update, reply, or acknowledgment (not an action request)
+
+Set is_task=false and task_type=null for anything that is not a clear \
+service request directed at GAOS."""
+
+
+def _dispatch_task_from_email(
+    state: NexusPrimeWorkingMemory,
+    project_id: str,
+    task_id: str,
+    from_addr: str,
+    subject: str,
+    body: str,
+    settings: Any,
+) -> None:
+    """Detect actionable task intent in an email and publish TASK_HANDOFF.
+
+    Runs after the reply is sent so the sender gets an immediate acknowledgment
+    regardless of whether a task is dispatched. Uses LOCAL_MODEL to classify
+    intent (cheap, local). If a known task_type is detected, publishes a
+    TASK_HANDOFF to the appropriate domain agent's Pub/Sub topic.
+
+    Args:
+        state:      Nexus-Prime working memory (used for cost accumulation only).
+        project_id: AOS project namespace.
+        task_id:    Task ID for log correlation.
+        from_addr:  Sender email address.
+        subject:    Email subject line.
+        body:       Email body plain text.
+        settings:   Application settings (for model alias).
+    """
+    import json
+
+    from tools.pubsub import publish
+
+    prompt = _INTENT_PROMPT.format(subject=subject, body=body[:1200])
+    try:
+        resp = _call_model(prompt, model=settings.models.LOCAL_MODEL)
+        state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+        raw = resp.text.strip()
+        # Strip markdown code fences if the model added them
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        intent: dict = json.loads(raw)
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"_dispatch_task_from_email: intent extraction failed — {exc}",
+            "WARNING",
+        )
+        return
+
+    if not intent.get("is_task") or not intent.get("task_type"):
+        return
+
+    task_type: str = str(intent["task_type"])
+    task_context: dict = intent.get("task_context") or {}
+
+    routing = _EMAIL_TASK_ROUTING.get(task_type)
+    if not routing:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"_dispatch_task_from_email: unknown task_type '{task_type}' — not dispatched",
+            "WARNING",
+        )
+        return
+
+    target_agent, topic = routing
+    try:
+        publish(
+            topic,
+            A2AMessage(
+                source_agent="nexus-prime",
+                target_agent=target_agent,
+                project_id=project_id,
+                task_id=task_id,
+                message_type=MessageType.TASK_HANDOFF,
+                priority=3,
+                payload={
+                    "task_type": task_type,
+                    "requested_by": from_addr,
+                    "email_subject": subject,
+                    **task_context,
+                },
+            ),
+        )
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"_dispatch_task_from_email: TASK_HANDOFF '{task_type}' → {target_agent}",
+            "INFO",
+        )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"_dispatch_task_from_email: TASK_HANDOFF publish failed — {exc}",
+            "WARNING",
+        )
 
 
 def handle_approval_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:

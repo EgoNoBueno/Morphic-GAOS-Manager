@@ -16,6 +16,7 @@ from tools.drive import (
     KnowledgeFolderNotFoundError,
     copy_file,
     list_folder,
+    move_file,
     read_file,
     write_file,
 )
@@ -344,3 +345,119 @@ class TestListFolder:
         result = list_folder("procedures", _PROJECT)
 
         assert "procedures/invoices/jan.md" in result
+
+
+# ── move_file ─────────────────────────────────────────────────────────────────
+
+
+class TestMoveFile:
+    """move_file(source_path, dest_folder_path, project_id, new_name=None)"""
+
+    def test_happy_path_moves_and_returns_id(self, mock_drive):
+        # _resolve_path for source (2 list calls: root → Inbound → photo.jpg)
+        # _ensure_folder_path for dest (1 list call: Knowledge → Pictures exists)
+        # files().get() for current parents
+        # files().update() for the move
+        mock_drive.files.return_value.list.return_value.execute.side_effect = [
+            {"files": [{"id": "inbound-id", "name": "Inbound"}]},
+            {"files": [{"id": "file-id", "name": "photo.jpg"}]},
+            {"files": [{"id": "knowledge-id", "name": "Knowledge"}]},
+            {"files": [{"id": "pictures-id", "name": "Pictures"}]},
+        ]
+        mock_drive.files.return_value.get.return_value.execute.return_value = {
+            "parents": ["inbound-id"],
+            "name": "photo.jpg",
+        }
+        mock_drive.files.return_value.update.return_value.execute.return_value = {"id": "file-id"}
+
+        result = move_file("Inbound/photo.jpg", "Knowledge/Pictures", _PROJECT)
+
+        assert result == "file-id"
+        update_call = mock_drive.files.return_value.update.call_args
+        assert update_call.kwargs["addParents"] == "pictures-id"
+        assert update_call.kwargs["removeParents"] == "inbound-id"
+
+    def test_rename_on_move(self, mock_drive):
+        mock_drive.files.return_value.list.return_value.execute.side_effect = [
+            {"files": [{"id": "inbound-id", "name": "Inbound"}]},
+            {"files": [{"id": "file-id", "name": "photo.jpg"}]},
+            {"files": [{"id": "knowledge-id", "name": "Knowledge"}]},
+            {"files": [{"id": "pictures-id", "name": "Pictures"}]},
+        ]
+        mock_drive.files.return_value.get.return_value.execute.return_value = {
+            "parents": ["inbound-id"],
+            "name": "photo.jpg",
+        }
+        mock_drive.files.return_value.update.return_value.execute.return_value = {"id": "file-id"}
+
+        move_file(
+            "Inbound/photo.jpg", "Knowledge/Pictures", _PROJECT, new_name="2026-03-06_photo.jpg"
+        )
+
+        update_call = mock_drive.files.return_value.update.call_args
+        assert update_call.kwargs["body"]["name"] == "2026-03-06_photo.jpg"
+
+    def test_source_not_found_raises(self, mock_drive):
+        mock_drive.files.return_value.list.return_value.execute.return_value = {"files": []}
+
+        with pytest.raises(KnowledgeFileNotFoundError):
+            move_file("Inbound/missing.jpg", "Knowledge/Pictures", _PROJECT)
+
+    def test_drive_api_error_raises_write_error(self, mock_drive, no_sleep):
+        mock_drive.files.return_value.list.return_value.execute.side_effect = [
+            {"files": [{"id": "inbound-id"}]},
+            {"files": [{"id": "file-id"}]},
+            {"files": [{"id": "knowledge-id"}]},
+            {"files": [{"id": "pictures-id"}]},
+        ]
+        mock_drive.files.return_value.get.return_value.execute.return_value = {
+            "parents": ["inbound-id"],
+            "name": "photo.jpg",
+        }
+        mock_drive.files.return_value.update.return_value.execute.side_effect = [
+            _http_error(500),
+            _http_error(500),
+            _http_error(500),
+        ]
+
+        with pytest.raises(DriveWriteError):
+            move_file("Inbound/photo.jpg", "Knowledge/Pictures", _PROJECT)
+
+    def test_permission_error_on_move_raises(self, mock_drive):
+        mock_drive.files.return_value.list.return_value.execute.side_effect = [
+            {"files": [{"id": "inbound-id"}]},
+            {"files": [{"id": "file-id"}]},
+            {"files": [{"id": "knowledge-id"}]},
+            {"files": [{"id": "pictures-id"}]},
+        ]
+        mock_drive.files.return_value.get.return_value.execute.return_value = {
+            "parents": ["inbound-id"],
+            "name": "photo.jpg",
+        }
+        mock_drive.files.return_value.update.return_value.execute.side_effect = _http_error(403)
+
+        with pytest.raises(DrivePermissionError):
+            move_file("Inbound/photo.jpg", "Knowledge/Pictures", _PROJECT)
+
+    def test_dest_folder_created_when_missing(self, mock_drive):
+        # _resolve_path succeeds, _ensure_folder_path must create missing subfolder
+        mock_drive.files.return_value.list.return_value.execute.side_effect = [
+            {"files": [{"id": "inbound-id"}]},
+            {"files": [{"id": "file-id"}]},
+            {"files": [{"id": "knowledge-id"}]},
+            {"files": []},  # "NewFolder" does not exist yet → create it
+        ]
+        mock_drive.files.return_value.create.return_value.execute.return_value = {
+            "id": "new-folder-id"
+        }
+        mock_drive.files.return_value.get.return_value.execute.return_value = {
+            "parents": ["inbound-id"],
+            "name": "report.docx",
+        }
+        mock_drive.files.return_value.update.return_value.execute.return_value = {"id": "file-id"}
+
+        result = move_file("Inbound/report.docx", "Knowledge/NewFolder", _PROJECT)
+
+        assert result == "file-id"
+        # verify create was called for the missing folder
+        mock_drive.files.return_value.create.assert_called_once()

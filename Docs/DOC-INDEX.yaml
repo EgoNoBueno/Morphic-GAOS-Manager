@@ -367,6 +367,13 @@ agent_identity_files:
       - agents/steward/orchestrator.py behaviour changed
       - Steward persona or identity updated
 
+  Archivist.md:
+    agent_dir: agents/steward/archivist/
+    triggers:
+      - agents/steward/archivist/orchestrator.py behaviour changed
+      - Archivist persona or identity updated
+      - Archivist classification logic or batch limits changed
+
 # ---------------------------------------------------------------------------
 # INVERSE INDEX — code path → documents to update
 # ---------------------------------------------------------------------------
@@ -388,6 +395,12 @@ inverse_index:
     - GAOS-Nexus-Prime-Spec.md
     - GAOS-Agent-Spec.md
     - "Docs/agents/nexus-prime.md"
+
+  "agents/steward/archivist/":
+    - GAOS-Agent-Spec.md                # Tier 3 sub-agent
+    - GAOS-Manager-Spec.md              # §17 implementation checklist
+    - "Docs/agents/Archivist.md"        # identity file
+    - "Docs/agents/steward.md"          # parent orchestrator awareness
 
   "tools/":
     - GAOS-Tools-Spec.md

@@ -1743,6 +1743,7 @@ Phase 4 is complete when **all** of the following are true:
 | **Pursuit — Sales Agent (Tier 2)** | Google ADK + CRM tools | [x] |
 | **Foreman — Operations Agent (Tier 2)** | Google ADK + Sheets | [x] |
 | **Steward — Admin Agent (Tier 2)** | Google ADK + Calendar | [x] |
+| **Archivist — File Classification Sub-Agent (Tier 3, under Steward)** | LOCAL_MODEL + Drive metadata | [x] |
 | **Scout — Research Agent (Tier 2)** | Google ADK + Search | [x] |
 
 ---

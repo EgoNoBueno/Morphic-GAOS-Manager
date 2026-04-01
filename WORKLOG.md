@@ -5,6 +5,200 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-31T21:48-03:00 — End-to-end Drive organization flow complete
+
+### What was done
+- **`move_file()` added to `tools/drive.py`:** New public function that takes logical paths
+  (`source_path`, `dest_folder_path`, `new_name`, `project_id`), resolves the source to a real
+  Drive file ID via `_resolve_path`, creates destination folder(s) via `_ensure_folder_path`,
+  then calls `files().update(addParents, removeParents)` to move and optionally rename the file.
+  Raises `KnowledgeFileNotFoundError`, `DriveWriteError`, or `DrivePermissionError`.
+
+- **Intent router wired into `compose_reply` (nexus_prime orchestrator):** Added
+  `_dispatch_task_from_email()` helper and `_EMAIL_TASK_ROUTING`/`_INTENT_PROMPT` module
+  constants. After `compose_reply` sends its reply, it calls `LOCAL_MODEL` to classify email
+  intent as JSON (`is_task`, `task_type`, `task_context`). If a known `task_type` is detected
+  (currently `drive_maintenance` → steward), publishes `TASK_HANDOFF` (priority 3) to the
+  target agent's event topic. All failures are swallowed with WARNING — the user already has
+  their reply.
+
+- **Post-approval execution wired into Steward `_resume`:**
+  - `_park()` now caches the full `drive_tasks` list in `state["_drive_move_cache"][proposal_id]`
+    so `_resume` can look them up without re-querying the Approval Sheet.
+  - New `_execute_drive_moves(state, proposal_id) -> tuple[int, int]` function: reads
+    `approved_moves[]` from cache, calls `move_file()` for each, counts succeeded/failed, logs
+    both outcomes. Partial failure continues — one bad move doesn't abort the rest.
+  - `_resume()` updated: when `APPROVAL_RESULT` status == "Approved" and the proposal is in
+    `_drive_move_cache`, calls `_execute_drive_moves` and logs final counts.
+
+- **Tests written and passing:** 695/695 green.
+  - `test_drive.py`: 6 `TestMoveFile` tests (happy path, rename, source-not-found,
+    API error → DriveWriteError, 403 → DrivePermissionError, folder auto-created)
+  - `test_agents.py`: 6 `TestDispatchTaskFromEmail` tests (drive intent, non-task, model
+    failure, unknown task type, project_id propagation, markdown-fenced JSON)
+  - `test_agents.py`: 6 `TestStewardExecuteDriveMoves` tests (happy, write-error, empty,
+    missing source, `_resume` approved → executes, `_resume` rejected → skips)
+
+### Files changed
+- `tools/drive.py` — added `move_file()`
+- `agents/nexus_prime/orchestrator.py` — added `_dispatch_task_from_email`, `_EMAIL_TASK_ROUTING`, `_INTENT_PROMPT`; wired into `compose_reply`
+- `agents/steward/orchestrator.py` — updated `_park`, added `_execute_drive_moves`, updated `_resume`
+- `tests/test_drive.py` — added `TestMoveFile` (6 tests)
+- `tests/test_agents.py` — added `TestDispatchTaskFromEmail` (6) + `TestStewardExecuteDriveMoves` (6)
+
+### What's next
+- Smoke test: Send a real email "organize my Google Drive" and observe the full chain
+  (Gmail → compose_reply → TASK_HANDOFF → Steward → drive_maintenance → Archivist → Approval Sheet)
+- Add `inventory_check` and `deal_closed` to `_EMAIL_TASK_ROUTING` once Foreman and Pursuit are fully plumbed
+- Consider adding `move_file` to the Drive maintenance audit log for observability
+
+---
+
+## 2026-03-31T15:30-03:00 — OLLAMA_HOST fix, Approval Gate wiring, smoke test cleanup
+
+### What was done
+- **OLLAMA_HOST secret corrected:** Updated Secret Manager `OLLAMA_HOST` to `http://localhost:11434`
+  (was loca.lt tunnel URL, version 16 is now correct). Removed `_local_get_secret` patch from
+  `scripts/smoke_test_archivist.py` — OLLAMA_HOST now resolved directly from Secret Manager.
+- **`_collect` Approval Gate wiring:** Fixed `agents/steward/orchestrator.py::_collect` to set
+  `needs_park=True` when `drive_maintenance` result contains `requires_approval=True`. Previously
+  only calendar `pending_approval` tasks triggered the park path — Drive proposals were classified
+  `success` and silently dropped.
+- **4 new tests in `TestStewardCollectDriveApproval`:** Covers drive-approval sets needs_park,
+  no-approval does not, calendar still works, both combined.
+- **652/652 tests passing.**
+
+### Files changed
+- `agents/steward/orchestrator.py` — `_collect()` now checks both calendar and drive_maintenance approval
+- `scripts/smoke_test_archivist.py` — removed `_local_get_secret` patch (3 locations), removed unused `_patch` import
+- `tests/test_agents.py` — added `TestStewardCollectDriveApproval` (4 tests, 127 → 131 in test_agents, 648 → 652 total)
+
+### What's next
+- Phase 3 next agent: Foreman or Pursuit (per `GAOS-Manager-Spec.md §10` Phase 3 message types)
+
+---
+
+## 2026-03-31T14:16-03:00 — Archivist live smoke test: passed (Ollama + Drive)
+
+### What was done
+- Created `scripts/smoke_test_archivist.py` — full live integration test for the Steward → Archivist pipeline.
+- Created `scripts/_seed_inbound_test_files.py` — one-off seeder for Drive Inbound/ test data (Drive Inbound/ folder exists but SA storage quota prevents file uploads).
+- Smoke test verified: ADC + SA impersonation → Drive listing, LOCAL_MODEL (Ollama llama3) → Archivist classification, drive_maintenance empty-Inbound no-op path.
+- **Live result:** All 5 synthetic files classified successfully in 17.9s, 5 approved moves proposed, 0 ambiguous, no writes made.
+- Resolved 3 local-dev auth issues: ADC lacks Drive scope (fixed via SA impersonation), SA has no file storage quota (accommodated with synthetic FileRecords), OLLAMA_HOST secret points to loca.lt tunnel (patched to localhost:11434 for local run).
+
+### Files changed
+- `scripts/smoke_test_archivist.py` — **new** (live integration test)
+- `scripts/_seed_inbound_test_files.py` — **new** (Drive Inbound/ seeder; Drive Inbound/ folder created, `1CDA8xp9IaIcxVfVFbClZLUqo9NjtSzd-`)
+
+### Classification results (via Ollama llama3)
+| File | Type | Destination | Confidence |
+|------|------|-------------|-----------|
+| 2025-Q1-Invoice-Acme-Corp.pdf | Invoice | Projects/Acme-Corp/2025-Q1/ | 90% |
+| marketing-campaign-brief-draft.docx | Strategy | Projects/marketing-campaigns/ | 85% |
+| employee-onboarding-checklist.md | Reference | Knowledge/Employee Onboarding/ | 80% |
+| random-notes.txt | Reference | Knowledge/random-notes.txt/ | 80% |
+| project-phoenix-strategy-v2.pdf | Strategy | Knowledge/phoenix-strategy/ | 90% |
+
+### Lessons
+- **SA impersonation for Drive:** User ADC lacks Drive scope locally; `impersonated_credentials.Credentials` with `steward-sa` resolves this for read/list operations. Can't be used for file creation (SA has no storage quota).
+- **SA storage quota:** Service accounts have zero Drive storage quota even for native Google Docs. File creation must go through user credentials (OAuth/DWD) or a Shared Drive.
+- **OLLAMA_HOST tunnel URL in Secret Manager:** In local dev the secret points to the loca.lt tunnel, so `_call_model_ollama` fails unless the tunnel is up. Smoke test patches `tools.secrets.get_secret` for OLLAMA_HOST to return `localhost:11434` for local runs.
+- **Drive Inbound/ folder created:** `1CDA8xp9IaIcxVfVFbClZLUqo9NjtSzd-` — ready for real files; drop files via the browser to test the full real-file path.
+
+### What's next
+- Drop real files into Drive Inbound/ via the browser and re-run `smoke_test_archivist.py` with real Drive API reads.
+- Phase 3 next-agent pickup or Steward Approval Gate integration test.
+
+## 2026-03-31T14:16-03:00 — Rule 13 compliance audit: docs updated for Archivist + drive_maintenance
+
+### What was done
+- Full compliance audit against all 24 rules in `.github/copilot-instructions.md`.
+- **Code compliance:** All rules pass — model aliases (Rule 1), project_id flow (Rule 2), structured logging (Rule 18), specific exceptions (Rule 19), type hints (Rule 16), docstrings (Rule 17), Pydantic `extra="forbid"` schemas, cost tracking.
+- **Documentation gaps found and fixed (Rule 13):**
+  - `Docs/DOC-INDEX.yaml` — added `Archivist.md` under `agent_identity_files` with triggers; added `agents/steward/archivist/` to inverse index pointing to 4 docs.
+  - `Docs/GAOS-Project-Glossary.md` — added "Archivist" entry between AR and AST.
+  - `Docs/agents/steward.md` — added Sub-Agents table and drive_maintenance dispatch description under Specification.
+- Added WORKLOG entries for drive_maintenance session (retroactive) and this audit session.
+
+### Files changed
+- `Docs/DOC-INDEX.yaml` — Archivist entry in `agent_identity_files` + inverse index
+- `Docs/GAOS-Project-Glossary.md` — Archivist glossary entry
+- `Docs/agents/steward.md` — Sub-Agents table, drive_maintenance dispatch docs
+
+### Test results
+- Full suite: **648 passed, 0 failed** (unchanged — doc-only changes)
+
+### Lessons
+- DOC-INDEX.yaml inverse index is the fast lookup for "I changed X, what docs need updating?" — consult it at the start of every session, not just at doc time.
+- Tier 3 sub-agents need entries in both `agent_identity_files` AND the inverse index — they're easy to miss because the identity file lives under Docs/agents/ but the code path is nested under the parent orchestrator.
+
+### What's next
+- All Archivist work (implementation, wiring, tests, docs) is fully complete and compliant.
+- Next logical step: integration test with live Drive Inbound/ folder, or Phase 3 next-agent pickup.
+
+---
+
+## 2026-03-31T13:00-03:00 — Steward → Archivist wiring: drive_maintenance task module complete
+
+### What was done
+- Created `agents/steward/tasks/drive_maintenance.py` — bridge module that lists `Inbound/` files, builds `FileRecord` metadata, runs Archivist async, and returns `AgentOutput` with `requires_approval=True` when moves are proposed.
+- Updated Steward's `_plan` prompt to include `drive_maintenance` as a known `task_type`.
+- Extended Steward's `_park` node with Priority-3 Drive file move proposal handling (alongside existing Priority-2 calendar proposals).
+- Created `tests/test_drive_maintenance.py` with 10 tests: empty Inbound, DriveReadError, FolderNotFound, Archivist failed/escalated propagation, approved moves → requires_approval, no moves → no approval, U2 project_id forwarding, taxonomy hint from context, FileRecord name derivation.
+- Fixed module-level imports for mockability (moved from inside `run()` body to module top).
+- Used `AsyncMock` for `_archivist_run` patches (regular `MagicMock` doesn't produce coroutines).
+- Added sync→async bridge with `asyncio.get_running_loop()` check + `ThreadPoolExecutor` fallback for nested-loop-safe execution.
+
+### Files changed
+- `agents/steward/tasks/drive_maintenance.py` — **new** (bridge module)
+- `agents/steward/orchestrator.py` — `_plan` prompt updated, `_park` extended
+- `tests/test_drive_maintenance.py` — **new** (10 tests)
+
+### Test results
+- `tests/test_drive_maintenance.py`: 10/10 passed
+- Full suite: **648 passed, 0 failed**
+
+### Lessons
+- `asyncio.run()` fails with "cannot be called from a running event loop" when tests use `asyncio_mode=auto`. The `get_running_loop()` + `ThreadPoolExecutor` bridge pattern resolves this cleanly.
+- Module-level imports in task modules are necessary for test mock accessibility — `patch("agents.steward.tasks.drive_maintenance.list_folder")` only works if `list_folder` is imported at module scope.
+- `.gitignore` pattern `agents/*/tasks/` excludes task files from the public repo — by design (business-specific logic), but means task tests must also be reviewed for accidental secret leakage.
+
+### What's next
+- Rule 13 compliance audit for all documentation affected by Archivist and drive_maintenance work.
+
+## 2026-03-31T17:32-03:00 — Archivist Tier 3 sub-agent: tests green, mypy clean, suite passing
+
+### What was done
+- Fixed `pytest-asyncio` configuration: added `pytest-asyncio>=0.23.0` to dev deps in `pyproject.toml`, set `asyncio_mode = "auto"`, installed into venv using `python -m pip` (not bare `pip` — avoids global-install trap).
+- Fixed 1 bad mock in `tests/test_archivist.py`: removed invalid `patch("...orchestrator.__import__", ...)` target from `test_u1_valid_input_returns_typed_output`.
+- Fixed 2 mypy strict errors in `orchestrator.py`: removed unused `type: ignore[import-untyped]` (replaced with `# noqa: F401` since `--ignore-missing-imports` makes the suppress redundant), changed `tools: list = []` → `tools: list[Any] = []`.
+- Deleted stale scaffold `agents/archivist/orchestrator.py` (plain-text, not valid Python) that was poisoning the `TestU3NoLiteralModelVersions` AST scan. Real implementation is at `agents/steward/archivist/`.
+- Added Archivist to `GAOS-Manager-Spec.md §17` Implementation Checklist.
+
+### Files changed
+- `pyproject.toml` — added `pytest-asyncio>=0.23.0` to dev deps, `asyncio_mode = "auto"` to pytest options
+- `tests/test_archivist.py` — removed invalid `__import__` mock target
+- `agents/steward/archivist/orchestrator.py` — two mypy strict fixes
+- `agents/archivist/` — **deleted** (stale scaffold)
+- `Docs/GAOS-Manager-Spec.md` — §17 checklist updated with Archivist entry
+
+### Test results
+- `tests/test_archivist.py`: 14/14 passed
+- Full suite: **638 passed, 0 failed**
+- `mypy agents/steward/archivist/orchestrator.py --strict`: no issues
+
+### Lessons
+- `pip install` after venv activation can still install to global site-packages on Windows. Always use `python -m pip install` or the venv's explicit python binary.
+- `# type: ignore[import-untyped]` is a no-op when `--ignore-missing-imports` is active — mypy strict flags it as `unused-ignore`. Use `# noqa: F401` or remove entirely.
+- Stale scaffold directories at the top-level `agents/` tier pollute the `*/orchestrator.py` glob in `TestU3NoLiteralModelVersions`. Tier 3 sub-agents live under their parent's folder — never at the top level.
+
+### What's next
+- Archivist is complete and fully integrated. Steward can now dispatch to it via `_call_archivist(agent_input)`.
+- Next logical step: wire Steward's `_drive_maintenance_node` to dispatch to Archivist when unclassified files are detected.
+
+---
+
 ## 2026-03-30T22:00-03:00 — Abandoned Google Chat; full post-mortem documented; pivoting to Gmail
 
 ### What was done

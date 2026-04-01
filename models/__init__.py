@@ -161,7 +161,7 @@ class AgentOutput(BaseModel):
     task_id: str
     project_id: str
     agent_id: str  # Matches Agent.name
-    status: Literal["success", "escalated", "failed"]
+    status: Literal["success", "escalated", "failed", "stockout"]
     result: dict[str, Any] = Field(default_factory=dict)  # Task-specific output
     cost_usd: float = 0.0  # Accumulated model cost for this task
     timestamp: datetime = Field(  # datetime — Pydantic-only; not written to BigQuery directly
