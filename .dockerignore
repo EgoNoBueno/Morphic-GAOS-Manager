@@ -36,7 +36,14 @@ desktop.ini
 
 # Credentials & keys — NEVER in the image
 oauth-client.json
+client_secrets.json
 config/keys/
+*.tfvars
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
 
 agents/*/tasks/
 
@@ -51,5 +58,13 @@ ACTIVE_SKILLS/
 SKILLS_LOG.md
 *.log
 .ipynb_checkpoints/
+test_quality.txt
+test_results_fresh.txt
+
+# Docs & logs not needed at runtime
+WORKLOG.md
+SCRATCH.md
+BUILD_NOTES.md
+logs/
 
 .git/

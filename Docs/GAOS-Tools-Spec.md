@@ -284,9 +284,13 @@ def publish(topic_name: str, message: A2AMessage,
     """
     Serialize and publish one A2AMessage to the named topic.
 
-    `topic_name` is the short name without the full resource path
-    (e.g., "agent/beacon/events"). The full topic path is constructed
-    as: projects/<GCP_PROJECT_ID>/topics/<topic_name_with_slashes_as_dots>.
+    `topic_name` is the dot-delimited short name without the full
+    resource path (e.g., "agent.nexus-prime.events"). The full topic
+    path is constructed as: projects/<GCP_PROJECT_ID>/topics/<topic_name>.
+
+    Note: Slash-delimited names ("agent/beacon/events") are accepted
+    for backward compatibility — slashes are replaced with dots
+    internally — but all new call sites must use dot-delimited names.
 
     Returns:
         message_id: The Pub/Sub-assigned message ID (string).
@@ -710,6 +714,30 @@ def insert_rows(table_ref: str, rows: list[dict], project_id: str = "") -> None:
         BigQueryInsertError: API call failed after 3 retries.
         BigQueryRowError:    One or more rows were rejected.
     """
+
+def replace_rows(
+    table_ref: str,
+    rows: list[dict],
+    project_id: str = "",
+) -> None:
+    """
+    Full-replace the contents of a BigQuery table via DELETE + streaming INSERT.
+
+    Issues ``DELETE FROM … WHERE TRUE`` to clear the table, then streams all
+    rows via ``insert_rows()``. If ``rows`` is empty the table is truncated.
+    The empty window between DELETE and INSERT is < 1 second — acceptable for
+    a 5-minute refresh cycle.
+
+    Args:
+        table_ref:  Unqualified ``dataset.table`` or fully qualified
+                    ``project.dataset.table``.
+        rows:       List of row dicts keyed by column name.
+        project_id: Unused (present for API symmetry).
+
+    Raises:
+        BigQueryInsertError: The DELETE DML query failed.
+        BigQueryRowError:    One or more rows were rejected during streaming insert.
+    """
 ```
 
 ### Error Types
@@ -949,6 +977,54 @@ def send_message(space_name: str, text: str) -> dict:
         ChatDeliveryError: Chat API returned a non-2xx response.
     """
 
+def send_threaded_reply(space_name: str, thread_key: str, text: str) -> dict:
+    """
+    Send a reply that stays inside a specific thread using a developer-chosen thread key.
+
+    Falls back to creating a new thread if no existing thread with the given key exists.
+    Preferred function for Chat responses — keeps all messages in a single conversation
+    thread rather than creating a new top-level thread per reply.
+
+    Args:
+        space_name: Chat space resource name (e.g. ``spaces/XXXXXXXXX``).
+        thread_key: A stable developer-chosen string identifying the thread.
+            Good values: the original ``message_name`` from the inbound Chat event,
+            or computed keys like ``f"approval-{proposal_id}"``.
+        text:       Plain-text message body (≤ 4096 characters; truncated if longer).
+
+    Returns:
+        The Chat API Message resource dict.
+
+    Raises:
+        ChatConfigError:   space_name or thread_key is empty.
+        ChatDeliveryError: Chat API returned an HTTP error.
+    """
+
+def send_reply_in_thread(space_name: str, thread_name: str, text: str) -> dict:
+    """
+    Send a reply in an existing Chat thread using the server-assigned thread resource name.
+
+    Unlike ``send_threaded_reply()`` which uses a developer-assigned ``threadKey``,
+    this function references the thread by its server-assigned resource name
+    (e.g. ``"spaces/XXXXX/threads/YYYYY"``).
+
+    Use this whenever the inbound Chat event includes ``message.thread.name``
+    (available in ``parse_chat_event()`` as the ``thread_name`` key).
+
+    Args:
+        space_name:  Chat space resource name (e.g. ``spaces/XXXXXXXXX``).
+        thread_name: Server-assigned thread resource name
+                     (e.g. ``"spaces/XXXXX/threads/YYYYY"``).
+        text:        Plain-text message body (≤ 4096 characters; truncated if longer).
+
+    Returns:
+        The Chat API Message resource dict.
+
+    Raises:
+        ChatConfigError:   space_name or thread_name is empty.
+        ChatDeliveryError: Chat API returned an HTTP error.
+    """
+
 def send_card(space_name: str, card: dict) -> dict:
     """
     Send a Card v2 message to a Chat space.
@@ -973,6 +1049,7 @@ def send_approval_card(
     priority: int,
     cost_usd: float,
     doc_url: str = "",
+    reasoning_summary: str = "",
 ) -> dict:
     """
     Post an Approve / Reject interactive card to the owner's Chat space.
@@ -1105,7 +1182,7 @@ def web_search(query: str, max_results: int = 5) -> str:
 | Topic | Location |
 |-------|----------|
 | A2AMessage schema | `GAOS-Manager-Spec.md` §10.2 |
-| MessageType registry (all 22 types) | `GAOS-Manager-Spec.md` §10.2 |
+| MessageType registry (all 29 types) | `GAOS-Manager-Spec.md` §10.2 |
 | Webhook HMAC threat model and test matrix | `GAOS-Manager-Spec.md` §15.2 |
 | Approval Gate column definitions | `GAOS-Manager-Spec.md` §14 |
 | Secret inventory | `GAOS-Manager-Spec.md` §15.1 |
@@ -1123,6 +1200,8 @@ def web_search(query: str, max_results: int = 5) -> str:
 | Google Docs settings (`docs.*`) | `config/settings.yaml.template` — `docs:` block |
 | Blueprint Factory (Vision → Doc) | `Docs/agents/nexus-prime.md` — `VISION_SUBMITTED` handler |
 | Google Search settings (`google_search.*`) | `config/settings.yaml.template` — `google_search:` block |
+| Gmail tool API | §22 (this doc) |
+| Gmail settings (`gmail.*`) | `config/settings.yaml` — `gmail:` block |
 
 ---
 
@@ -1832,3 +1911,194 @@ BigQuery tables created during apply are **never** auto-dropped — data may alr
 ### Test Coverage
 
 `tests/test_infra_provision.py` — covers: `build_manifest` (all NO_CHANGE, partial CREATE, multi-kind), `apply_manifest` (happy path, partial failure), `rollback_manifest` (scheduler CREATE rollback, scheduler UPDATE rollback, BQ skip, secret with versions skip), `run_health_checks` (pass, fail, mixed).
+
+---
+
+## 22. `tools/gmail.py`
+
+Gmail API integration for inbox polling, thread context retrieval, outbound email sending, and push watch registration. Added in Phase 3 for email-based communication.
+
+> **Spec reference:** `Docs/email-comm-plan.md`
+
+```python
+def get_gmail_service(project_id: str) -> Any:
+    """
+    Build and return an authenticated Gmail API service object.
+
+    Fetches OAuth2 credentials from Secret Manager (``GMAIL_OAUTH_CREDENTIALS``
+    secret) on every call — no global state. The returned service object is safe
+    to use for one request and should not be cached across requests.
+
+    Args:
+        project_id: GCP project that owns the GMAIL_OAUTH_CREDENTIALS secret.
+
+    Returns:
+        A ``googleapiclient.discovery.Resource`` for the Gmail v1 API.
+
+    Raises:
+        GmailAuthError: Credentials missing, malformed, or OAuth scope insufficient.
+    """
+
+def fetch_new_messages(
+    project_id: str,
+    history_id: str,
+) -> tuple[list[dict[str, Any]], str]:
+    """
+    Fetch all messages added since ``history_id`` using the Gmail history delta API.
+
+    Calls ``users.history.list(startHistoryId=history_id)`` to retrieve only
+    the delta since the last processed ID. Extracts ``text/plain`` body parts
+    only; never parses ``text/html``.
+
+    Args:
+        project_id: GCP project for credential and secret lookup.
+        history_id: The ``historyId`` from the last successfully processed
+            notification. Use the initial watch ``historyId`` as the seed.
+
+    Returns:
+        A tuple of ``(messages, new_history_id)`` where:
+        - ``messages`` is a list of dicts with keys: ``message_id``, ``thread_id``,
+          ``from_addr``, ``subject``, ``body``, ``received_at`` (ISO-8601 UTC),
+          ``message_id_header``.
+        - ``new_history_id`` is the latest ``historyId`` from the API response.
+
+    Raises:
+        GmailAuthError: Credential fetch failed.
+        GmailAPIError:  Gmail API returned an error.
+    """
+
+def get_thread_context(
+    project_id: str,
+    thread_id: str,
+    max_messages: int = 3,
+) -> list[dict[str, Any]]:
+    """
+    Return the last ``max_messages`` exchanges in a Gmail thread.
+
+    Fetches the full thread and extracts the last N messages as plain text,
+    oldest first. Used by ``process_gmail_notification`` to give the LLM
+    conversation context before composing a reply.
+
+    Args:
+        project_id:   GCP project for credential lookup.
+        thread_id:    The Gmail thread ID to retrieve.
+        max_messages: Maximum messages to return (default 3).
+
+    Returns:
+        List of message dicts (same shape as fetch_new_messages output),
+        ordered oldest → newest.
+
+    Raises:
+        GmailAuthError, GmailAPIError.
+    """
+
+def mark_as_read(project_id: str, message_id: str) -> None:
+    """
+    Remove the UNREAD label from a Gmail message.
+
+    Called after each successfully processed message to prevent reprocessing
+    if the watch fires again before the historyId is updated.
+
+    Args:
+        project_id: GCP project for credential lookup.
+        message_id: The Gmail message ID to mark as read.
+
+    Raises:
+        GmailAuthError, GmailAPIError.
+    """
+
+def send_email(
+    project_id: str,
+    to: str,
+    subject: str,
+    body: str,
+    thread_id: str | None = None,
+    in_reply_to: str | None = None,
+    from_addr: str | None = None,
+) -> str:
+    """
+    Send an email via the Gmail API.
+
+    Sets ``In-Reply-To`` and ``References`` headers when ``in_reply_to``
+    is provided, keeping the reply coherent in the recipient's inbox client.
+
+    Args:
+        project_id:  GCP project for credential lookup.
+        to:          Recipient email address.
+        subject:     Email subject line.
+        body:        Plain-text email body.
+        thread_id:   Gmail thread ID to reply within.
+        in_reply_to: ``Message-ID`` header value of the message being replied to.
+        from_addr:   Override ``From`` header. Must be a verified "Send mail as"
+                     alias. Use ``settings.gmail.sender_address``.
+
+    Returns:
+        The Gmail message ID of the sent message.
+
+    Raises:
+        GmailAuthError, GmailAPIError.
+    """
+
+def setup_watch(project_id: str, topic_name: str, label_id: str) -> tuple[str, str]:
+    """
+    Register or renew a Gmail push watch.
+
+    Gmail watch() publishes a Pub/Sub notification to ``topic_name`` whenever
+    a message arrives in INBOX. The watch expires every 7 days — renewal is
+    mandatory. Call at deploy time and renew via Cloud Scheduler
+    (POST /gmail-renew-watch, every 23 hours).
+
+    .. note::
+       The ``label_id`` parameter is accepted for API compatibility but is
+       currently unused — the implementation always watches ``INBOX``.
+       See ``email-comm-plan.md`` for the design rationale.
+
+    Args:
+        project_id: GCP project for credential lookup.
+        topic_name: Fully-qualified Pub/Sub topic resource name.
+        label_id:   Gmail label ID (accepted but unused; INBOX is always watched).
+
+    Returns:
+        A tuple of ``(expiration_ms_str, history_id_str)``.
+
+    Raises:
+        GmailAuthError, GmailAPIError.
+    """
+```
+
+### Authentication
+
+Uses OAuth2 credentials stored as the `GMAIL_OAUTH_CREDENTIALS` secret in GCP Secret Manager. The secret is a JSON blob containing `client_id`, `client_secret`, and `refresh_token`. Generated via `scripts/setup_gmail_oauth.py`.
+
+Required Gmail scopes: `gmail.modify` + `gmail.send`.
+
+### Error Types
+
+```python
+class GmailAuthError(Exception):
+    """Secret missing, token invalid, or OAuth scope insufficient."""
+
+class GmailAPIError(Exception):
+    """Gmail REST API returned a non-retryable error."""
+```
+
+### Settings Required
+
+Add to `config/settings.yaml` under the `gmail:` key:
+
+```yaml
+gmail:
+  monitored_address: 'dhess@sl10repairtechs.com'
+  sender_address: 'aos@sl10repairtechs.com'
+  label_id: 'Label_6'
+  pubsub_topic: 'projects/morphic-gaos-prod/topics/gmail-notifications'
+  max_results: 50
+```
+
+### Usage Rule
+
+Only Nexus-Prime calls Gmail tool functions. Domain orchestrators must not interact with the Gmail API directly — email handling flows through the `GMAIL_NOTIFICATION` → `EMAIL_RECEIVED` Pub/Sub event chain.
+
+### Test Coverage
+
+`tests/test_gmail.py` — covers: happy path (fetch, send, mark_as_read, setup_watch), Secret Manager failure, Gmail API failure, empty/invalid input, thread context retrieval.

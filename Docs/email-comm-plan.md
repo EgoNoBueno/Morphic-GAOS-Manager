@@ -78,10 +78,12 @@ Gmail watch() → gmail-notifications Pub/Sub topic
 - Returns the sent `message_id`
 - Raises `GmailAPIError` on API failure
 
-**`setup_watch(project_id: str, topic_name: str, label_id: str) -> str`**
-- Calls `users.watch(body={"topicName": topic_name, "labelIds": [label_id]})`
-- Returns expiration epoch ms as a string (store in `System_State` Sheet)
+**`setup_watch(project_id: str, topic_name: str, label_id: str) -> tuple[str, str]`**
+- Calls `users.watch(body={"topicName": topic_name, "labelIds": ["INBOX"], "labelFilterBehavior": "INCLUDE"})`
+- Returns `(expiration_ms_str, history_id_str)` — store both in `System_State` Sheet
 - Must be called at deploy time and renewed every ≤7 days via Cloud Scheduler
+
+> ⚠️ **Warning — INBOX not label_id:** `setup_watch()` accepts `label_id` for backward compatibility but always watches `INBOX`. Custom labels (e.g. `Label_6` / `GAOS-Tasks`) don't trigger push notifications for plain inbox mail because Gmail applies the watch filter *before* labels are added by user rules. Discovered 2026-03-31; see gotchas.md.
 
 ### Custom Exceptions
 

@@ -97,10 +97,11 @@ def test_fetch_new_messages_happy(mock_secret):
     fake_service.users().messages().get.side_effect = _fake_msg_get
 
     with patch("tools.gmail.get_gmail_service", return_value=fake_service):
-        messages, new_id = fetch_new_messages(PROJECT_ID, "1000")
+        messages, new_id, skipped_ids = fetch_new_messages(PROJECT_ID, "1000")
 
     assert len(messages) == 2
     assert new_id == "9999"
+    assert skipped_ids == []
     assert messages[0]["message_id"] == "msg-1"
     assert messages[1]["message_id"] == "msg-2"
     assert "from_addr" in messages[0]
@@ -123,10 +124,11 @@ def test_fetch_new_messages_empty(mock_secret):
     }
 
     with patch("tools.gmail.get_gmail_service", return_value=fake_service):
-        messages, new_id = fetch_new_messages(PROJECT_ID, "1000")
+        messages, new_id, skipped_ids = fetch_new_messages(PROJECT_ID, "1000")
 
     assert messages == []
     assert new_id == "1234"
+    assert skipped_ids == []
 
 
 # ── test_fetch_new_messages_api_error ─────────────────────────────────────────
@@ -148,6 +150,69 @@ def test_fetch_new_messages_api_error(mock_secret):
     with patch("tools.gmail.get_gmail_service", return_value=fake_service):
         with pytest.raises(GmailAPIError):
             fetch_new_messages(PROJECT_ID, "1000")
+
+
+# ── test_fetch_new_messages_404_skipped ───────────────────────────────────────
+
+
+def test_fetch_new_messages_404_skipped(mock_secret):
+    """Permanently-404 message is skipped; history watermark still advances."""
+    import base64
+
+    from googleapiclient.errors import HttpError
+
+    from tools.gmail import fetch_new_messages
+
+    fake_service = MagicMock()
+    fake_history = {
+        "historyId": "5555",
+        "history": [
+            {"messagesAdded": [{"message": {"id": "dead-msg"}}]},
+            {"messagesAdded": [{"message": {"id": "live-msg"}}]},
+        ],
+    }
+    fake_service.users().history().list(
+        userId="me", startHistoryId="1000", historyTypes=["messageAdded"]
+    ).execute.return_value = fake_history
+
+    fake_404_resp = MagicMock()
+    fake_404_resp.status = 404
+
+    plain_b64 = base64.urlsafe_b64encode(b"Hello").decode()
+
+    def _fake_msg_get(userId, id, format):  # noqa: A002
+        if id == "dead-msg":
+            mock = MagicMock()
+            mock.execute.side_effect = HttpError(resp=fake_404_resp, content=b"Not Found")
+            return mock
+        mock = MagicMock()
+        mock.execute.return_value = {
+            "id": id,
+            "threadId": "thread-1",
+            "internalDate": "1700000000000",
+            "payload": {
+                "mimeType": "text/plain",
+                "headers": [
+                    {"name": "From", "value": "sender@example.com"},
+                    {"name": "Subject", "value": "Live"},
+                    {"name": "Message-ID", "value": "<live@mail>"},
+                ],
+                "body": {"data": plain_b64},
+                "parts": [],
+            },
+        }
+        return mock
+
+    fake_service.users().messages().get.side_effect = _fake_msg_get
+
+    with patch("tools.gmail.get_gmail_service", return_value=fake_service):
+        messages, new_id, skipped_ids = fetch_new_messages(PROJECT_ID, "1000")
+
+    # Dead message skipped; live message returned; watermark advanced
+    assert len(messages) == 1
+    assert messages[0]["message_id"] == "live-msg"
+    assert new_id == "5555"
+    assert skipped_ids == ["dead-msg"]
 
 
 # ── test_get_thread_context_happy ─────────────────────────────────────────────

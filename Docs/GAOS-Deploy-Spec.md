@@ -884,11 +884,11 @@ print('agent_checkpoints: created')
 
 > ⚠️ **Suspend writes before Steps 2–4.** Any rows inserted into `monologue_frames` while the migration is in progress will be lost — they land in the old table, which is replaced in Step 4. Before proceeding past Step 1, scale Nexus-Prime to zero:
 > ```bash
-> gcloud run services update gaos-agent --region us-central1 --min-instances 0 --max-instances 0
+> gcloud run services update nexus-prime --region us-central1 --project=morphic-gaos-prod --min-instances 0 --max-instances 0
 > ```
 > Restore after Step 4 completes:
 > ```bash
-> gcloud run services update gaos-agent --region us-central1 --min-instances 1 --max-instances 3
+> gcloud run services update nexus-prime --region us-central1 --project=morphic-gaos-prod --min-instances 1 --max-instances 3
 > ```
 
 > ⚠️ **90-day partition TTL on `monologue_frames_new`.** `bq cp` in Step 4 preserves table metadata including the partition expiration. Any rows whose `CAST(timestamp AS TIMESTAMP)` falls outside the 90-day retention window will be silently dropped by BigQuery on the next partition sweep. Two options:
@@ -1166,7 +1166,7 @@ done
 > }
 > ```
 
-Each service exposes nine endpoints:
+Each service exposes fourteen endpoints:
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -1175,9 +1175,14 @@ Each service exposes nine endpoints:
 | `/sync` | POST | Apps Script approval callback (Nexus-Prime only) |
 | `/archive` | POST | Cloud Scheduler nightly archive sweep (Nexus-Prime only) |
 | `/daily-sync` | POST | Cloud Scheduler 6 AM morning briefing (Nexus-Prime only) |
+| `/sheets-sync` | POST | Cloud Scheduler 5-min Sheets → BigQuery staging sync (Nexus-Prime only) |
 | `/chat` | POST | Google Chat push events — messages and card callbacks (Nexus-Prime only) |
-| `/vision` | POST | Owner-submitted project vision (Nexus-Prime only; added Phase 2.5 Step 5) |
-| `/poll-comments` | POST | Doc comment poll trigger (Nexus-Prime only; added Phase 2.5 Step 5) |
+| `/vision` | POST | Owner-submitted project vision (Nexus-Prime only) |
+| `/poll-comments` | POST | Doc comment poll trigger (Nexus-Prime only) |
+| `/infra-provision` | POST | Trigger infrastructure diff + proposal card (Nexus-Prime only) |
+| `/gmail-webhook` | POST | Gmail Pub/Sub push notification — enqueues for async processing (Nexus-Prime only) |
+| `/daily-digest` | POST | Cloud Scheduler 6 AM email digest (Nexus-Prime only) |
+| `/gmail-renew-watch` | POST | Renew Gmail watch subscription — called every 23h by Cloud Scheduler (Nexus-Prime only) |
 | `/health` | GET | Liveness probe — always returns `{"status":"ok"}` |
 
 All POST endpoints require a `Bearer` token in the `Authorization` header. Cloud Run ingress validates the OIDC token before the request reaches the handler; the handler check is defense-in-depth only.
@@ -1576,6 +1581,22 @@ gcloud scheduler jobs create http doc-comment-poll \
 ```
 
 **Verification:** Both Phase 2.5 jobs appear with state `ENABLED` in the Scheduler console. Force-run `gaos-daily-sync` — a morning briefing card appears in the owner's Chat space (`POST /daily-sync` returns HTTP 200). Force-run `doc-comment-poll` — `POST /poll-comments` returns HTTP 200.
+
+### 10.5 Gmail Watch Renewal Job (every 23 hours) — *Phase 5*
+
+Renews the Gmail Pub/Sub watch subscription before it expires (Gmail maximum is 7 days). Running every 23 hours ensures the watch is always current, even if a single renewal fails.
+
+```bash
+NP_URL="https://nexus-prime-7bu22bxlda-uc.a.run.app"
+gcloud scheduler jobs create http gmail-renew-watch \
+  --location=us-central1 \
+  --schedule="0 */23 * * *" \
+  --uri="${NP_URL}/gmail-renew-watch" \
+  --oidc-service-account-email="nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com" \
+  --project=morphic-gaos-prod
+```
+
+**Verification:** The `gmail-renew-watch` job appears with state `ENABLED` in the Scheduler console. Force-run the job — `POST /gmail-renew-watch` returns HTTP 200 and Cloud Logging shows `gmail-renew-watch: watch renewed, expires_at=<timestamp>`.
 
 ---
 

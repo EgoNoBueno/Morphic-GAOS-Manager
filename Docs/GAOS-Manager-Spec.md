@@ -732,7 +732,7 @@ models:
 When Google releases a new Gemini version or a better local model becomes available:
 
 1. **Evaluate** the candidate model in the Vertex AI Sandbox against a benchmark task set; log results to `SKILLS_LOG.md`.
-2. **Update** the relevant alias in `config/settings.yaml` (e.g., change `DEEP_MODEL` from `gemini-2.0-pro` to `gemini-3.0-pro`).
+2. **Update** the relevant alias in `config/settings.yaml` (e.g., change `DEEP_MODEL` from `gemini-2.5-pro` to `gemini-3.0-pro`).
 3. **Validate** with a dry-run using the Phase 4 staging process.
 4. **Promote** through the standard Approval Gate — model upgrades are treated as a **Priority 2 config change** (72-hour TTL).
 5. **Log** the change to the Audit Trail sheet tab with the old and new model identifier, benchmark results, and approval ID.

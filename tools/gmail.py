@@ -20,10 +20,14 @@ from __future__ import annotations
 import base64
 import email.mime.text
 import json
+import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
 from tools.secrets import SecretNotFoundError, get_secret
+
+_gmail_log = logging.getLogger(__name__)
 
 # ── Error types ────────────────────────────────────────────────────────────
 
@@ -164,7 +168,7 @@ def get_gmail_service(project_id: str) -> Any:
 def fetch_new_messages(
     project_id: str,
     history_id: str,
-) -> tuple[list[dict[str, Any]], str]:
+) -> tuple[list[dict[str, Any]], str, list[str]]:
     """
     Fetch all messages added since ``history_id`` using the history delta API.
 
@@ -181,12 +185,14 @@ def fetch_new_messages(
             the seed on first run.
 
     Returns:
-        A tuple of ``(messages, new_history_id)`` where:
+        A tuple of ``(messages, new_history_id, skipped_ids)`` where:
         - ``messages`` is a list of dicts, each with keys:
           ``message_id``, ``thread_id``, ``from_addr``, ``subject``,
           ``body``, ``received_at`` (ISO-8601 UTC string).
         - ``new_history_id`` is the latest ``historyId`` from the API
           response, to persist in the System_State Sheet.
+        - ``skipped_ids`` is a list of Gmail message IDs that were
+          permanently missing (404 after 3 retries) and skipped.
 
     Raises:
         GmailAuthError: Credential fetch failed.
@@ -217,7 +223,7 @@ def fetch_new_messages(
     history_records: list[dict] = history_resp.get("history", [])
 
     if not history_records:
-        return [], new_history_id
+        return [], new_history_id, []
 
     # Collect unique message IDs from all messageAdded records.
     seen_ids: set[str] = set()
@@ -230,11 +236,31 @@ def fetch_new_messages(
                 message_ids.append(mid)
 
     messages: list[dict[str, Any]] = []
+    skipped_ids: list[str] = []
     for mid in message_ids:
-        try:
-            msg = service.users().messages().get(userId="me", id=mid, format="full").execute()
-        except HttpError as exc:
-            raise GmailAPIError(f"Gmail messages.get failed for {mid}: {exc}") from exc
+        msg = None
+        for attempt in range(3):
+            try:
+                msg = service.users().messages().get(userId="me", id=mid, format="full").execute()
+                break
+            except HttpError as exc:
+                if exc.resp.status == 404 and attempt < 2:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                if exc.resp.status == 404:
+                    # Message was deleted/archived before we could fetch it.
+                    # Skip it so the history watermark can still advance.
+                    break
+                raise GmailAPIError(f"Gmail messages.get failed for {mid}: {exc}") from exc
+        if msg is None:
+            # Permanently missing after 3 attempts — record and skip.
+            skipped_ids.append(mid)
+            _gmail_log.warning(
+                "fetch_new_messages: message %s not found after 3 attempts (404) — "
+                "skipped. Message was likely deleted/archived before fetch.",
+                mid,
+            )
+            continue
 
         headers = _parse_headers(msg.get("payload", {}).get("headers", []))
         received_ts = datetime.fromtimestamp(
@@ -253,7 +279,7 @@ def fetch_new_messages(
             }
         )
 
-    return messages, new_history_id
+    return messages, new_history_id, skipped_ids
 
 
 def get_thread_context(
@@ -455,7 +481,7 @@ def setup_watch(project_id: str, topic_name: str, label_id: str) -> tuple[str, s
                 userId="me",
                 body={
                     "topicName": topic_name,
-                    "labelIds": [label_id],
+                    "labelIds": ["INBOX"],
                     "labelFilterBehavior": "INCLUDE",
                 },
             )

@@ -8,10 +8,11 @@ All GCP and model calls are mocked at the SDK boundary.
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
+from agents import ModelResponse
 from agents.steward.archivist.orchestrator import (
     ArchivistContext,
     ArchivistInput,
@@ -57,10 +58,8 @@ def _make_input(files: list[FileRecord] | None = None) -> ArchivistInput:
     )
 
 
-def _mock_model_response(payload: dict) -> MagicMock:
+def _mock_model_response(payload: dict) -> ModelResponse:
     """Return a mock ModelResponse with the given JSON payload as .text."""
-    from agents import ModelResponse
-
     resp = ModelResponse(text=json.dumps(payload), cost_usd=0.001, tokens_used=150)
     return resp
 
@@ -197,6 +196,7 @@ async def test_u4_local_model_unavailable_returns_escalated():
         result = await run(agent_input)
 
     assert result.status == "escalated"
+    assert isinstance(result.result, dict)
     assert result.result["reason"] == "LOCAL_MODEL_UNAVAILABLE"
 
 
@@ -227,6 +227,9 @@ async def test_u5_files_outside_active_zone_marked_ambiguous():
     # _call_model should never be called for an out-of-zone file
     mock_model.assert_not_called()
     assert result.status == "success"
+    from agents.steward.archivist.orchestrator import ArchivistResult
+
+    assert isinstance(result.result, ArchivistResult)
     assert "file-zzz" in result.result.ambiguous_files
     assert result.result.approved_moves == []
 
@@ -259,6 +262,9 @@ async def test_batch_limit_capped_at_50():
         mock_settings.return_value.models.LOCAL_MODEL = "ollama/llama3"
         result = await run(agent_input)
 
+    from agents.steward.archivist.orchestrator import ArchivistResult
+
+    assert isinstance(result.result, ArchivistResult)
     assert result.result.files_processed == 50
 
 
@@ -284,6 +290,9 @@ async def test_low_confidence_file_goes_to_ambiguous():
         result = await run(agent_input)
 
     assert result.status == "success"
+    from agents.steward.archivist.orchestrator import ArchivistResult
+
+    assert isinstance(result.result, ArchivistResult)
     assert _GOOD_FILE.file_id in result.result.ambiguous_files
     assert result.result.approved_moves == []
 
@@ -311,6 +320,9 @@ async def test_malformed_model_json_marks_file_ambiguous():
         result = await run(agent_input)
 
     assert result.status == "success"
+    from agents.steward.archivist.orchestrator import ArchivistResult
+
+    assert isinstance(result.result, ArchivistResult)
     assert _GOOD_FILE.file_id in result.result.ambiguous_files
 
 
@@ -345,6 +357,9 @@ async def test_duplicate_files_detected():
         mock_settings.return_value.models.LOCAL_MODEL = "ollama/llama3"
         result = await run(agent_input)
 
+    from agents.steward.archivist.orchestrator import ArchivistResult
+
+    assert isinstance(result.result, ArchivistResult)
     assert len(result.result.duplicate_candidates) >= 1
     dup_group = result.result.duplicate_candidates[0]
     assert "file-dup-a" in dup_group

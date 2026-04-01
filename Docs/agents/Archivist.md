@@ -15,7 +15,8 @@ Given a batch of unclassified Drive files, classify each one to a `Project_ID` a
 * **The "No-Delete" Rule:** Never permanently deletes a file. "Deleted" candidates are returned in the proposal as moves to `System_Trash_Staging` — the Steward executes the move only after Approval Gate sign-off.
 * **Naming Logic:** Enforces `[YYYY-MM-DD]_[Project]_[Description]` format. Files that cannot be renamed with >80% confidence are returned as `AMBIGUOUS`.
 * **Integrity Check:** Computes the SHA-256 hash of each file before proposing a move. The hash is included in the proposal so the Steward can verify post-move integrity.
-* **Tools:** `tools/drive.py` (read metadata + list directory), `tools/secrets.py` (credential fetch). Maximum 3 tools — no write operations performed by this agent.
+* **Tools:** `tools/drive.py` (read metadata + list directory), `tools/secrets.py` (credential fetch), `tools/google_sheets.py` (audit log writes). Maximum 3 tools — no other write operations performed by this agent.
+* **Audit Log:** Every file in the proposal batch must be written to the `Archivist_Log` Sheet tab before the proposal is returned to the Steward. Each row records: `timestamp` (ISO-8601 UTC), `file_id`, `original_name`, `original_path`, `proposed_name` (if renamed, else original), `proposed_path`, `classification` (`APPROVED` / `AMBIGUOUS` / `DUPLICATE` / `TRASH_STAGING`), `confidence` (0.0–1.0), `sha256`. Rows are appended regardless of outcome — ambiguous and unclassified files are logged with classification `AMBIGUOUS` and confidence `0.0`.
 * **Model:** `LOCAL_MODEL` for text extraction and classification. No `FAST_MODEL` or `DEEP_MODEL` calls.
 * **Batch limit:** 50 files per invocation to respect Drive API rate limits and keep token cost under $0.05.
 

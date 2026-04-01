@@ -274,6 +274,8 @@ These are full topology changes for the highest-sensitivity use cases. They are 
 
 #### Option F — Local-First Topology *(Alternative Architecture)*
 
+> **Note:** The model identifiers in Options F and G are *example configurations* for privacy-sensitive deployments, not the current production config. The live system uses `LOCAL_MODEL: ollama/llama3`, `FAST_MODEL: gemini-2.5-flash`, `DEEP_MODEL: gemini-2.5-pro` (see `config/settings.yaml`).
+
 The architecture already supports this. Replace `DEEP_MODEL` and `FAST_MODEL` with a locally hosted high-quality model via Ollama. Gemini is never called. The only cloud services used are Sheets, Drive, BigQuery, and Pub/Sub — none of which receive LLM prompts.
 
 ```yaml

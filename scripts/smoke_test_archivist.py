@@ -69,7 +69,8 @@ def main() -> None:
     settings = get_settings()
     _ok(f"Project: {project_id}")
     _ok(f"LOCAL_MODEL: {settings.models.LOCAL_MODEL}")
-    _ok(f"Drive root: {settings.get_project(project_id).drive_folder_id}")
+    _project = settings.get_project(project_id)
+    _ok(f"Drive root: {_project.drive_folder_id if _project else '(project not found)'}")
 
     # ── 0b. Build impersonated Drive service (local ADC lacks Drive scope) ─
     _header("Step 0b: Build impersonated Drive credentials")
@@ -210,8 +211,10 @@ def main() -> None:
         sys.exit(1)
 
     # result.result is ArchivistResult
+    from agents.steward.archivist.orchestrator import ArchivistResult
+
     res = result.result
-    res_dict = res.model_dump() if hasattr(res, "model_dump") else dict(res)
+    res_dict = res.model_dump() if isinstance(res, ArchivistResult) else dict(res)
 
     _ok(f"Files processed: {res_dict.get('files_processed', '?')}")
     _ok(f"Approved moves:  {len(res_dict.get('approved_moves', []))}")
@@ -244,8 +247,6 @@ def main() -> None:
             dm_input = AgentInput(
                 task_id="smoke-test-dm-noop",
                 project_id=project_id,
-                agent_id="steward",
-                task_type="drive_maintenance",
                 instruction="Scan Inbound/ and classify files.",
                 context={},
             )
@@ -269,8 +270,6 @@ def main() -> None:
             dm_input = AgentInput(
                 task_id="smoke-test-dm-001",
                 project_id=project_id,
-                agent_id="steward",
-                task_type="drive_maintenance",
                 instruction="Scan Inbound/ and classify files.",
                 context={},
             )

@@ -48,7 +48,14 @@ desktop.ini
 
 # Credentials & keys — NEVER in the image
 oauth-client.json
+client_secrets.json
 config/keys/
+*.tfvars
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
 
 # Test & lint artefacts (not needed at runtime)
 .pytest_cache/
@@ -62,6 +69,14 @@ ACTIVE_SKILLS/
 SKILLS_LOG.md
 *.log
 .ipynb_checkpoints/
+test_quality.txt
+test_results_fresh.txt
+
+# Docs & logs not needed at runtime
+WORKLOG.md
+SCRATCH.md
+BUILD_NOTES.md
+logs/
 
 # Git history
 .git/

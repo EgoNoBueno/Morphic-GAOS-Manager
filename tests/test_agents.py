@@ -654,6 +654,14 @@ class TestOllamaRouting:
 class TestGeminiAIStudio:
     """Verify _call_model_gemini uses AI Studio (api_key only), never Vertex AI."""
 
+    def setup_method(self):
+        """Reset Gemini circuit breakers before each test to prevent cross-test interference."""
+        from tools.circuit_breaker import reset as cb_reset
+
+        cb_reset("agents", "gemini/gemini-2.5-flash")
+        cb_reset("agents", "gemini/gemini-2.5-pro")
+        cb_reset("agents", "gemini-api-key")
+
     def _make_mock_response(self, text: str = "ok"):
         mock_resp = MagicMock()
         mock_resp.text = text
@@ -742,6 +750,54 @@ class TestGeminiAIStudio:
         mock_logger.warning.assert_called_once()
         warning_msg = mock_logger.warning.call_args[0][0]
         assert "quota" in warning_msg.lower() or "429" in warning_msg
+
+    def test_429_trips_quota_circuit_blocks_next_call(self):
+        """After a 429, the per-model circuit opens and the next call raises RuntimeError."""
+        from google.api_core.exceptions import ResourceExhausted
+
+        from agents import _call_model
+
+        with patch("google.genai.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.models.generate_content.side_effect = ResourceExhausted("quota exceeded")
+            mock_client_cls.return_value = mock_client
+            with patch("tools.secrets.get_secret", return_value="test-api-key"):
+                with pytest.raises(ResourceExhausted):
+                    _call_model("prompt", model="gemini-2.5-flash")
+
+        # Second call must be blocked by the circuit — generate_content must NOT be called again
+        with patch("google.genai.Client") as mock_client_cls2:
+            mock_client2 = MagicMock()
+            mock_client_cls2.return_value = mock_client2
+            with patch("tools.secrets.get_secret", return_value="test-api-key"):
+                with pytest.raises(RuntimeError, match="quota circuit OPEN"):
+                    _call_model("prompt", model="gemini-2.5-flash")
+
+        mock_client2.models.generate_content.assert_not_called()
+
+    def test_400_invalid_key_trips_apikey_circuit_blocks_next_call(self):
+        """After a 400 INVALID_ARGUMENT, the api-key circuit opens and next call raises RuntimeError."""
+        from google.api_core.exceptions import InvalidArgument
+
+        from agents import _call_model
+
+        with patch("google.genai.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.models.generate_content.side_effect = InvalidArgument("API key not valid.")
+            mock_client_cls.return_value = mock_client
+            with patch("tools.secrets.get_secret", return_value="bad-key"):
+                with pytest.raises(RuntimeError, match="API key invalid"):
+                    _call_model("prompt", model="gemini-2.5-flash")
+
+        # Second call must be blocked — generate_content must NOT be called again
+        with patch("google.genai.Client") as mock_client_cls2:
+            mock_client2 = MagicMock()
+            mock_client_cls2.return_value = mock_client2
+            with patch("tools.secrets.get_secret", return_value="bad-key"):
+                with pytest.raises(RuntimeError, match="API key circuit OPEN"):
+                    _call_model("prompt", model="gemini-2.5-flash")
+
+        mock_client2.models.generate_content.assert_not_called()
 
 
 # ── Ollama fallback counter ────────────────────────────────────────────────
@@ -1842,6 +1898,15 @@ class TestNexusPrimeThinkNode:
         yield
         config._reset_for_testing()
 
+    def setup_method(self):
+        """Reset Gemini circuit breakers before each test."""
+        from tools.circuit_breaker import reset as cb_reset
+
+        # Reset per-model and api-key circuits used in the multimodal tests
+        for model_key in ("gemini/gemini-fast", "gemini/gemini-deep", "gemini/gemini-2.5-flash"):
+            cb_reset("agents", model_key)
+        cb_reset("agents", "gemini-api-key")
+
     def _mock_genai(self, text: str = "Vision description"):
         """Return a mock google.genai client whose generate_content returns *text*."""
         mock_resp = MagicMock()
@@ -2401,7 +2466,10 @@ class TestGmailWebhook:
             ),
             patch(
                 "tools.gmail.fetch_new_messages",
-                return_value=(fake_messages, "5100"),
+                return_value=(fake_messages, "5100", []),
+            ),
+            patch(
+                "tools.gmail.get_gmail_service",
             ),
             patch(
                 "tools.gmail.get_thread_context",
@@ -2443,7 +2511,10 @@ class TestGmailWebhook:
             ),
             patch(
                 "tools.gmail.fetch_new_messages",
-                return_value=(fake_messages, "5200"),
+                return_value=(fake_messages, "5200", []),
+            ),
+            patch(
+                "tools.gmail.get_gmail_service",
             ),
             patch("tools.google_sheets.append_row") as mock_append,
             patch("tools.google_sheets.find_row", return_value=None),
@@ -2710,13 +2781,29 @@ class TestDailyDigest:
     def test_happy_path_sends_email(self):
         """handle_daily_digest sends email and returns correct counts."""
         import asyncio
+        from datetime import datetime, timedelta
 
         from agents.nexus_prime.orchestrator import handle_daily_digest
+
+        # Use timestamps relative to now so the 24h window always covers them
+        _now = datetime.now(UTC)
+        _fmt = lambda delta_h: (_now - timedelta(hours=delta_h)).isoformat()  # noqa: E731
+
+        email_rows = [
+            {"received_at": _fmt(2), "status": "Replied"},
+            {"received_at": _fmt(4), "status": "Pending"},
+            {"received_at": _fmt(30), "status": "Replied"},  # old — outside 24h
+        ]
+        log_rows = [
+            {"timestamp": _fmt(2), "agent_id": "nexus-prime"},
+            {"timestamp": _fmt(4), "agent_id": "scout"},
+            {"timestamp": _fmt(30), "agent_id": "ledger"},  # old
+        ]
 
         with (
             patch(
                 "tools.google_sheets.get_all_records",
-                side_effect=self._patch_sheets(),
+                side_effect=self._patch_sheets({"Email Inbox": email_rows, "Logs": log_rows}),
             ),
             patch("tools.google_sheets.init_sheets_client"),
             patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),

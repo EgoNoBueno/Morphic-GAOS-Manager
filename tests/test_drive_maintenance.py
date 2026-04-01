@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from agents.steward.archivist.orchestrator import ArchivistOutput
 from models import AgentInput
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -28,7 +29,9 @@ def _make_input(context: dict[str, Any] | None = None) -> AgentInput:
     )
 
 
-def _archivist_output(status: str = "success", approved_moves: list | None = None) -> MagicMock:
+def _archivist_output(
+    status: str = "success", approved_moves: list | None = None
+) -> ArchivistOutput:
     """Build a mock ArchivistOutput."""
     from datetime import UTC, datetime
 

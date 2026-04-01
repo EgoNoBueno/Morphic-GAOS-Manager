@@ -16,6 +16,7 @@ Endpoints:
   POST /poll-comments    Cloud Scheduler 5-min doc-comment poll (Nexus-Prime only)
   POST /infra-provision  Trigger infrastructure diff + proposal card (Nexus-Prime only)
   POST /gmail-webhook    Gmail Pub/Sub push notification — enqueues for async processing (Nexus-Prime only)
+  POST /daily-digest     Cloud Scheduler 6 AM email digest (Nexus-Prime only)
   POST /gmail-renew-watch  Renew Gmail watch() subscription — called every 23 h by Cloud Scheduler (Nexus-Prime only)
   GET  /health           Cloud Run health check (always 200)
 

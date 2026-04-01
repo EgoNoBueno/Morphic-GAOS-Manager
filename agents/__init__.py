@@ -178,7 +178,7 @@ def _call_model(
 
     Args:
         prompt:        User-turn content.
-        model:         Resolved model alias string (e.g. "ollama/llama3.1" or "gemini-2.0-flash").
+        model:         Resolved model alias string (e.g. "ollama/llama3" or "gemini-2.5-flash").
         system_prompt: Optional system instruction prefix.
         parse_json:    If True, attempt to extract and parse JSON from response.
         web_access:    If True and model is an Ollama alias, prepend DuckDuckGo search
@@ -382,7 +382,31 @@ def _call_model_gemini(
     from google.api_core import exceptions as gapi_exc
     from google.genai import types as genai_types
 
+    from tools.circuit_breaker import CircuitOpenError
+    from tools.circuit_breaker import check as cb_check
+    from tools.circuit_breaker import record_failure as cb_failure
+    from tools.circuit_breaker import record_success as cb_success
     from tools.secrets import get_secret
+
+    # ── Circuit breaker guards ────────────────────────────────────────────────
+    # Two independent circuits:
+    #   gemini/<model> — per-model quota (429). Trips on first exhaustion,
+    #                    opens for 1 h. Prevents burning remaining daily quota.
+    #   gemini-api-key — key validity (400). Trips on first bad-key error,
+    #                    opens for 24 h. No calls wasted until key is replaced.
+    _CB_AGENT = "agents"
+    _cb_model_key = f"gemini/{model}"
+    _cb_apikey_key = "gemini-api-key"
+
+    try:
+        cb_check(_CB_AGENT, _cb_model_key, failure_threshold=1, cooldown_seconds=3600)
+    except CircuitOpenError as exc:
+        raise RuntimeError(f"Gemini quota circuit OPEN — {exc}") from exc
+
+    try:
+        cb_check(_CB_AGENT, _cb_apikey_key, failure_threshold=1, cooldown_seconds=86400)
+    except CircuitOpenError as exc:
+        raise RuntimeError(f"Gemini API key circuit OPEN — {exc}") from exc
 
     try:
         api_key = get_secret("GEMINI_API_KEY", settings.GCP_PROJECT_ID)
@@ -415,13 +439,25 @@ def _call_model_gemini(
         else:
             response = client.models.generate_content(model=model, contents=full_prompt)
     except gapi_exc.ResourceExhausted as exc:
+        cb_failure(_CB_AGENT, _cb_model_key, failure_threshold=1, cooldown_seconds=3600)
         logger.warning(
-            "Gemini AI Studio free-tier quota exhausted (429) for model '%s'. "
-            "Request cannot be completed until the quota resets. Error: %s",
+            "Gemini quota exhausted (429) for model '%s'. Circuit open for 1 h. "
+            "No further calls to this model until cooldown expires. Error: %s",
             model,
             exc,
         )
         raise
+    except gapi_exc.InvalidArgument as exc:
+        cb_failure(_CB_AGENT, _cb_apikey_key, failure_threshold=1, cooldown_seconds=86400)
+        logger.error(
+            "Gemini API key invalid (400). Circuit open for 24 h. "
+            "Replace GEMINI_API_KEY in Secret Manager to recover. Error: %s",
+            exc,
+        )
+        raise RuntimeError(f"Gemini API key invalid — replace GEMINI_API_KEY: {exc}") from exc
+
+    cb_success(_CB_AGENT, _cb_model_key)
+    cb_success(_CB_AGENT, _cb_apikey_key)
 
     text = response.text or ""
 

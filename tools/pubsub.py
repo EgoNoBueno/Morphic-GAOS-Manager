@@ -71,8 +71,10 @@ def publish(topic_name: str, message: A2AMessage) -> str:
     infrastructure and does not vary per GAOS project_id.
 
     Args:
-        topic_name: Short name without the full resource path
-                    (e.g. "agent/beacon/events").
+        topic_name: Dot-delimited short name without the full resource path
+                    (e.g. "agent.nexus-prime.events"). Slash-delimited names
+                    are accepted for backward compatibility but dot format
+                    is canonical.
         message:    A validated A2AMessage instance.
 
     Returns:

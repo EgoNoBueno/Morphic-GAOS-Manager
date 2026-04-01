@@ -14,6 +14,7 @@ Nexus spec:        Docs/GAOS-Nexus-Prime-Spec.md
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 import uuid
 from datetime import UTC, datetime
@@ -4105,6 +4106,7 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
         GmailAPIError,
         GmailAuthError,
         fetch_new_messages,
+        get_gmail_service,
         get_thread_context,
         mark_as_read,
     )
@@ -4118,7 +4120,34 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
     task_id = str(uuid.uuid4())
 
     if msg is None:
-        return {**state, "outcome": {"processed": 0, "skipped": 0, "new_history_id": ""}}
+        return {
+            **state,
+            "outcome": {"processed": 0, "skipped": 0, "skipped_ids": [], "new_history_id": ""},
+        }
+
+    # ── Own-address set (loop prevention) ────────────────────────────────────
+    # Block the monitored inbox address, the sender_address (alias), AND the
+    # authenticated OAuth account's primary address. When sender_address is
+    # empty, compose_reply() sends from the OAuth account directly — that
+    # address must be in this set or replies trigger an infinite loop.
+    _own_addresses: set[str] = {
+        a.lower() for a in (settings.gmail.monitored_address, settings.gmail.sender_address) if a
+    }
+    try:
+        _profile = get_gmail_service(project_id).users().getProfile(userId="me").execute()
+        _profile_addr: str = _profile.get("emailAddress", "")
+        if _profile_addr:
+            _own_addresses.add(_profile_addr.lower())
+    except Exception as _prof_exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"process_gmail: could not resolve OAuth profile address for loop "
+            f"prevention — relying on settings addresses only: {_prof_exc}",
+            "WARNING",
+        )
 
     # ── Resolve last known history_id ────────────────────────────────────────
     try:
@@ -4154,7 +4183,10 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
             "process_gmail: no history_id available — skipping delta fetch",
             "WARNING",
         )
-        return {**state, "outcome": {"processed": 0, "skipped": 0, "new_history_id": ""}}
+        return {
+            **state,
+            "outcome": {"processed": 0, "skipped": 0, "skipped_ids": [], "new_history_id": ""},
+        }
 
     # ── Sender allowlist ─────────────────────────────────────────────────────
     try:
@@ -4169,13 +4201,14 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
             "process_gmail: GMAIL_AUTHORIZED_SENDERS secret missing — rejecting all senders",
             "ERROR",
         )
-        return {**state, "outcome": {"processed": 0, "skipped": 0, "new_history_id": ""}}
-
-    monitored_address: str = settings.gmail.monitored_address
+        return {
+            **state,
+            "outcome": {"processed": 0, "skipped": 0, "skipped_ids": [], "new_history_id": ""},
+        }
 
     # ── Fetch delta ──────────────────────────────────────────────────────────
     try:
-        messages, new_history_id = fetch_new_messages(project_id, last_history_id)
+        messages, new_history_id, skipped_ids = fetch_new_messages(project_id, last_history_id)
     except (GmailAuthError, GmailAPIError) as exc:
         _log_cloud(
             "nexus-prime",
@@ -4185,16 +4218,33 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
             f"process_gmail: Gmail API error — {exc}",
             "ERROR",
         )
-        return {**state, "outcome": {"processed": 0, "skipped": 0, "new_history_id": ""}}
+        return {
+            **state,
+            "outcome": {"processed": 0, "skipped": 0, "skipped_ids": [], "new_history_id": ""},
+        }
+
+    if skipped_ids:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"process_gmail: {len(skipped_ids)} message(s) skipped (404 after retries): "
+            f"{skipped_ids}",
+            "WARNING",
+        )
 
     processed = 0
     skipped = 0
 
     for message in messages:
-        from_addr: str = message.get("from_addr", "").lower()
+        from_addr_raw: str = message.get("from_addr", "").lower()
+        # Extract bare email from "Display Name <email@example.com>" or plain "email@example.com"
+        _m = re.search(r"<([^>]+)>", from_addr_raw)
+        from_addr: str = _m.group(1) if _m else from_addr_raw
 
-        # Loop prevention
-        if monitored_address and from_addr == monitored_address.lower():
+        # Loop prevention — skip any address we send FROM (monitored_address or sender_address)
+        if from_addr in _own_addresses:
             _log_cloud(
                 "nexus-prime",
                 project_id,
@@ -4275,7 +4325,7 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
             payload={**message, "thread_context": thread_context},
         )
         try:
-            publish("agent/nexus-prime/events", email_msg)
+            publish("agent.nexus-prime.events", email_msg)
         except Exception as exc:
             _log_cloud(
                 "nexus-prime",
@@ -4303,14 +4353,13 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
 
     # ── Persist new history_id ────────────────────────────────────────────────
     if new_history_id:
-        now_iso = utcnow_iso()
         try:
             existing = find_row("System_State", "key", "gmail_last_history_id", project_id)
             if existing:
                 update_row(
                     "System_State",
                     "gmail_last_history_id",
-                    {"value": new_history_id, "updated_at": now_iso},
+                    {"value": new_history_id},
                     project_id,
                 )
             else:
@@ -4319,7 +4368,6 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
                     {
                         "key": "gmail_last_history_id",
                         "value": new_history_id,
-                        "updated_at": now_iso,
                     },
                     project_id,
                 )
@@ -4346,6 +4394,7 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
         "outcome": {
             "processed": processed,
             "skipped": skipped,
+            "skipped_ids": skipped_ids,
             "new_history_id": new_history_id,
         },
     }
@@ -4378,7 +4427,7 @@ async def handle_gmail_webhook(project_id: str, history_id: str) -> dict[str, An
         priority=3,
         payload={"history_id": history_id},
     )
-    publish("agent/nexus-prime/events", notification)
+    publish("agent.nexus-prime.events", notification)
     return {"status": "enqueued", "history_id": history_id}
 
 
@@ -4428,20 +4477,19 @@ async def handle_gmail_renew_watch(project_id: str) -> dict[str, Any]:
         )
         raise
 
-    now_iso = utcnow_iso()
     try:
         existing = find_row("System_State", "key", "gmail_watch_expiration", project_id)
         if existing:
             update_row(
                 "System_State",
                 "gmail_watch_expiration",
-                {"value": expires_at, "updated_at": now_iso},
+                {"value": expires_at},
                 project_id,
             )
         else:
             append_row(
                 "System_State",
-                {"key": "gmail_watch_expiration", "value": expires_at, "updated_at": now_iso},
+                {"key": "gmail_watch_expiration", "value": expires_at},
                 project_id,
             )
     except Exception as exc:
@@ -4465,17 +4513,13 @@ async def handle_gmail_renew_watch(project_id: str) -> dict[str, Any]:
                 update_row(
                     "System_State",
                     "gmail_last_history_id",
-                    {"value": initial_history_id, "updated_at": now_iso},
+                    {"value": initial_history_id},
                     project_id,
                 )
             else:
                 append_row(
                     "System_State",
-                    {
-                        "key": "gmail_last_history_id",
-                        "value": initial_history_id,
-                        "updated_at": now_iso,
-                    },
+                    {"key": "gmail_last_history_id", "value": initial_history_id},
                     project_id,
                 )
         except Exception as exc:

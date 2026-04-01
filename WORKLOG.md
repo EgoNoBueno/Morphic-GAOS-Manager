@@ -5,6 +5,54 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-31T23:30-03:00 — Gmail watch unblocked; infra fixes; type errors resolved
+
+### What was done
+- **Gmail watch filter bug fixed:** `setup_watch()` was registering the watch on `Label_6`
+  (`GAOS-Tasks`) with `labelFilterBehavior: INCLUDE`. Plain inbox email never carried that label,
+  so no Pub/Sub push ever fired. Fixed: now watches `INBOX` label in both `tools/gmail.py` and
+  `scripts/renew_gmail_watch.py`.
+- **`updated_at` column removed from `handle_gmail_renew_watch`:** `System_State` sheet has only
+  `key`/`value` columns. The orchestrator was trying to write `updated_at`, causing every renewal
+  persist to fail with `SheetsWriteError`. Removed from both expiration and history_id writes.
+- **Pub/Sub push subscription re-pointed:** The `gmail-notifications-push` subscription was still
+  sending to the old URL (`nexus-prime-975461050387.us-central1.run.app`). Updated to the current
+  URL (`nexus-prime-7bu22bxlda-uc.a.run.app`) via `gcloud pubsub subscriptions modify-push-config`.
+- **4 Cloud Scheduler jobs re-pointed:** `ttl-sweep`, `daily-kickoff`, `nightly-archive`,
+  `doc-comment-poll` were all still targeting the old URL. Updated all four.
+- **BigQuery SA permission added:** `nexus-prime-sa` had `bigquery.dataEditor` but not
+  `bigquery.jobUser`. DELETE/INSERT jobs (sheets-sync) were 403-ing. Fixed with
+  `gcloud projects add-iam-policy-binding --role=roles/bigquery.jobUser`.
+- **Type errors resolved (Problems tab):** `isinstance` narrowing in `drive_maintenance.py`,
+  return type annotations in `test_drive_maintenance.py` and `test_archivist.py`, `AgentInput`
+  field removal in `smoke_test_archivist.py`, `None`-guard on `get_project()`.
+- **`settings.yaml` updated:** `monitored_address` changed from `dhess@sl10repairtechs.com` to
+  `aos@sl10repairtechs.com` (pending OAuth re-enrollment and redeploy).
+- **Archivist spec updated:** Added `Audit Log` bullet specifying `Archivist_Log` Sheet tab,
+  columns, and write-before-return contract.
+
+### Files changed
+- `tools/gmail.py` — watch now targets `INBOX` instead of label_id
+- `scripts/renew_gmail_watch.py` — created; bypasses client_secrets.json using stored OAuth token
+- `agents/nexus_prime/orchestrator.py` — removed `updated_at` from System_State persist calls
+- `agents/steward/tasks/drive_maintenance.py` — `isinstance` narrowing for ArchivistResult
+- `tests/test_drive_maintenance.py` — return type annotation fix
+- `tests/test_archivist.py` — `isinstance` guards + return type annotation
+- `scripts/smoke_test_archivist.py` — removed unknown AgentInput fields; None-guard on get_project
+- `config/settings.yaml` — `monitored_address` → `aos@sl10repairtechs.com`
+- `Docs/agents/Archivist.md` — Audit Log spec added
+
+### Tests
+695/695 passing after all changes.
+
+### What's next
+1. **Complete `aos` OAuth enrollment** — download `client_secrets.json`, run
+   `setup_gmail_oauth.py` authenticated as `aos@sl10repairtechs.com`, update
+   `GMAIL_OAUTH_CREDENTIALS` secret, deploy, renew watch.
+2. **Drop a test file in `Inbound/`** — without files there, `drive_maintenance` exits cleanly
+   but produces nothing to approve.
+3. **Verify `GMAIL_AUTHORIZED_SENDERS`** includes `dhess@sl10repairtechs.com`.
+
 ## 2026-03-31T22:31-03:00 — Full deployment: all 7 services live with Drive organization
 
 ### What was done
@@ -76,6 +124,38 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
   (Gmail → compose_reply → TASK_HANDOFF → Steward → drive_maintenance → Archivist → Approval Sheet)
 - Add `inventory_check` and `deal_closed` to `_EMAIL_TASK_ROUTING` once Foreman and Pursuit are fully plumbed
 - Consider adding `move_file` to the Drive maintenance audit log for observability
+
+---
+
+## 2026-03-31T17:32-03:00 — Archivist Tier 3 sub-agent: tests green, mypy clean, suite passing
+
+### What was done
+- Fixed `pytest-asyncio` configuration: added `pytest-asyncio>=0.23.0` to dev deps in `pyproject.toml`, set `asyncio_mode = "auto"`, installed into venv using `python -m pip` (not bare `pip` — avoids global-install trap).
+- Fixed 1 bad mock in `tests/test_archivist.py`: removed invalid `patch("...orchestrator.__import__", ...)` target from `test_u1_valid_input_returns_typed_output`.
+- Fixed 2 mypy strict errors in `orchestrator.py`: removed unused `type: ignore[import-untyped]` (replaced with `# noqa: F401` since `--ignore-missing-imports` makes the suppress redundant), changed `tools: list = []` → `tools: list[Any] = []`.
+- Deleted stale scaffold `agents/archivist/orchestrator.py` (plain-text, not valid Python) that was poisoning the `TestU3NoLiteralModelVersions` AST scan. Real implementation is at `agents/steward/archivist/`.
+- Added Archivist to `GAOS-Manager-Spec.md §17` Implementation Checklist.
+
+### Files changed
+- `pyproject.toml` — added `pytest-asyncio>=0.23.0` to dev deps, `asyncio_mode = "auto"` to pytest options
+- `tests/test_archivist.py` — removed invalid `__import__` mock target
+- `agents/steward/archivist/orchestrator.py` — two mypy strict fixes
+- `agents/archivist/` — **deleted** (stale scaffold)
+- `Docs/GAOS-Manager-Spec.md` — §17 checklist updated with Archivist entry
+
+### Test results
+- `tests/test_archivist.py`: 14/14 passed
+- Full suite: **638 passed, 0 failed**
+- `mypy agents/steward/archivist/orchestrator.py --strict`: no issues
+
+### Lessons
+- `pip install` after venv activation can still install to global site-packages on Windows. Always use `python -m pip install` or the venv's explicit python binary.
+- `# type: ignore[import-untyped]` is a no-op when `--ignore-missing-imports` is active — mypy strict flags it as `unused-ignore`. Use `# noqa: F401` or remove entirely.
+- Stale scaffold directories at the top-level `agents/` tier pollute the `*/orchestrator.py` glob in `TestU3NoLiteralModelVersions`. Tier 3 sub-agents live under their parent's folder — never at the top level.
+
+### What's next
+- Archivist is complete and fully integrated. Steward can now dispatch to it via `_call_archivist(agent_input)`.
+- Next logical step: wire Steward's `_drive_maintenance_node` to dispatch to Archivist when unclassified files are detected.
 
 ---
 
@@ -191,36 +271,6 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ### What's next
 - Rule 13 compliance audit for all documentation affected by Archivist and drive_maintenance work.
-
-## 2026-03-31T17:32-03:00 — Archivist Tier 3 sub-agent: tests green, mypy clean, suite passing
-
-### What was done
-- Fixed `pytest-asyncio` configuration: added `pytest-asyncio>=0.23.0` to dev deps in `pyproject.toml`, set `asyncio_mode = "auto"`, installed into venv using `python -m pip` (not bare `pip` — avoids global-install trap).
-- Fixed 1 bad mock in `tests/test_archivist.py`: removed invalid `patch("...orchestrator.__import__", ...)` target from `test_u1_valid_input_returns_typed_output`.
-- Fixed 2 mypy strict errors in `orchestrator.py`: removed unused `type: ignore[import-untyped]` (replaced with `# noqa: F401` since `--ignore-missing-imports` makes the suppress redundant), changed `tools: list = []` → `tools: list[Any] = []`.
-- Deleted stale scaffold `agents/archivist/orchestrator.py` (plain-text, not valid Python) that was poisoning the `TestU3NoLiteralModelVersions` AST scan. Real implementation is at `agents/steward/archivist/`.
-- Added Archivist to `GAOS-Manager-Spec.md §17` Implementation Checklist.
-
-### Files changed
-- `pyproject.toml` — added `pytest-asyncio>=0.23.0` to dev deps, `asyncio_mode = "auto"` to pytest options
-- `tests/test_archivist.py` — removed invalid `__import__` mock target
-- `agents/steward/archivist/orchestrator.py` — two mypy strict fixes
-- `agents/archivist/` — **deleted** (stale scaffold)
-- `Docs/GAOS-Manager-Spec.md` — §17 checklist updated with Archivist entry
-
-### Test results
-- `tests/test_archivist.py`: 14/14 passed
-- Full suite: **638 passed, 0 failed**
-- `mypy agents/steward/archivist/orchestrator.py --strict`: no issues
-
-### Lessons
-- `pip install` after venv activation can still install to global site-packages on Windows. Always use `python -m pip install` or the venv's explicit python binary.
-- `# type: ignore[import-untyped]` is a no-op when `--ignore-missing-imports` is active — mypy strict flags it as `unused-ignore`. Use `# noqa: F401` or remove entirely.
-- Stale scaffold directories at the top-level `agents/` tier pollute the `*/orchestrator.py` glob in `TestU3NoLiteralModelVersions`. Tier 3 sub-agents live under their parent's folder — never at the top level.
-
-### What's next
-- Archivist is complete and fully integrated. Steward can now dispatch to it via `_call_archivist(agent_input)`.
-- Next logical step: wire Steward's `_drive_maintenance_node` to dispatch to Archivist when unclassified files are detected.
 
 ---
 

@@ -93,10 +93,10 @@ No agent can deploy its own code unilaterally. Code that fails either gate never
 | Observation buffer | Google Sheets | 14 days |
 | Semantic memory | Vertex AI Memory Bank | Indefinite, versioned |
 | Procedural knowledge | Google Drive (Markdown) | Version-controlled |
-| **Knowledge Atlas** | **Google Doc (Memory Mirror)** | **Permanent audit trail — human-readable view of all promoted entries** |
+| Procedural retrieval | Vertex AI Search | Read-only index over Layer 5 |
 
 <div align="center">
-<img src="Docs/assets/Layer-Memory-Stack.png" alt="6-Layer Memory Stack including Knowledge Atlas" width="70%"/>
+<img src="Docs/assets/Layer-Memory-Stack.png" alt="5-Layer Memory Stack + Procedural Retrieval" width="70%"/>
 </div>
 
 ### Infrastructure Resilience (Phase 4 / Ch. 8)
@@ -162,7 +162,7 @@ A single deployment can manage multiple business units or client accounts. Each 
   Google Sheets · BigQuery · Vertex AI Memory Bank · Google Drive
 ```
 
-**Entry point:** A single `main.py` (FastAPI) is deployed to all 7 Cloud Run services. The `AGENT_NAME` environment variable selects which orchestrator handles requests. Services run with `workers=1` — LangGraph state is never shared across processes. Endpoints: `GET /health` · `POST /pubsub` · `POST /ttl-sweep` · `POST /sync` · `POST /archive` · `POST /daily-sync` · `POST /chat` · `POST /vision` · `POST /poll-comments`. All POST endpoints are deployed `--no-allow-unauthenticated`; OIDC token verification is defense-in-depth.
+**Entry point:** A single `main.py` (FastAPI) is deployed to all 7 Cloud Run services. The `AGENT_NAME` environment variable selects which orchestrator handles requests. Services run with `workers=1` — LangGraph state is never shared across processes. Endpoints: `GET /health` · `POST /pubsub` · `POST /ttl-sweep` · `POST /sync` · `POST /archive` · `POST /daily-sync` · `POST /sheets-sync` · `POST /chat` · `POST /vision` · `POST /poll-comments` · `POST /infra-provision` · `POST /gmail-webhook` · `POST /daily-digest` · `POST /gmail-renew-watch`. All POST endpoints are deployed `--no-allow-unauthenticated`; OIDC token verification is defense-in-depth.
 
 **Infrastructure:** Cloud Run (scale-to-zero) · Cloud Pub/Sub · Secret Manager · BigQuery · Vertex AI · Cloud Scheduler · Google Apps Script
 
@@ -216,7 +216,7 @@ gcloud auth application-default set-quota-project morphic-gaos-prod
 
 > **Important:** Do not set `GOOGLE_APPLICATION_CREDENTIALS`. If it exists in your environment (even pointing at a missing file), `google-auth` silently bypasses ADC. Also note: the default gcloud client ID **blocks** the `spreadsheets` scope — you must use your own OAuth Desktop client.
 
-> **API key source:** Get your `GEMINI_API_KEY` from `console.cloud.google.com/apis/credentials` inside your GCP project — **not** from `aistudio.google.com`. AI Studio keys live in Google's shared project and are not covered by your billing account, causing `429 RESOURCE_EXHAUSTED` errors even with credits available.
+> **API key source:** Get your `GEMINI_API_KEY` from [AI Studio](https://aistudio.google.com/apikey). AI Studio free-tier keys work directly with the `generativelanguage.googleapis.com` endpoint used by this project. Alternatively, create a key in `console.cloud.google.com/apis/credentials` if you want usage billed to your GCP project.
 
 ### 3. GCP Project Setup
 
@@ -251,7 +251,7 @@ models:
 Most of Phase 1 infrastructure is automated. Run these in order:
 
 ```powershell
-# Creates Drive folder, spreadsheet (14 tabs + headers), Knowledge/ subfolders,
+# Creates Drive folder, spreadsheet (16 tabs + headers), Knowledge/ subfolders,
 # shares all service accounts — prints IDs to copy into settings.yaml
 python scripts/setup_workspace.py
 
@@ -324,12 +324,17 @@ If an agent hits a problem it cannot self-resolve — and its Write-Test-Refine 
 | [`Docs/GAOS-Memory-Spec.md`](Docs/GAOS-Memory-Spec.md) | Five-layer memory architecture |
 | [`Docs/GAOS-Tools-Spec.md`](Docs/GAOS-Tools-Spec.md) | Shared tool module API reference (`tools/`) |
 | [`Docs/GAOS-Deploy-Spec.md`](Docs/GAOS-Deploy-Spec.md) | Step-by-step infrastructure provisioning guide |
-| [`Docs/GAOS-Nexus-Prime-Spec.md`](Docs/GAOS-Nexus-Prime-Spec.md) | Nexus-Prime construction spec (LangGraph graph, all 12 nodes) |
+| [`Docs/GAOS-Nexus-Prime-Spec.md`](Docs/GAOS-Nexus-Prime-Spec.md) | Nexus-Prime construction spec (LangGraph graph, all 22 nodes) |
 | [`Docs/Morphic-GAOS-Manager-Summary.md`](Docs/Morphic-GAOS-Manager-Summary.md) | Plain-English summary + 34-term glossary |
 | [`Docs/GAOS-Persona-Spec.md`](Docs/GAOS-Persona-Spec.md) | Strategic Architect persona, `think` node architecture, weekly friction audit |
 | [`Docs/GAOS-Privacy-Spec.md`](Docs/GAOS-Privacy-Spec.md) | Data residency, privacy topology options, risk mitigations |
 | [`Docs/GAOS-Onboarding-Spec.md`](Docs/GAOS-Onboarding-Spec.md) | First-time deployer setup wizard + end-user onboarding via Steward |
 | [`Docs/GAOS-Skill-Compliance-Spec.md`](Docs/GAOS-Skill-Compliance-Spec.md) | 6-gate review checklist for importing external skill modules |
+| [`Docs/GAOS-Security-Policy.md`](Docs/GAOS-Security-Policy.md) | Security policy, threat model, and incident response |
+| [`Docs/GAOS-Doctor.md`](Docs/GAOS-Doctor.md) | Production readiness checklist and health verification |
+| [`Docs/GAOS-Chat-Dev-Reference.md`](Docs/GAOS-Chat-Dev-Reference.md) | Google Chat card format reference and interactive patterns |
+| [`Docs/GAOS-Project-Glossary.md`](Docs/GAOS-Project-Glossary.md) | Canonical term definitions used across all specs |
+| [`Docs/email-comm-plan.md`](Docs/email-comm-plan.md) | Gmail integration design — watch, webhook, reply pipeline |
 | [`Docs/agents/`](Docs/agents/) | Identity files for all 7 agents (Nexus-Prime + 6 domain orchestrators) |
 
 ---
@@ -371,12 +376,12 @@ At the start of every work session, agents read all three files as standing orde
 
 | Phase | Focus | Status |
 |-------|-------|--------|
-| **Phase 1** | All 7 orchestrators, `main.py` Cloud Run entry point, full tool layer, 496-test suite, all smoke tests passing | **Complete** |
+| **Phase 1** | All 7 orchestrators, `main.py` Cloud Run entry point, full tool layer, all smoke tests passing | **Complete** |
 | **Phase 2** | Ollama observability loop, Knowledge Atlas (Memory Mirror) | **Complete** |
 | **Phase 2.5** | Google Chat integration, Vertex AI Search, Google Custom Search, Cloud Scheduler daily-kickoff and poll-comments jobs, Apps Script webhook + approval gate, skill-request flow | **Complete** |
 | **Phase 3** | `think` node (Strategic Architect), multimodal vision, `iterate_plan`, memory mirror, Chat Interactive Hub (JWT + approval cards + CARD_CLICKED routing), OpenTofu IaC + WIF CI/CD | **Complete** |
-| **Phase 4** | Production bootstrap (OpenTofu deploy), Approval Gate Chat-path E2E live validation, exit criteria, cost verification | **In progress** — Chat E2E validated (5 live approval proposals); cost/security verification and GAOS-Doctor checklist remaining |
-| **Phase 4 / Ch. 8** | Infrastructure resilience: circuit breaker, Phoenix recovery, `AgentState` FSM, output coherence check — wired into Nexus-Prime | **Complete** — 558 tests green |
+| **Phase 4** | Production bootstrap (OpenTofu deploy), Approval Gate Chat-path E2E live validation, Gmail integration, exit criteria, cost verification | **In progress** — Chat E2E validated; Gmail pipeline wired (watch + webhook + reply); cost/security verification and GAOS-Doctor checklist remaining |
+| **Phase 4 / Ch. 8** | Infrastructure resilience: circuit breaker, Phoenix recovery, `AgentState` FSM, output coherence check — wired into Nexus-Prime | **Complete** — 698 tests green |
 | **Phase 5** | CEO dashboard (Grafana + Cloud Run) | **Complete** — Grafana dashboard live on Cloud Run. Vertex Agent Engine remains future scope. |
 
 <div align="center">
@@ -433,6 +438,6 @@ Infrastructure as Code powered by [OpenTofu](https://opentofu.org) — an open-s
 <div align="center">
 
 *Built entirely on Google's cloud ecosystem.*
-*Phases 1–3 complete. Phase 4 in progress — 558 tests green. Cost/security verification and GAOS-Doctor checklist remaining.*
+*Phases 1–3 complete. Phase 4 in progress — 698 tests green. Cost/security verification and GAOS-Doctor checklist remaining.*
 
 </div>
