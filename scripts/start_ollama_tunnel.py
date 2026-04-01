@@ -165,6 +165,9 @@ def _configure_logging(log_file: str | None = None) -> None:
         fh = logging.FileHandler(log_file, encoding="utf-8")
         fh.setFormatter(fmt)
         root.addHandler(fh)
+    # Suppress httpx INFO-level request logs — they appear as "[lt] HTTP Request: GET ..."
+    # which implies they are tunnel output but are actually httpx instrumentation noise.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def _current_secret_url(project: str) -> str | None:
@@ -220,22 +223,26 @@ def _update_secret(url: str, project: str) -> None:
     log.info("OLLAMA_HOST → %r  (%s)", url, resp.name)
 
 
-def _verify_tunnel(url: str, retries: int = 5, delay: float = 3.0) -> bool:
-    """Probe Ollama /api/tags through the tunnel with retries.
+def _verify_tunnel(url: str, retries: int = 5, initial_delay: float = 2.0) -> bool:
+    """Probe Ollama /api/tags through the tunnel with retries and exponential backoff.
+
+    Uses a short initial timeout that doubles on each failure: 2s → 4s → 8s → ...
+    This lets fast tunnel startups proceed quickly while still handling slow ones.
 
     Args:
-        url:     The public tunnel base URL.
-        retries: Number of attempts before giving up.
-        delay:   Seconds to wait between attempts.
+        url:           The public tunnel base URL.
+        retries:       Number of attempts before giving up.
+        initial_delay: Seconds to wait after the first failure (doubles each attempt).
 
     Returns:
         True when Ollama responds successfully, False after all retries fail.
     """
+    backoff = initial_delay
     for attempt in range(1, retries + 1):
         try:
             r = httpx.get(
                 f"{url}/api/tags",
-                timeout=10.0,
+                timeout=8.0,
                 headers={"Bypass-Tunnel-Reminder": "true"},
             )
             r.raise_for_status()
@@ -244,7 +251,8 @@ def _verify_tunnel(url: str, retries: int = 5, delay: float = 3.0) -> bool:
         except Exception as exc:
             log.warning("Attempt %d/%d — tunnel not ready: %s", attempt, retries, exc)
             if attempt < retries:
-                time.sleep(delay)
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 30.0)  # cap at 30s
     return False
 
 
@@ -299,15 +307,16 @@ def _run_tunnel_once(
         raise RuntimeError("localtunnel exited before providing a URL.")
 
     log.info("Tunnel URL: %s", tunnel_url)
-    if (
-        tunnel_url.split("//")[-1].split(".")[0] != cmd[cmd.index("--subdomain") + 1]
-        if "--subdomain" in cmd
-        else False
-    ):
+    requested_subdomain = cmd[cmd.index("--subdomain") + 1] if "--subdomain" in cmd else None
+    granted_subdomain = tunnel_url.split("//")[-1].split(".")[0]
+    subdomain_mismatch = requested_subdomain and granted_subdomain != requested_subdomain
+    if subdomain_mismatch:
         log.warning(
-            "Requested subdomain was not granted by loca.lt — got %r instead. "
-            "This probably means another process already claimed the subdomain.",
+            "Requested subdomain was not granted by loca.lt — got %r instead of %r. "
+            "This probably means another process already claimed the subdomain. "
+            "Skipping Secret Manager update to avoid publishing an unstable random URL.",
             tunnel_url,
+            f"https://{requested_subdomain}.loca.lt",
         )
     time.sleep(2)  # let the tunnel stabilise
 
@@ -318,7 +327,7 @@ def _run_tunnel_once(
             " Skipping Secret Manager update to avoid publishing a dead endpoint."
         )
 
-    if ok and not no_secret:
+    if ok and not no_secret and not subdomain_mismatch:
         current = _current_secret_url(project)
         if current == tunnel_url:
             log.info("OLLAMA_HOST already set to %r — skipping Secret Manager update.", tunnel_url)
@@ -404,9 +413,9 @@ def main() -> int:
     p.add_argument(
         "--health-interval",
         type=_positive_float,
-        default=60.0,
+        default=30.0,
         metavar="SECONDS",
-        help="Seconds between health-check polls of /api/tags through the tunnel (default: 60). "
+        help="Seconds between health-check polls of /api/tags through the tunnel (default: 30). "
         "Must be > 0. Two consecutive failures kill the tunnel process so the watchdog restarts it.",
     )
     p.add_argument(
