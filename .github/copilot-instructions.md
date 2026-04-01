@@ -449,4 +449,83 @@ If an abstraction already exists, it **must** be used — not re-implemented inl
 
 ---
 
-_Last updated: 2026-03-18_
+## 25. Bound All External API Interactions — No Unbounded Loops or Uncapped Spend
+
+**Rule:** Every external API call (GCP services, LLM providers, Gmail, third-party HTTP) must have **all four** of the following guardrails. Missing any one is a code-review blocker.
+
+### 25.1 Retry Budget
+
+Every call that can fail transiently must have a **finite retry count with exponential backoff**. Never use `while True` or open-ended retry loops against external services.
+
+- **LLM calls:** Handled by `_call_model()` (3 retries). Do not add retry logic around `_call_model` — it already retries internally.
+- **Sheets API:** Handled by `tools/sheets.py` rate limiter (300 req/min token bucket, 3 retries).
+- **New tools:** Must specify `max_retries` (default 3) and initial backoff (default 1 s, doubling). Document the values in the function docstring.
+
+```python
+# ❌ Wrong — unbounded retry
+while True:
+    try:
+        result = call_external_api()
+        break
+    except TransientError:
+        time.sleep(1)
+
+# ✅ Correct — bounded retry with backoff
+max_retries = 3        # adjust per tool; document in docstring
+backoff_seconds = 1.0  # doubles each attempt: 1s → 2s → 4s
+
+for attempt in range(max_retries):
+    try:
+        result = call_external_api()
+        break
+    except TransientError:
+        if attempt == max_retries - 1:
+            raise
+        time.sleep(backoff_seconds * (2 ** attempt))
+```
+
+### 25.2 Cost Accumulation
+
+Every LLM call in an orchestrator must accumulate `cost_usd` and `tokens_used` into the task state **immediately after the call returns** — even on error responses that consumed tokens. This is required for the per-task budget guard (§22.2 in `GAOS-Deploy-Spec.md`) to function once it ships.
+
+```python
+resp = _call_model(prompt, model=_model_for_node("my_node"), parse_json=True)
+state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+state["tokens_used"] = state.get("tokens_used", 0) + resp.tokens_used
+```
+
+Do not skip this step — a node that forgets to accumulate blinds the budget guard and makes spend invisible in task outcomes.
+
+### 25.3 Circuit Breaker Integration
+
+Any new tool that calls an external dependency **must** integrate `tools/circuit_breaker.check()` / `record_failure()` / `record_success()`. This prevents agents from hammering a dependency that is already down.
+
+```python
+from tools.circuit_breaker import check, record_failure, record_success
+
+def my_new_tool(agent_id: str, project_id: str) -> dict:
+    check(agent_id, "my-external-service")  # raises CircuitOpenError if OPEN
+    try:
+        result = call_external_service()
+        record_success(agent_id, "my-external-service")
+        return result
+    except Exception as exc:
+        record_failure(agent_id, "my-external-service")
+        raise
+```
+
+> **Exception:** Pure read-only calls against Google Sheets that are already behind the rate limiter do not need a separate circuit breaker — the rate limiter serves that role. All other external services (BigQuery, Gmail, Pub/Sub, Vertex AI, Ollama, webhooks) require it.
+
+### 25.4 Agent-to-Agent Loop Prevention
+
+Pub/Sub message handlers must **never** publish a response that could trigger the same handler in the originating agent without a termination condition. Specifically:
+
+- Every `A2AMessage` must carry a `hop_count` (integer, starting at 0). Increment on every publish.
+- Any handler receiving a message with `hop_count >= 5` must log a WARNING and **drop** the message — not process, not re-publish.
+- The hop limit (5) is configured in `settings.yaml` under `pubsub.max_hop_count` so it can be tuned without code changes.
+
+**Why:** A single missing guard on any of these axes has cost real money in other projects. An LLM retry loop at $0.01/call runs up a $50 bill in an hour. A Pub/Sub storm between two agents can generate thousands of messages per minute. These guardrails are cheap to add and catastrophically expensive to omit.
+
+---
+
+_Last updated: 2026-04-01_
