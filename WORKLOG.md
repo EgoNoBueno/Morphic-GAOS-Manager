@@ -5,6 +5,34 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-04-01T12:00-03:00 — GAOS-Deploy-Spec.md audit and overhaul
+
+### What was done
+- **Full deployability audit of GAOS-Deploy-Spec.md:** Reviewed the entire document (~2,100 lines) against the question "can a new user build this system from scratch using only this document?"
+- **4 critical blockers fixed:**
+  - Added `Copy-Item config\settings.yaml.template config\settings.yaml` to §0.3 (was missing entirely)
+  - Added prerequisite callout to §4.4 requiring `SPREADSHEET_ID_` in `helpers.gs` to be updated before running `setup_apps_script.py`
+  - Added the missing `projects.morphic-gaos-prod` block to the §8 `settings.yaml` template (without it, every agent call raises `WorkbookNotFoundError`)
+  - Replaced all hardcoded `7bu22bxlda` deployment URLs in instructional context with `YOUR-*-URL.run.app` placeholders; labeled the §9.2 reference table as "reference only"
+- **1 entirely missing section added:** §10.6 — Gmail Pub/Sub watch initial setup (enable API, create topic, grant `gmail-api-push@system.gserviceaccount.com` publisher rights, create subscription, run `setup_gmail_oauth.py`). Previously referenced but nowhere documented.
+- **3 additional fixes:**
+  - `create_staging_tables.py` script reference added to §7.1 as the recommended automation path
+  - §5.2 orphan `#Note:` comment removed from inside bash code block; `declare -A` bash-4+ warning added
+  - AppSheet checklist item in §14 marked `❌ NOT YET DOCUMENTED` with skip instruction
+- **§19 skip callout added:** First-deployment readers previously encountered the Phase 4 exit checklist mid-document with no guidance to skip it.
+- **Plain-English intros added to 16 sections:** §0.2, §0.3, §0.4, §0.6, §1, §2, §3, §4, §5, §6, §7, §8, §9, §10, §11, §12 — each explaining in simple terms what is being built and why, before the technical commands.
+- **Follow-This-Order table added to document header:** Lists all 14 sections in correct execution sequence with a one-line description of what each builds.
+- **Second pass second-round fixes:** `echo -n` bash note in §3.1; §4.4 Step 1 VERTEX_AGENT_ENDPOINT placeholder; §9.2 health check URL substitution; all five §10.x `NP_URL=` hardcoded values replaced; §19 4c prose cleaned up.
+
+### Files changed
+- `Docs/GAOS-Deploy-Spec.md`
+
+### What's next
+- Commit this doc update: `git add Docs/GAOS-Deploy-Spec.md && git commit -m "Docs: overhaul deploy spec for new-user deployability"`
+- Consider whether `apps_script/helpers.gs` should auto-read `SPREADSHEET_ID_` from an env var instead of requiring a manual edit before each setup
+
+---
+
 ## 2026-03-31T23:30-03:00 — Gmail watch unblocked; infra fixes; type errors resolved
 
 ### What was done

@@ -2,10 +2,39 @@
 
 **Morphic-G AOS** — Infrastructure Provisioning & First-Run Guide
 
-> This document is the step-by-step guide for standing up every Google Cloud and Google Workspace resource the system requires. Follow the sections in order. Each section ends with a verification step — do not proceed to the next section until verification passes.
+> **What is GAOS?**
+> GAOS is a system of AI agents that help run a business automatically. Think of it like hiring 7 specialized AI employees — one handles accounting, one handles marketing, one handles sales, etc. They live in the cloud, talk to each other through a messaging system, and report through a shared Google Spreadsheet you use as a control panel.
+>
+> **What does this document do?**
+> This is the complete step-by-step guide to building all the cloud infrastructure those agents need. You'll create accounts and permissions, databases, a messaging system, scheduled jobs, and finally deploy the code that makes everything run. Follow each section in order and complete the verification check before moving on.
 >
 > **Estimated time:** 2–3 hours for a first-time setup, 30 minutes for a repeat deployment.
 > **Estimated monthly cost after setup:** Low — architecture uses free-tier services and scale-to-zero compute (see `GAOS-Manager-Spec.md` §9.4 for breakdown).
+
+### Follow-This-Order Guide
+
+> ⚠️ **Important:** Sections §19 and §20 appear in the middle of this document due to how the guide evolved, but they belong to **Phase 4** (the final phase). On a first deployment, skip them when you reach them and come back after §18.
+
+Execute sections in this order:
+
+| Step | Section | What you're building |
+|------|---------|---------------------|
+| 1 | §0 Prerequisites | Install tools, clone the repo, set up your Google credentials |
+| 2 | §1 GCP Project | Create your Google Cloud project and turn on all required services |
+| 3 | §2 IAM | Create the robot identities (service accounts) that run each agent |
+| 4 | §3 Secret Manager | Store API keys securely — never in plain text in code |
+| 5 | §4 Google Sheets | Provision the spreadsheet that serves as the system's control panel |
+| 6 | §5 Pub/Sub | Set up the message queue that agents use to talk to each other |
+| 7 | §6 Drive | Set up the knowledge folder where agents store and read documents |
+| 8 | §7 BigQuery | Create the databases for logs, memory, and analytics |
+| 9 | §8 `settings.yaml` | Fill in the central config file with IDs from previous steps |
+| 10 | §9 Cloud Run | Deploy all 7 agents as live web services in the cloud |
+| 11 | §10 Cloud Scheduler | Set up automated recurring tasks (nightly archive, daily briefing, etc.) |
+| 12 | §11 Cloud Logging | Configure how long logs are kept |
+| 13 | §12 Vertex AI | Create the AI memory banks for each agent domain |
+| 14 | §13–18 | Smoke tests and phase completion checklists |
+| — | §19–20 | *(Phase 4 only — skip on first pass)* Exit criteria and bootstrap runbook |
+| — | §21–22 | Post-launch optimization queue (start only after real production traffic) |
 
 ---
 
@@ -20,12 +49,23 @@ Before starting, confirm the following are in place on your local machine.
 | Google account (personal or Workspace) | Owns all GCP resources and the Google Sheet | Must be an account you control and trust |
 | GitHub account | Source control | Repo already created: `EgoNoBueno/Morphic-GAOS-Manager` |
 
+> **PowerShell version:** All PowerShell snippets in this guide require **PowerShell 7+** (`pwsh`). PS 5.1 (`powershell.exe`) is not supported — it lacks the `?.` null-conditional operator and the `&&` pipeline chain operator used in several steps. Verify with `$PSVersionTable.PSVersion`; if the major version is less than 7, install from <https://aka.ms/powershell>.
+
 ### 0.2 Required Local Tools
+
+> **In plain English:** These are the programs your computer needs before you start. Think of them as your toolkit — each one does a different job during setup.
+> - **gcloud** — Google's command-line tool for managing cloud resources
+> - **gh** — GitHub's command-line tool (you'll use it to set up CI/CD secrets)
+> - **python** — the programming language the agents are written in
+> - **uv** — a fast Python package manager (installs dependencies much faster than pip)
+> - **git** — version control (you already have this)
+> - **ollama** — runs AI models locally on your machine
 
 Install these before proceeding:
 
 ```powershell
 # Verify each tool after installing
+$PSVersionTable.PSVersion  # Must be 7.x — install from https://aka.ms/powershell if not
 gcloud --version        # Google Cloud CLI — https://cloud.google.com/sdk/docs/install
 gh --version            # GitHub CLI (already confirmed installed)
 python --version        # Python 3.11+
@@ -36,10 +76,16 @@ ollama --version        # Ollama — https://ollama.com/download (Windows)
 
 ### 0.3 Clone and Bootstrap Repo
 
+> **In plain English:** This downloads the project code to your computer and sets up an isolated Python environment (a private copy of Python just for this project, so it doesn't conflict with anything else you have installed).
+
 ```powershell
 # If not already done
 git clone https://github.com/EgoNoBueno/Morphic-GAOS-Manager.git
 cd Morphic-GAOS-Manager
+
+# IMPORTANT: Create your config file from the template
+# Do this before running any other scripts — many scripts read this file
+Copy-Item config\settings.yaml.template config\settings.yaml
 
 # Create Python environment and install all dependencies (including dev tools)
 uv venv
@@ -49,6 +95,8 @@ uv pip install -e ".[dev]"
 > **Note:** All package versions are pinned in `pyproject.toml`. `[dev]` adds `pytest`, `pytest-cov`, `ruff`, and `mypy`. Omit `[dev]` in a production-only environment: `uv pip install -e .`. Use `google-genai>=1.0.0` (`google.genai.Client()` API) — **not** `google-generativeai`. The `google-generativeai` package is EOL: it imports with a `FutureWarning` and the `v1beta` endpoint it targets no longer serves models like `gemini-1.5-pro`, returning 404. The `google-genai` package is the official successor and is what `google-adk` expects.
 
 ### 0.4 Application Default Credentials (ADC) Setup
+
+> **In plain English:** Google needs to know who *you* are when your local scripts talk to Google Cloud. Instead of storing a password in a file (which is a security risk), we use "Application Default Credentials" — you log in once via a browser, and Google saves a secure token on your computer. After that, all your local scripts automatically authenticate as you. On Cloud Run (when things are deployed), the agents prove their identity using their service accounts instead.
 
 All local development runs use ADC — **no service account key file on disk**. `GOOGLE_APPLICATION_CREDENTIALS` must NOT be set in your environment or `.env` file. If that variable exists (even pointing at a missing file), `google-auth` skips ADC entirely and fails silently.
 
@@ -104,6 +152,8 @@ Run through the GAOS-Doctor checklist whenever you suspect a configuration drift
 
 ### 0.6 Google Sheets Control Plane
 
+> **In plain English:** The entire GAOS system is controlled through one Google Spreadsheet. Each of its 14 tabs is like a department's desk — one for accounting records, one for the approval queue, one for logs, etc. You don't build this by hand; a script creates it for you in §4.
+
 The GAOS control plane is a **single** Google Sheets workbook with a 14-tab schema — not a separate "Dashboard" spreadsheet. The workbook is provisioned by `scripts/setup_workspace.py` in §4.1 and its ID is stored in `settings.yaml` under `sheet.workbook_id`.
 
 The 14 tabs are: `Project Registry`, `Accounting`, `Inventory`, `Contacts`, `Leads`, `Scheduling`, `Agent_Approvals`, `Authorized_Approvers`, `Logs`, `Error_Logs`, `Observability`, `Research`, `Tasks`, `Proposals`. No additional spreadsheet needs to be created.
@@ -113,6 +163,8 @@ The 14 tabs are: `Project Registry`, `Accounting`, `Inventory`, `Contacts`, `Lea
 ---
 
 ## 1. GCP Project Setup
+
+> **In plain English:** Google Cloud Platform (GCP) is like renting a private slice of Google's worldwide datacenter. A "project" is your isolated workspace inside it — all your databases, servers, and services live together under one project so you can manage costs and permissions in one place. You'll create one project called `morphic-gaos-prod` and attach a billing account (credit card) to pay for server time. Most of this system stays within Google's free tier.
 
 ### 1.1 Create the Project
 
@@ -153,6 +205,8 @@ gcloud services enable \
 ---
 
 ## 2. IAM Service Accounts
+
+> **In plain English:** When humans use Google Cloud, they log in with an email and password. But AI agents running in the cloud need their own identity to access services. A "service account" is like a robot employee ID — it has a name, a set of permissions (what it's allowed to do), and Google enforces those limits automatically. We give each agent its own service account so they can only access *exactly* what they need and nothing more. If one agent ever has a bug or is compromised, the damage is contained.
 
 Create one service account per agent. Each gets only the permissions its role requires. Never reuse a service account between agents.
 
@@ -262,6 +316,8 @@ No JSON key files are needed. Service account identity is supplied at runtime:
 
 ## 3. Secret Manager
 
+> **In plain English:** API keys, passwords, and other sensitive values should *never* be stored in code or config files — if you accidentally push code to GitHub, they'd be publicly visible. Google Secret Manager is a secure vault: you store sensitive values there once, and agents fetch them at runtime using their service account identity. Even if someone reads your code, they can't see the actual key values.
+
 Populate all secrets before any agent code runs. The agent boot sequence calls `get_secret()` for every secret in its inventory and fails fast if any are missing.
 
 ### 3.1 Create Secrets
@@ -291,6 +347,8 @@ gcloud secrets create GEMINI_API_KEY --project=$PROJECT
 
 # Ollama host (local machine LAN IP or loopback)
 gcloud secrets create OLLAMA_HOST --project=$PROJECT
+# Note: the pipe below uses bash syntax. Run this in bash (or Cloud Shell), not PowerShell.
+# PowerShell alternative: use scripts/setup_secrets.py which handles this interactively.
 echo -n "http://localhost:11434" | \
   gcloud secrets versions add OLLAMA_HOST --data-file=- --project=$PROJECT
 
@@ -412,6 +470,8 @@ gcloud secrets versions access latest --secret=OLLAMA_HOST --project=morphic-gao
 
 ## 4. Google Sheets Workbook
 
+> **In plain English:** The GAOS control panel is a single Google Spreadsheet with 14 tabs — one for each area of the business (accounting, sales, logs, the approval queue, etc.). You view and interact with the whole system through this one spreadsheet. You don't build it by hand; a setup script creates all 14 tabs with the right column headers automatically.
+
 ### 4.1 Run the Workspace Setup Script
 
 Sections 4 and 6 are fully automated. A single script creates the Drive folder
@@ -480,6 +540,13 @@ your@email.com | Your Name | 5 | TRUE | <today> | Owner
 
 ### 4.4 Deploy Apps Script (Automated)
 
+> **Prerequisite — Update `SPREADSHEET_ID_` in `helpers.gs` first:**
+> The file `apps_script/helpers.gs` contains a hardcoded constant `SPREADSHEET_ID_` that must match *your* spreadsheet ID before the script is uploaded. Open `apps_script/helpers.gs` in VS Code, find the line that sets this constant, and replace its value with the spreadsheet ID that `setup_workspace.py` printed in §4.1:
+> ```javascript
+> const SPREADSHEET_ID_ = "YOUR_SPREADSHEET_ID_HERE";
+> ```
+> If this value is wrong, every webhook call will silently fail with a 500 error because `doPost` opens the wrong (or nonexistent) spreadsheet.
+
 Run the setup script — it creates the bound project, uploads all `.gs` files,
 deploys the Web App, and stores `WEBHOOK_URL` in Secret Manager:
 
@@ -506,14 +573,16 @@ After clicking Allow, the web app is live and `WEBHOOK_URL` is in Secret Manager
 > always be completed manually in the Apps Script editor.
 
 **Step 1 — Set Script Properties**
-Note: The URLs mentioned in this section are dynamically generated based on the specific Google Cloud project and deployment configuration. They will differ for each new deployment.
- (Apps Script editor → Project Settings → Script Properties):
+
+> ⚠️ **Get the `VERTEX_AGENT_ENDPOINT` URL from §9.2**, not from this table. It is the nexus-prime Cloud Run URL with `/sync` appended. It is unique to your deployment.
+
+(Apps Script editor → Project Settings → Script Properties):
 
 | Key | Value |
 |-----|-------|
 | `WEBHOOK_HMAC_SECRET` | Value of `gcloud secrets versions access latest --secret=WEBHOOK_HMAC_SECRET --project=morphic-gaos-prod` |
 | `WEBHOOK_URL` | Value of `gcloud secrets versions access latest --secret=WEBHOOK_URL --project=morphic-gaos-prod` |
-| `VERTEX_AGENT_ENDPOINT` | `https://nexus-prime-7bu22bxlda-uc.a.run.app/sync` |
+| `VERTEX_AGENT_ENDPOINT` | Your nexus-prime Cloud Run URL + `/sync` — get it from §9.2 |
 | `GCP_PROJECT` | `morphic-gaos-prod` |
 
 > ⚠️ **Key names are case-sensitive and must use underscores, not hyphens.**
@@ -568,6 +637,8 @@ as `WEBHOOK_URL` and in `config/settings.yaml` under `apps_script.webhook_url`.
 ---
 
 ## 5. Cloud Pub/Sub
+
+> **In plain English:** Pub/Sub (short for Publish/Subscribe) is Google's messaging service — it's how agents talk to each other without needing to know each other's addresses. Think of it like a bulletin board system: an agent "publishes" a message to a named "topic", and any agent that has "subscribed" to that topic receives the message. Messages are delivered reliably even if the receiving agent is temporarily offline or busy.
 
 Create all topics and subscriptions. Agents create their own topics idempotently at boot, but pre-creating them here ensures Nexus-Prime can subscribe to all orchestrator topics before any orchestrator has run.
 
@@ -628,20 +699,27 @@ gcloud projects add-iam-policy-binding $PROJECT \
 ```
 
 **Step D — Create all 22 subscriptions:**
-Note: The URLs mentioned in this section are dynamically generated based on the specific Google Cloud project and deployment configuration. They will differ for each new deployment.
+
+> ⚠️ **Replace the URLs below with your own.** The URLs in the `URLS` array are from the original deployment and will not work for a new project. Get your actual URLs after completing §9 by running:
+> ```bash
+> gcloud run services list --region=us-central1 --project=morphic-gaos-prod --format="table(metadata.name,status.url)"
+> ```
+> Also note: `declare -A` (bash associative arrays) requires **bash 4+**. On macOS the default shell is zsh — run these commands in `bash` explicitly, or use the Cloud Shell in the GCP console.
+
 ```bash
 PROJECT=morphic-gaos-prod
 BASE="projects/${PROJECT}/topics"
 PUSH_SA="pubsub-push-sa@${PROJECT}.iam.gserviceaccount.com"
 
+# Replace each URL with the output of: gcloud run services describe <agent> --region=us-central1 --format='value(status.url)'
 declare -A URLS=(
-  [nexus-prime]="https://nexus-prime-7bu22bxlda-uc.a.run.app"
-  [ledger]="https://ledger-7bu22bxlda-uc.a.run.app"
-  [beacon]="https://beacon-7bu22bxlda-uc.a.run.app"
-  [pursuit]="https://pursuit-7bu22bxlda-uc.a.run.app"
-  [foreman]="https://foreman-7bu22bxlda-uc.a.run.app"
-  [steward]="https://steward-7bu22bxlda-uc.a.run.app"
-  [scout]="https://scout-7bu22bxlda-uc.a.run.app"
+  [nexus-prime]="https://YOUR-NEXUS-PRIME-URL.run.app"
+  [ledger]="https://YOUR-LEDGER-URL.run.app"
+  [beacon]="https://YOUR-BEACON-URL.run.app"
+  [pursuit]="https://YOUR-PURSUIT-URL.run.app"
+  [foreman]="https://YOUR-FOREMAN-URL.run.app"
+  [steward]="https://YOUR-STEWARD-URL.run.app"
+  [scout]="https://YOUR-SCOUT-URL.run.app"
 )
 
 # Nexus-Prime subscribes to all orchestrator topics
@@ -661,7 +739,6 @@ for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
     --push-auth-service-account=$PUSH_SA \
     --ack-deadline=60 --project=$PROJECT
 done
-#Note: The URLs mentioned in this section are dynamically generated based on the specific Google Cloud project and deployment configuration. They will differ for each new deployment.
 # Cross-domain subscriptions
 for sub_agent_topic in \
   "pursuit.sub.ledger:pursuit:agent.ledger.events" \
@@ -687,6 +764,8 @@ done
 ---
 
 ## 6. Google Drive — Knowledge/ Folder
+
+> **In plain English:** Agents need a place to store and read documents — things like policies, procedures, and workflows that describe how the business operates. The Knowledge/ folder in Google Drive serves this purpose. The workspace setup script already created this folder in §4.1, so this section mostly verifies it and seeds it with placeholder documents.
 
 ### 6.1 Folder Structure
 
@@ -758,10 +837,18 @@ all SA emails appear with Editor access.
 
 ## 7. BigQuery
 
+> **In plain English:** BigQuery is Google's large-scale database service. GAOS uses it to store logs, memory entries, and historical analytics — data that accumulates over months. Unlike the Google Spreadsheet (which is the live, human-readable control panel), BigQuery is built for permanently storing millions of rows and answering questions like "what did this agent cost over the last 30 days?" Think of the Spreadsheet as the dashboard and BigQuery as the archive.
+
 > **Windows note:** The `bq` CLI fails on Windows (Python `absl.flags` conflict in the bundled
 > Cloud SDK). Use the Python approach below for all BigQuery provisioning.
 
-### 7.1 Create Dataset and Tables (automated)
+### 7.1 Create Dataset and Tables
+
+> **Automated option (recommended):** Instead of running the individual Python blocks below, use the all-in-one script:
+> ```powershell
+> python scripts/create_staging_tables.py
+> ```
+> This creates the dataset and all 7 tables in one shot. The manual Python blocks below are kept for reference and for creating or recreating individual tables.
 
 All BigQuery infrastructure is provisioned by a single Python command:
 
@@ -1000,6 +1087,8 @@ bq rm --force morphic-gaos-prod:aos_logs.monologue_frames_new
 
 ## 8. `config/settings.yaml`
 
+> **In plain English:** `settings.yaml` is the central config file — think of it as the master list of settings that every agent reads at startup. It tells agents which Google Cloud project to use, which AI models to call, which spreadsheet to write to, what Pub/Sub topics exist, and more. You fill it in once and it never changes unless your infrastructure changes. **It does not store secrets** — those live in Secret Manager.
+
 Create this file before writing any agent code. It is the single source of truth for model aliases, project IDs, and service configuration.
 
 ```yaml
@@ -1019,6 +1108,12 @@ projects:
   default:
     sheet_id: "<your-spreadsheet-id>"
     drive_folder_id: "<your-knowledge-folder-id>"  # from setup_workspace.py output
+  # REQUIRED: named entry for the system project ID (must match gcp.project_id exactly).
+  # Copy the same IDs from projects.default — this is an explicit copy, NOT an automatic alias.
+  # Without this block, any call using project_id="morphic-gaos-prod" will throw WorkbookNotFoundError.
+  morphic-gaos-prod:
+    sheet_id: "<your-spreadsheet-id>"              # same value as projects.default.sheet_id
+    drive_folder_id: "<your-knowledge-folder-id>"  # same value as projects.default.drive_folder_id
 
 models:
   LOCAL_MODEL: "ollama/llama3"
@@ -1072,6 +1167,8 @@ docs:
 ---
 
 ## 9. Cloud Run Services
+
+> **In plain English:** Cloud Run is Google's serverless hosting platform. You give it a container image (a packaged, self-contained snapshot of your code and all its dependencies), and Google runs it as a web service. The main advantage: you only pay while the service is handling requests, and Google scales it up or down automatically with demand. Each of the 7 GAOS agents gets its own Cloud Run service, and they all share the same codebase — an environment variable (`AGENT_NAME`) tells the code which agent to behave as.
 
 ### 9.1 Build and Deploy Each Agent
 
@@ -1214,8 +1311,12 @@ for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
   echo "${agent}: ${URL}"
 done
 ```
-Note: The URLs mentioned in this section are dynamically generated based on the specific Google Cloud project and deployment configuration. They will differ for each new deployment.
-Actual URLs for this deployment:
+
+> ⚠️ **The URL table below is from the original deployment and will not match yours.** After running the command above, copy your actual service URLs — they will look different. Update §5.2 with your URLs before creating Pub/Sub subscriptions.
+
+> ⚠️ **The PowerShell health check below also uses hardcoded URLs.** Replace the `$url` line with your actual URL pattern before running it.
+
+Actual URLs for the original `morphic-gaos-prod` deployment (reference only — yours will differ):
 
 | Service | URL |
 |---------|-----|
@@ -1233,16 +1334,19 @@ Actual URLs for this deployment:
 
 Set this Script Property in the Apps Script editor (Project Settings → Script Properties):
 - Key: `VERTEX_AGENT_ENDPOINT`
-- Value: `https://nexus-prime-7bu22bxlda-uc.a.run.app/sync`
+- Value: your nexus-prime Cloud Run URL + `/sync` (from the `gcloud run services list` output above)
 
-This was completed as part of §4.4 Step 1 if that section was followed. If not already set, add it now.
+This was set in §4.4 Step 1 if that section was followed. If not already set, add it now using your actual URL.
 
 **Verification (Windows PowerShell):**
 ```powershell
+# Requires gcloud on PATH. If the command is not found, run:
+#   (Get-Command gcloud -ErrorAction SilentlyContinue)?.Source
+# or locate gcloud.cmd under your Cloud SDK install and use its full path instead.
 # --include-email is required when calling identity-token with ADC user credentials
+$token = gcloud auth print-identity-token --include-email
 foreach ($agent in @('nexus-prime','ledger','beacon','pursuit','foreman','steward','scout')) {
-  $url = "https://${agent}-7bu22bxlda-uc.a.run.app/health"
-  $token = & "C:\Program Files (x86)\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd" auth print-identity-token --include-email
+  $url = "https://YOUR-${agent}-URL.run.app/health"  # replace with your actual URL
   $resp = Invoke-RestMethod -Uri $url -Headers @{Authorization="Bearer $token"}
   Write-Host "${agent}: $($resp.status)"
 }
@@ -1303,6 +1407,8 @@ echo "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github-a
 
 ## 19. Phase 4 Exit Criteria Checklist
 
+> ⚠️ **First-deployment reading note:** This section tracks what has already been completed on the *original* production deployment. It appears here due to document history, but logically belongs after §18. If you are setting up GAOS for the first time, **skip this section now** and continue with §10 (Cloud Scheduler). Return here after your own system passes §18 to track your Phase 4 completion.
+
 Phase 4 is complete — and the system is **production-ready** — when **every item** below is checked:
 
 ### 4a — Infrastructure Bootstrap
@@ -1324,10 +1430,11 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 - [x] `GET /health` returns HTTP 200 for all 7 services — verified 2026-03-21 with OIDC token
 
 ### 4c — Production Wiring
-Note: The URLs mentioned in this section are dynamically generated based on the specific Google Cloud project and deployment configuration. They will differ for each new deployment.
+
+> *URLs in this section are from the original deployment. Your deployment URLs will be different — use your `gcloud run services list` output.*
 
 - [x] All Pub/Sub push subscriptions confirmed: 22 subscriptions exist with OIDC push auth; `pubsub-push-sa` has `roles/run.invoker` on all 7 services; Pub/Sub service agent granted `roles/iam.serviceAccountTokenCreator` — 2026-03-21. URLs use `*-975461050387.us-central1.run.app` (confirmed valid alias per `run.googleapis.com/urls` annotation — both URL formats work)
-- [ ] `VERTEX_AGENT_ENDPOINT` Script Property in Apps Script updated via Apps Script editor → Project Settings → Script Properties → `https://nexus-prime-7bu22bxlda-uc.a.run.app/sync`
+- [ ] `VERTEX_AGENT_ENDPOINT` Script Property in Apps Script updated via Apps Script editor → Project Settings → Script Properties (set to your nexus-prime Cloud Run URL + `/sync`)
 - [x] `CLOUD_RUN_URL` environment variable on `nexus-prime` — **set automatically by CI/CD pipeline** (`Wire CLOUD_RUN_URL on nexus-prime` step in apply job reads TF output `nexus_prime_url` and updates the service in-place)
 - [x] `settings.yaml` `chat.owner_space` set to `spaces/jbpdpSAAAAE` — confirmed 2026-03-21 via `Select-String owner_space config/settings.yaml`
 
@@ -1520,8 +1627,10 @@ gcloud run services add-iam-policy-binding nexus-prime \
 
 Scans `Agent_Approvals` tab for proposals older than their TTL and re-notifies or auto-rejects them.
 
+> ⚠️ **Replace `NP_URL` with your actual nexus-prime Cloud Run URL** (from §9.2). Use `scripts/provision_schedulers.py` to avoid this manual substitution.
+
 ```bash
-NP_URL="https://nexus-prime-7bu22bxlda-uc.a.run.app"
+NP_URL="https://YOUR-NEXUS-PRIME-URL.run.app"   # replace with your URL from §9.2
 gcloud scheduler jobs create http ttl-sweep \
   --location=us-central1 \
   --schedule="0 * * * *" \
@@ -1535,7 +1644,7 @@ gcloud scheduler jobs create http ttl-sweep \
 Summarizes and moves aged Sheet rows to BigQuery.
 
 ```bash
-NP_URL="https://nexus-prime-7bu22bxlda-uc.a.run.app"
+NP_URL="https://YOUR-NEXUS-PRIME-URL.run.app"   # replace with your URL from §9.2
 gcloud scheduler jobs create http gaos-archive \
   --location=us-central1 \
   --schedule="0 2 * * *" \
@@ -1555,7 +1664,7 @@ Triggers Nexus-Prime's morning briefing. Nexus-Prime queries overnight Logs, Err
 **Prerequisite:** Set `chat.owner_space` in `settings.yaml` to the owner's DM space resource name (e.g. `spaces/AAAAXXXXXXX`). Find this value in any inbound `/chat` event payload under `event.space.name`, or in the Google Chat API console.
 
 ```bash
-NP_URL="https://nexus-prime-7bu22bxlda-uc.a.run.app"
+NP_URL="https://YOUR-NEXUS-PRIME-URL.run.app"   # replace with your URL from §9.2
 gcloud scheduler jobs create http gaos-daily-sync \
   --location=us-central1 \
   --schedule="0 6 * * *" \
@@ -1571,7 +1680,7 @@ gcloud scheduler jobs create http gaos-daily-sync \
 Polls open Blueprint Google Docs for new owner comments so Nexus-Prime can process `COMMENT_RECEIVED` constraint updates without waiting for a manual trigger.
 
 ```bash
-NP_URL="https://nexus-prime-7bu22bxlda-uc.a.run.app"
+NP_URL="https://YOUR-NEXUS-PRIME-URL.run.app"   # replace with your URL from §9.2
 gcloud scheduler jobs create http doc-comment-poll \
   --location=us-central1 \
   --schedule="*/5 * * * *" \
@@ -1587,7 +1696,7 @@ gcloud scheduler jobs create http doc-comment-poll \
 Renews the Gmail Pub/Sub watch subscription before it expires (Gmail maximum is 7 days). Running every 23 hours ensures the watch is always current, even if a single renewal fails.
 
 ```bash
-NP_URL="https://nexus-prime-7bu22bxlda-uc.a.run.app"
+NP_URL="https://YOUR-NEXUS-PRIME-URL.run.app"   # replace with your URL from §9.2
 gcloud scheduler jobs create http gmail-renew-watch \
   --location=us-central1 \
   --schedule="0 */23 * * *" \
@@ -1600,7 +1709,105 @@ gcloud scheduler jobs create http gmail-renew-watch \
 
 ---
 
+### 10.6 Gmail Pub/Sub Watch — One-Time Initial Setup
+
+> **In plain English:** Before the renewal job (§10.5) can do anything, Gmail must be told to publish notifications to a Pub/Sub topic whenever a new email arrives. This is a one-time setup. Once the initial "watch" is registered, the renewal job keeps it alive indefinitely. Without this step, Nexus-Prime never receives Gmail events.
+
+**Prerequisites — Authentication Model:**
+
+> **In plain English:** Nexus-Prime does **not** use its own service account to access Gmail. It uses a stored OAuth2 refresh token that belongs to the Gmail account you want to monitor. You run a script once, sign in to Gmail in a browser, and the script captures a long-lived refresh token. That token is stored encrypted in Secret Manager. Every time Cloud Run needs to call Gmail, it fetches the token from Secret Manager, exchanges it for a short-lived access token, and calls the Gmail API — no further human action required unless you deliberately revoke access or need to rotate the key.
+
+**Auth model: stored user OAuth2 refresh token — not Domain-Wide Delegation (DWD) and not service account impersonation.** `nexus-prime-sa` does not hold Gmail credentials. Credentials belong to the Gmail account owner and are stored in Secret Manager.
+
+**What is stored:** Secret Manager secret `GMAIL_OAUTH_CREDENTIALS` — a JSON object:
+```json
+{"client_id": "...", "client_secret": "...", "refresh_token": "..."}
+```
+`client_id` and `client_secret` come from the OAuth 2.0 client you created in GCP Console (APIs & Services → Credentials → OAuth 2.0 Client IDs). `refresh_token` is produced during the one-time OAuth browser flow run in Step 5 below.
+
+**How Cloud Run loads it:** At every Gmail API call, `tools/gmail.py:_load_credentials()` calls `get_secret("GMAIL_OAUTH_CREDENTIALS", project_id)`, parses the JSON, and constructs a `google.oauth2.credentials.Credentials` object. Google's auth library automatically exchanges the refresh token for a short-lived access token — no manual rotation is needed on any schedule.
+
+**When the refresh token can become invalid:**
+- The Gmail account owner revokes access at <https://myaccount.google.com/permissions>
+- The token is unused for **6 months** (Google auto-revokes idle refresh tokens)
+- The GCP OAuth app is in **Testing** status (not published) — Testing tokens expire after 7 days regardless of use; publish the app to production to remove this limit
+
+> ⚠️ **Watch renewal ≠ credential rotation.** The `gmail-renew-watch` Scheduler job (§10.5) renews the *Gmail Pub/Sub watch subscription*, which Google expires every 7 days. This is completely separate from the OAuth refresh token in `GMAIL_OAUTH_CREDENTIALS` — the token stays valid indefinitely under normal conditions.
+
+**To rotate the refresh token** (e.g., security key rotation or recovery from a revoked token):
+1. Revoke the current grant: go to <https://myaccount.google.com/permissions> and remove the GAOS app entry. This step is required — without it the OAuth flow re-uses the existing session and does not issue a new `refresh_token`.
+2. Re-run `scripts/setup_gmail_oauth.py --project morphic-gaos-prod`.
+3. Store the new JSON blob printed by the script into Secret Manager:
+   ```powershell
+   # Paste the JSON output from setup_gmail_oauth.py between the quotes below
+   $newJson = '{"client_id": "...", "client_secret": "...", "refresh_token": "..."}'
+   $newJson | gcloud secrets versions add GMAIL_OAUTH_CREDENTIALS `
+     --data-file=- --project=morphic-gaos-prod
+   ```
+4. Verify: force-run the `gmail-renew-watch` Scheduler job — it must return HTTP 200. A 401 from Gmail means the secret version was not stored correctly.
+
+> ⚠️ **`client_secrets.json` must exist before Step 5.** Download it from GCP Console → APIs & Services → Credentials → your OAuth 2.0 Client ID → Download JSON. Place it in the repo root as `client_secrets.json`. It is excluded from git (`.gitignore`). Without it, `setup_gmail_oauth.py` exits immediately.
+
+**Step 1 — Enable the Gmail API:**
+
+```bash
+gcloud services enable gmail.googleapis.com --project=morphic-gaos-prod
+```
+
+**Step 2 — Create the Gmail inbox notification topic:**
+
+```bash
+gcloud pubsub topics create gmail.nexus-prime.inbox --project=morphic-gaos-prod
+```
+
+**Step 3 — Grant Gmail permission to publish to the topic:**
+Gmail uses the fixed service account `gmail-api-push@system.gserviceaccount.com` to send notifications. It must be a publisher on your topic:
+
+```bash
+gcloud pubsub topics add-iam-policy-binding gmail.nexus-prime.inbox \
+  --member="serviceAccount:gmail-api-push@system.gserviceaccount.com" \
+  --role="roles/pubsub.publisher" \
+  --project=morphic-gaos-prod
+```
+
+**Step 4 — Create the subscription (push to nexus-prime):**
+Do this after §9.2 gives you the nexus-prime Cloud Run URL:
+
+```bash
+PUSH_SA="pubsub-push-sa@morphic-gaos-prod.iam.gserviceaccount.com"
+NP_URL="https://YOUR-NEXUS-PRIME-URL.run.app"      # replace with §9.2 output
+
+gcloud pubsub subscriptions create nexus-prime.sub.gmail \
+  --topic="projects/morphic-gaos-prod/topics/gmail.nexus-prime.inbox" \
+  --push-endpoint="${NP_URL}/gmail-webhook" \
+  --push-auth-service-account=$PUSH_SA \
+  --ack-deadline=60 --project=morphic-gaos-prod
+```
+
+**Step 5 — Run the one-time OAuth2 flow and register the initial watch:**
+
+This script opens a browser tab for Gmail sign-in, captures the refresh token, prints the JSON blob to store in Secret Manager, creates the `GAOS-Tasks` Gmail label if missing, and registers the initial `watch()` call.
+
+```powershell
+# Requires: client_secrets.json in repo root (see Prerequisites above)
+# Opens a browser tab — sign in as the Gmail account you want to monitor.
+python scripts/setup_gmail_oauth.py --project morphic-gaos-prod
+```
+
+When the script finishes, it prints:
+- The `GMAIL_OAUTH_CREDENTIALS` JSON — store this in Secret Manager immediately (see the rotation procedure in Prerequisites above).
+- Three `settings.yaml` values to update: `monitored_address`, `label_id`, `pubsub_topic`.
+- A reminder to also store `GMAIL_AUTHORIZED_SENDERS` in Secret Manager.
+
+**Verification:** After running the script, check Cloud Logging — you should see `gmail-renew-watch: watch registered` or a similar confirmation. Force-run the `gmail-renew-watch` Scheduler job — it should return HTTP 200.
+
+> ⚠️ **Gmail watch expires after 7 days.** If the Cloud Scheduler renewal job fails (or doesn't exist yet), the watch will silently expire and Nexus-Prime stops receiving email events. The `gmail-renew-watch` job (§10.5) prevents this by renewing every 23 hours. Ensure that job is deployed and healthy before relying on Gmail-based workflows.
+
+---
+
 ## 11. Cloud Logging — Retention Configuration
+
+> **In plain English:** Every time an agent does something, it writes a log entry. Cloud Logging stores all these entries. By default, Google keeps them for 30 days, but that generates more storage than we need and can trigger costs. We reduce retention to 7 days to stay within Google's free tier (50 GB/month).
 
 Reduce Cloud Logging retention from the default 30 days to 7 days to stay within the free tier (50 GB/month ingestion).
 
@@ -1614,6 +1821,8 @@ This is a manual one-time step; there is no `gcloud` CLI command for bucket rete
 ---
 
 ## 12. Vertex AI Memory Bank
+
+> **In plain English:** Each agent has long-term memory stored in Vertex AI RAG (Retrieval-Augmented Generation). Think of it like a searchable filing cabinet: when an agent needs to recall something it learned in the past, it searches its memory bank and gets back the most relevant entries. Each business domain (accounting, sales, etc.) has its own separate memory bank called a "corpus" so agents don't mix up information from different areas.
 
 ### 12.1 Create Memory Bank Corpora
 
@@ -1676,7 +1885,7 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - ❌ **[Phase 2.5 — ABANDONED 2026-03-30]** Google Chat end-to-end delivery: never successfully delivered a message from mobile after ~2 weeks. Failure summary: (1) `CLOUD_RUN_URL` env var missing from initial deploy → fixed; (2) `chat@system.gserviceaccount.com` not in `roles/run.invoker` → fixed; (3) Chat exhausts 2–3 retries in ~60s — IAM propagation took longer, retry budget spent; (4) tunnel URL instability caused stale `OLLAMA_HOST` → fallback Gemini calls hitting 429; (5) stale Cloud Run image (6 days old) deployed during active testing. Full post-mortem in `GAOS-Nexus-Prime-Spec.md §3.2 chat_respond` warning block. **Replaced by Gmail polling — see §10.X.**
 - [x] **[Phase 2.5]** Vertex AI Search datastore created and indexed against Drive `Knowledge/` folder; datastore ID stored in `settings.yaml`
 - [x] **[Phase 2.5]** Google Custom Search Engine created; CSE ID and API key stored in Secret Manager as `GOOGLE_SEARCH_CX` and `GOOGLE_SEARCH_API_KEY`
-- [ ] **[Phase 2.5]** AppSheet app deployed and connected to the Google Sheets workbook (`Agent_Approvals` + `Project Registry` tabs at minimum)
+- ❌ **[Phase 2.5 — NOT YET DOCUMENTED]** AppSheet app deployed and connected to the Google Sheets workbook (`Agent_Approvals` + `Project Registry` tabs at minimum) — setup instructions have not been written. **Skip this item.** No AppSheet setup is required for core system function; this is an optional mobile UI layer that may be documented in a future phase.
 - [x] **[Phase 2.5]** Cloud Scheduler `gaos-daily-sync` job created (6 AM daily, `POST /daily-sync`, returns HTTP 200)
 - [x] **[Phase 2.5]** Cloud Scheduler `doc-comment-poll` job created (every 5 minutes, `POST /poll-comments`, returns HTTP 200)
 - [x] **[Phase 2.5]** `POST /chat` endpoint returns HTTP 200; Nexus-Prime responds in Chat thread within 10 seconds — ⚠️ endpoint works (JWT verifies, routes correctly) but Google Chat never reliably delivered messages from mobile. See abandonment note above.
