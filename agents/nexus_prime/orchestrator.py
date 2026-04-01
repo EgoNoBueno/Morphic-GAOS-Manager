@@ -3342,7 +3342,7 @@ def _dispatch_task_from_email(
 
     prompt = _INTENT_PROMPT.format(subject=subject, body=body[:1200])
     try:
-        resp = _call_model(prompt, model=settings.models.LOCAL_MODEL)
+        resp = _call_model(prompt, model=settings.models.FAST_MODEL)
         state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
         raw = resp.text.strip()
         # Strip markdown code fences if the model added them
