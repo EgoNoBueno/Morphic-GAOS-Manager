@@ -5,6 +5,31 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-03-31T22:31-03:00 — Full deployment: all 7 services live with Drive organization
+
+### What was done
+- **`.gcloudignore` fixed:** Removed `agents/*/tasks/` exclusion — that pattern was written before
+  Phase 3 task modules existed. `drive_maintenance.py`, `inventory_check.py`, and `deal_closed.py`
+  were being silently excluded from every Cloud Build. Fixed before this deployment.
+- **Docker image rebuilt:** `gcloud builds submit` (Cloud Build) pushed `gaos-agent:latest`
+  with all changes from this session (digest: `sha256:942e23ef...`).
+- **All 7 services deployed:** nexus-prime, ledger, beacon, pursuit, foreman, steward, scout —
+  all running revision from this build, all returning `/health` → 200.
+- **Full flow now live:** Email "organize my Drive" → `compose_reply` replies + classifies intent
+  → `TASK_HANDOFF` published to Steward → `drive_maintenance` + Archivist → Approval Sheet →
+  human approves → `_resume` calls `move_file()` for each approved move.
+
+### Files changed
+- `.gcloudignore` — removed `agents/*/tasks/` exclusion (fixes silent task module exclusion)
+
+### What's next
+- Watch Cloud Logging for the in-flight email (sent before this deployment) — it may not have
+  triggered the intent router since nexus-prime was on the old revision at the time
+- Send a second test email to exercise the full deployed flow
+- Check Cloud Logging: look for `drive_maintenance` task dispatch and TASK_HANDOFF published
+
+---
+
 ## 2026-03-31T21:48-03:00 — End-to-end Drive organization flow complete
 
 ### What was done
