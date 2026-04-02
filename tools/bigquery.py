@@ -151,15 +151,19 @@ def replace_rows(
     rows: list[dict[str, Any]],
     project_id: str = "",
 ) -> None:
-    """Full-replace the contents of a BigQuery table via DELETE + streaming INSERT.
+    """Full-replace the contents of a BigQuery table via TRUNCATE + streaming INSERT.
 
-    Issues a DML ``DELETE FROM … WHERE TRUE`` to clear the table, then streams
-    all rows via :func:`insert_rows`. If *rows* is empty the table is truncated
-    and the function returns immediately without inserting.
+    Issues ``TRUNCATE TABLE`` to clear the table, then streams all rows via
+    :func:`insert_rows`. If *rows* is empty the table is truncated and the
+    function returns immediately without inserting.
+
+    ``TRUNCATE TABLE`` is used instead of ``DELETE FROM … WHERE TRUE`` because
+    BQ blocks DML DELETE on tables that have rows in the streaming buffer
+    (< ~90 minutes old). TRUNCATE bypasses this restriction.
 
     This is intentionally a two-step operation rather than a LOAD job or MERGE
     to keep the implementation simple and avoid the 1,000 LOAD-jobs/table/day
-    quota. The empty window between DELETE and INSERT is < 1 second, which is
+    quota. The empty window between TRUNCATE and INSERT is < 1 second, which is
     acceptable for a 5-minute refresh cycle.
 
     Args:
@@ -182,9 +186,13 @@ def replace_rows(
     client = _get_client(gcp_project)
 
     try:
-        client.query(f"DELETE FROM `{full_ref}` WHERE TRUE").result()
+        # TRUNCATE TABLE is used instead of DELETE FROM … WHERE TRUE because
+        # BigQuery's streaming buffer prevents DML DELETE on tables with recently
+        # streamed rows (< ~90 min).  TRUNCATE bypasses this restriction and is
+        # also faster for full-table clears.
+        client.query(f"TRUNCATE TABLE `{full_ref}`").result()
     except Exception as exc:
-        raise BigQueryInsertError(f"replace_rows: DELETE from '{full_ref}' failed: {exc}") from exc
+        raise BigQueryInsertError(f"replace_rows: TRUNCATE of '{full_ref}' failed: {exc}") from exc
 
     if not rows:
         return

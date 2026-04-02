@@ -2495,7 +2495,7 @@ async def handle_sheets_sync(project_id: str) -> dict[str, Any]:
 
     Each tab is read in full, headers are normalized to valid BQ column names,
     a ``synced_at`` timestamp is injected, and the staging table is fully
-    replaced via ``replace_rows()`` (DELETE WHERE TRUE + streaming insert).
+    replaced via ``replace_rows()`` (TRUNCATE TABLE + streaming insert).
 
     Tab failures are non-fatal: a WARNING is logged and the remaining tabs
     continue. The returned dict will include an ``"error"`` key for any tab

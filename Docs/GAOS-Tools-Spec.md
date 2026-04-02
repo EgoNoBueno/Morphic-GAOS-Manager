@@ -721,12 +721,21 @@ def replace_rows(
     project_id: str = "",
 ) -> None:
     """
-    Full-replace the contents of a BigQuery table via DELETE + streaming INSERT.
+    Full-replace the contents of a BigQuery table via TRUNCATE + streaming INSERT.
 
-    Issues ``DELETE FROM … WHERE TRUE`` to clear the table, then streams all
-    rows via ``insert_rows()``. If ``rows`` is empty the table is truncated.
-    The empty window between DELETE and INSERT is < 1 second — acceptable for
-    a 5-minute refresh cycle.
+    Issues ``TRUNCATE TABLE`` to clear the table, then streams all rows via
+    ``insert_rows()``. If ``rows`` is empty the table is truncated and the
+    function returns immediately.
+
+    ``TRUNCATE TABLE`` is used instead of ``DELETE FROM … WHERE TRUE`` because
+    BQ blocks DML DELETE on tables with rows in the streaming buffer (< ~90 min
+    old). TRUNCATE bypasses this restriction.
+
+    > ⚠️ **Warning — BQ streaming buffer blocks DML DELETE:** Using
+    > ``DELETE FROM … WHERE TRUE`` on a streaming-insert table will raise
+    > ``400 UPDATE or DELETE … would affect rows in the streaming buffer`` if
+    > any rows were streamed in the last ~90 minutes. Always use
+    > ``TRUNCATE TABLE`` for full-table clears on streaming tables.
 
     Args:
         table_ref:  Unqualified ``dataset.table`` or fully qualified
@@ -735,7 +744,7 @@ def replace_rows(
         project_id: Unused (present for API symmetry).
 
     Raises:
-        BigQueryInsertError: The DELETE DML query failed.
+        BigQueryInsertError: The TRUNCATE query failed.
         BigQueryRowError:    One or more rows were rejected during streaming insert.
     """
 ```
