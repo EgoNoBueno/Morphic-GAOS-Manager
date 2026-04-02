@@ -111,6 +111,38 @@ async def _warm_jwt_cache() -> None:
         log.warning("JWT cache warm-up failed (non-fatal): %s", exc)
 
 
+@app.on_event("startup")
+async def _write_startup_heartbeat() -> None:
+    """Eagerly initialise the agent and write an IDLE heartbeat to BQ.
+
+    Without this, the first status_snapshots row for an agent is only written
+    when a Pub/Sub message is processed — which means a freshly-deployed agent
+    appears silent in the dashboard indefinitely if no message arrives.
+
+    Per Rule 9 (boot sequence step 6): write IDLE heartbeat before event loop.
+    Failure is non-fatal — a BQ outage must not prevent the service from
+    starting.
+    """
+    try:
+        _get_agent()  # eager init — ensures orchestrator module is imported
+        import importlib
+
+        from agents import _write_heartbeat
+
+        pid = _get_project_id()
+        # Pull the agent's sheet tab from its module (module-level _SHEET_TAB).
+        # Falls back to "Status" if the module doesn't define one.
+        module_path = _AGENT_REGISTRY.get(_AGENT_NAME, "")
+        sheet_tab = "Status"
+        if module_path:
+            mod = importlib.import_module(module_path)
+            sheet_tab = getattr(mod, "_SHEET_TAB", "Status")
+        _write_heartbeat(_AGENT_NAME, pid, "IDLE", "Service started", 0, "", sheet_tab)
+        log.info("Startup IDLE heartbeat written for agent '%s'", _AGENT_NAME)
+    except Exception as exc:
+        log.warning("Startup heartbeat failed (non-fatal): %s", exc)
+
+
 # ── Agent registry ────────────────────────────────────────────────────────────
 
 _AGENT_NAME: str = os.environ.get("AGENT_NAME", "nexus-prime")
