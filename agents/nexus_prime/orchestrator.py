@@ -4273,6 +4273,24 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
         message_id: str = message.get("message_id", "")
         subject: str = message.get("subject", "")
         body: str = message.get("body", "")
+
+        # Subject keyword gate — opt-in trigger word (e.g. "GAOS").
+        # When trigger_keyword is set in settings.yaml, only emails whose subject
+        # contains that word (case-insensitive) are processed. Emails without it
+        # are silently skipped — no reply, no Sheet row, no Pub/Sub event.
+        _trigger_kw = settings.gmail.trigger_keyword.strip().lower()
+        if _trigger_kw and _trigger_kw not in subject.lower():
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"process_gmail: subject keyword '{settings.gmail.trigger_keyword}' not found "
+                f"in subject '{subject}' from {from_addr} — skipping",
+                "INFO",
+            )
+            skipped += 1
+            continue
         received_at: str = message.get("received_at", utcnow_iso())
 
         # Thread context for downstream LLM nodes

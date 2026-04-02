@@ -111,7 +111,7 @@ class ChangeKind(StrEnum):
 class ResourceType(StrEnum):
     SCHEDULER_JOB = "SCHEDULER_JOB"
     BQ_TABLE = "BQ_TABLE"
-    SECRET = "SECRET"
+    SECRET = "SECRET"  # pragma: allowlist secret
 
 
 @dataclass
@@ -557,7 +557,7 @@ def apply_manifest(
             "name": full_name,
             "description": entry.desired.get("description", ""),
             "schedule": entry.desired.get("schedule", ""),
-            "timeZone": "America/Argentina/Buenos_Aires",
+            "timeZone": "America/Los_Angeles",
             "httpTarget": {
                 "uri": target_url,
                 "httpMethod": "POST",

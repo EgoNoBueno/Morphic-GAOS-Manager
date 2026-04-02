@@ -5,6 +5,36 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-04-02T06:20-07:00 — Crash check + BQ streaming buffer fix
+
+### What was done
+- Investigated "possible crash" report: no crash found. Container warm-start Boot complete entries were benign; no ERROR-severity logs in last 30 min.
+- Confirmed `ensure_topic_exists` fix was already in place at commit `1dad05f` (session summary was incorrect about it being pending).
+- Fixed BQ streaming buffer error in `replace_rows()` (`tools/bigquery.py`): replaced `DELETE FROM … WHERE TRUE` with `TRUNCATE TABLE` to eliminate persistent WARNING from `/sheets-sync` endpoint.
+
+### Files changed
+- `tools/bigquery.py` — TRUNCATE instead of DELETE, updated docstring
+- `agents/nexus_prime/orchestrator.py` — docstring update
+- `Docs/GAOS-Tools-Spec.md` — updated `replace_rows()` spec entry with ⚠️ warning callout
+
+### Tests
+- 719/719 passing (no change to count)
+
+### Commits
+- `37026b0` — fix: replace DELETE WHERE TRUE with TRUNCATE TABLE in replace_rows to avoid BQ streaming buffer error
+
+### Deployment
+- Deployed to `nexus-prime-00078-4hk` (100% traffic)
+
+### Lesson learned
+> ⚠️ BQ blocks `DELETE FROM … WHERE TRUE` on streaming-insert tables for ~90 min after rows are written. Always use `TRUNCATE TABLE` for full-table clears on any table that receives streaming inserts. See `GAOS-Tools-Spec.md §replace_rows`.
+
+### What's next
+- Monitor sheets-sync WARNINGs — should be gone at next 5-min cycle
+- No other open issues; service healthy
+
+---
+
 ## 2026-04-02T09:45-03:00 — Gmail push pipeline unblocked end-to-end
 
 ### What was done

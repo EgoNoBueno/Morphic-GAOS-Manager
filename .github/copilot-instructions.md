@@ -138,9 +138,9 @@ pytest --tb=short
 
 New entries go at the **top** of WORKLOG.md (most recent first).
 
-**Timestamps must use the local system timezone — never UTC.** The project is operated from UTC−3. Do not stamp in UTC or any other zone.
+**Timestamps must use the local system timezone — never UTC.** The project is operated from Pacific Time (America/Los_Angeles). Do not stamp in UTC or any other zone.
 
-> **Enforcement:** Use `datetime.now(tz=datetime.timezone(datetime.timedelta(hours=-3))).isoformat(timespec='minutes')` or a helper that reads the local zone. CI runners and collaborators in other zones should not override this — WORKLOG entries are a human record, not a machine log.
+> **Enforcement:** Use `datetime.now(tz=ZoneInfo("America/Los_Angeles")).isoformat(timespec='minutes')` or a helper that reads the local zone. CI runners and collaborators in other zones should not override this — WORKLOG entries are a human record, not a machine log.
 
 ---
 

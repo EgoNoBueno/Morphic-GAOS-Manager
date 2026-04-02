@@ -395,15 +395,17 @@ def move_file(
     dest_folder_id = _ensure_folder_path(service, root, dest_folder_path)
 
     result = _retry_drive(
-        lambda: service.files()
-        .update(
-            fileId=source_id,
-            addParents=dest_folder_id,
-            removeParents=current_parents,
-            body={"name": resolved_name},
-            fields="id",
-        )
-        .execute(),
+        lambda: (
+            service.files()
+            .update(
+                fileId=source_id,
+                addParents=dest_folder_id,
+                removeParents=current_parents,
+                body={"name": resolved_name},
+                fields="id",
+            )
+            .execute()
+        ),
         error_cls=DriveWriteError,
     )
     return result["id"]

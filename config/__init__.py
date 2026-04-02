@@ -44,6 +44,7 @@ class MemoryBankConfig(BaseModel):
 
 class PubSubConfig(BaseModel):
     all_topics: list[str] = Field(default_factory=list)
+    max_hop_count: int = 5  # A2A loop prevention — messages exceeding this hop count are dropped
 
 
 class ProjectConfig(BaseModel):
@@ -55,6 +56,7 @@ class AppsScriptConfig(BaseModel):
     script_id: str = ""
     deployment_id: str = ""
     webhook_url: str = ""
+    timezone: str = "America/Los_Angeles"
 
 
 class ChatConfig(BaseModel):
@@ -92,6 +94,9 @@ class GmailConfig(BaseModel):
     label_id: str = ""  # Gmail label ID (e.g. Label_6)
     pubsub_topic: str = ""  # Full topic path: projects/<pid>/topics/...
     max_results: int = 50
+    trigger_keyword: str = (
+        ""  # If set, only process emails whose subject contains this string (case-insensitive)
+    )
 
 
 class Settings(BaseModel):
