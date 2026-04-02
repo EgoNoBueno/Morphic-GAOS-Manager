@@ -110,7 +110,10 @@ def check_sheets() -> None:
     try:
         settings = get_settings()
         creds, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"]
+            scopes=[
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/drive.file",
+            ]
         )
         gc = gspread.authorize(creds)
         sh = gc.open_by_key(settings.sheet.workbook_id)
@@ -118,7 +121,8 @@ def check_sheets() -> None:
         rows = ws.get_all_values()
         check("Project Registry tab readable", True, f"{len(rows)} rows")
     except Exception as exc:
-        check("Project Registry tab readable", False, str(exc)[:120])
+        detail = str(exc) or str(getattr(exc, "__cause__", "")) or type(exc).__name__
+        check("Project Registry tab readable", False, detail[:200])
 
 
 # ── Check 2: Pub/Sub topics + subscriptions ───────────────────────────────────
@@ -242,8 +246,14 @@ def check_vertex_corpora() -> None:
 
 # ── Check 6: Agent heartbeat recency ──────────────────────────────────────────
 
-_HEARTBEAT_WARN_MINUTES = 5
-_HEARTBEAT_FAIL_MINUTES = 15
+# GAOS agents run on Cloud Run with min-instances=0 (scale-to-zero).
+# An instance lifetime is ~15 min of inactivity before Cloud Run kills it.
+# Heartbeats are written at startup and during task processing.
+# With no incoming traffic, the last heartbeat will be from the most recent
+# startup — typically 15-60 minutes ago on an idle system.
+# WARN at 60 min (one quiet hour), FAIL at 240 min (4 hours — clearly stuck).
+_HEARTBEAT_WARN_MINUTES = 60
+_HEARTBEAT_FAIL_MINUTES = 240
 
 
 def check_agent_heartbeats() -> None:
