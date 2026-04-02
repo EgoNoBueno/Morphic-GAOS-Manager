@@ -17,6 +17,7 @@ Endpoints:
   POST /infra-provision  Trigger infrastructure diff + proposal card (Nexus-Prime only)
   POST /gmail-webhook    Gmail Pub/Sub push notification — enqueues for async processing (Nexus-Prime only)
   POST /daily-digest     Cloud Scheduler 6 AM email digest (Nexus-Prime only)
+  POST /log-sink          Cloud Logging error sink → alert email (Nexus-Prime only)
   POST /gmail-renew-watch  Renew Gmail watch() subscription — called every 23 h by Cloud Scheduler (Nexus-Prime only)
   GET  /health           Cloud Run health check (always 200)
 
@@ -1247,6 +1248,71 @@ async def gmail_renew_watch(request: Request) -> JSONResponse:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return JSONResponse(content={"status": "ok", **result})
+
+
+@app.post("/log-sink")
+async def log_sink(request: Request) -> Response:
+    """
+    Receive Cloud Logging log-sink Pub/Sub push deliveries.
+
+    A Cloud Logging log sink is configured to route ERROR+ Cloud Run log
+    entries for nexus-prime to the ``nexus-prime-error-alerts`` Pub/Sub
+    topic.  Pub/Sub wraps the raw LogEntry JSON as a base64-encoded
+    ``message.data`` field — identical envelope structure to ``/pubsub``
+    but the ``data`` payload is a Cloud Logging LogEntry, not an A2AMessage.
+
+    On receipt the endpoint:
+      1. Verifies the OIDC bearer token (same SA as /pubsub).
+      2. Decodes and parses the LogEntry.
+      3. Calls ``handle_cloud_run_error()`` which checks a 15-minute
+         cooldown and sends an alert email when the cooldown has elapsed.
+      4. Returns 204 ACK unconditionally so Pub/Sub never retries.
+
+    Nexus-Prime only.
+    """
+    _verify_pubsub_audience(request)
+
+    if _AGENT_NAME != "nexus-prime":
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent '{_AGENT_NAME}' does not support /log-sink.",
+        )
+
+    import base64
+
+    try:
+        envelope = await request.json()
+    except Exception as exc:
+        log.warning("log-sink: failed to parse envelope: %s", exc)
+        raise HTTPException(status_code=400, detail="Invalid JSON envelope.") from exc
+
+    # Cloud Logging wraps the LogEntry as base64 in message.data
+    try:
+        raw_data: str = envelope["message"]["data"]
+        log_entry: dict = __import__("json").loads(base64.b64decode(raw_data).decode())
+    except Exception as exc:
+        log.warning("log-sink: failed to decode LogEntry: %s", exc)
+        # ACK bad messages — they will never be parseable on retry
+        return Response(status_code=204)
+
+    project_id = _get_project_id()
+    from agents.nexus_prime.orchestrator import handle_cloud_run_error
+
+    try:
+        result = await handle_cloud_run_error(project_id, log_entry)
+        log.info(
+            "log-sink: processed severity=%s sent=%s suppressed=%s",
+            result.get("severity"),
+            result.get("sent"),
+            result.get("suppressed"),
+        )
+    except Exception as exc:
+        # Log but still ACK — we do NOT want Pub/Sub to retry error alerts
+        # and create a feedback loop where the alert handler itself causes
+        # more ERROR logs which trigger more retries.
+        log.exception("log-sink: handle_cloud_run_error raised: %s", exc)
+
+    return Response(status_code=204)
 
 
 # ── Cloud Run startup ─────────────────────────────────────────────────────────

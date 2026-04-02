@@ -3404,3 +3404,163 @@ class TestStewardExecuteDriveMoves:
         mock_move.assert_not_called()
         # Proposal is still removed from parked list regardless of outcome
         assert proposal_id not in new_state["parked_proposals"]
+
+
+# ── Cloud Run error alerting ───────────────────────────────────────────────────
+
+
+class TestCloudRunError:
+    """Unit tests for handle_cloud_run_error."""
+
+    _PROJECT = "test-project"
+
+    @staticmethod
+    def _entry(severity: str = "ERROR", message: str = "something exploded") -> dict:
+        return {
+            "insertId": "abc123",
+            "severity": severity,
+            "timestamp": "2026-04-02T12:00:00Z",
+            "jsonPayload": {"message": message},
+            "resource": {
+                "type": "cloud_run_revision",
+                "labels": {
+                    "service_name": "nexus-prime",
+                    "revision_name": "nexus-prime-00074-kmv",
+                },
+            },
+        }
+
+    def test_sends_email_when_no_prior_alert(self) -> None:
+        """First alert (no cooldown row in System_State) — email is sent."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_cloud_run_error
+
+        with (
+            patch(
+                "tools.google_sheets.find_row",
+                return_value=None,
+            ),
+            patch("tools.google_sheets.append_row"),
+            patch("tools.google_sheets.update_row"),
+            patch("tools.bigquery.query_rows", return_value=[]),
+            patch(
+                "tools.gmail.send_email",
+                return_value="sent-err-001",
+            ) as mock_send,
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = asyncio.run(handle_cloud_run_error(self._PROJECT, self._entry()))
+
+        assert result["sent"] is True
+        assert result["suppressed"] is False
+        assert result["sent_id"] == "sent-err-001"
+        mock_send.assert_called_once()
+        call_kwargs = mock_send.call_args.kwargs
+        assert "ALERT" in call_kwargs["subject"] or "ERROR" in call_kwargs["subject"]
+        assert "something exploded" in call_kwargs["body"]
+
+    def test_suppressed_within_cooldown(self) -> None:
+        """Alert within cooldown window is suppressed — no email sent."""
+        import asyncio
+        from datetime import UTC, datetime, timedelta
+
+        from agents.nexus_prime.orchestrator import handle_cloud_run_error
+
+        recent_ts = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+
+        with (
+            patch(
+                "tools.google_sheets.find_row",
+                return_value={"key": "last_error_alert_ts", "value": recent_ts},
+            ),
+            patch("tools.bigquery.query_rows", return_value=[]),
+            patch("tools.gmail.send_email") as mock_send,
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = asyncio.run(handle_cloud_run_error(self._PROJECT, self._entry()))
+
+        assert result["sent"] is False
+        assert result["suppressed"] is True
+        assert result["reason"] == "cooldown"
+        mock_send.assert_not_called()
+
+    def test_sends_after_cooldown_expires(self) -> None:
+        """Alert outside cooldown (>15 min ago) — email is sent."""
+        import asyncio
+        from datetime import UTC, datetime, timedelta
+
+        from agents.nexus_prime.orchestrator import handle_cloud_run_error
+
+        old_ts = (datetime.now(UTC) - timedelta(minutes=20)).isoformat()
+
+        with (
+            patch(
+                "tools.google_sheets.find_row",
+                return_value={"key": "last_error_alert_ts", "value": old_ts},
+            ),
+            patch("tools.google_sheets.update_row"),
+            patch("tools.bigquery.query_rows", return_value=[]),
+            patch("tools.gmail.send_email", return_value="sent-err-002"),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = asyncio.run(handle_cloud_run_error(self._PROJECT, self._entry()))
+
+        assert result["sent"] is True
+        assert result["suppressed"] is False
+
+    def test_api_spike_rows_appear_in_email_body(self) -> None:
+        """API error spike rows from BQ are included in the email body."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_cloud_run_error
+
+        spike_rows = [
+            {
+                "api_name": "pubsub",
+                "calls": 50,
+                "failures": 44,
+                "error_pct": 88.0,
+                "avg_latency_ms": 310,
+            }
+        ]
+
+        captured: list[str] = []
+
+        def _capture(**kwargs):  # noqa: ANN001, ANN202
+            captured.append(kwargs.get("body", ""))
+            return "sent-err-003"
+
+        with (
+            patch("tools.google_sheets.find_row", return_value=None),
+            patch("tools.google_sheets.append_row"),
+            patch("tools.bigquery.query_rows", return_value=spike_rows),
+            patch("tools.gmail.send_email", side_effect=_capture),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            asyncio.run(handle_cloud_run_error(self._PROJECT, self._entry()))
+
+        assert captured, "send_email was not called"
+        assert "pubsub" in captured[0]
+        assert "88.0%" in captured[0]
+
+    def test_bq_failure_does_not_block_email(self) -> None:
+        """BQ spike query failure is non-fatal — email still sends."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_cloud_run_error
+
+        with (
+            patch("tools.google_sheets.find_row", return_value=None),
+            patch("tools.google_sheets.append_row"),
+            patch(
+                "tools.bigquery.query_rows",
+                side_effect=RuntimeError("BQ unavailable"),
+            ),
+            patch("tools.gmail.send_email", return_value="sent-err-004") as mock_send,
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = asyncio.run(handle_cloud_run_error(self._PROJECT, self._entry()))
+
+        assert result["sent"] is True
+        mock_send.assert_called_once()

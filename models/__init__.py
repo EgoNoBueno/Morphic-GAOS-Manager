@@ -53,7 +53,8 @@ class MessageType(StrEnum):
     INFRA_PROVISION_REJECTED = "INFRA_PROVISION_REJECTED"  # Owner rejected infra change card
     # ── Gmail integration ──────────────────────────────────────────────────
     GMAIL_NOTIFICATION = "GMAIL_NOTIFICATION"  # Gmail watch fired — process historyId (internal)
-    EMAIL_RECEIVED = "EMAIL_RECEIVED"  # Authorized email parsed and ready for routing
+    EMAIL_RECEIVED = "EMAIL_RECEIVED"  # Authorized email parsed and ready for routing    # ── Observability ──────────────────────────────────────────────────────────
+    CLOUD_RUN_ERROR = "CLOUD_RUN_ERROR"  # Cloud Logging sink delivered an ERROR+ log entry
 
 
 # ── A2AMessage ─────────────────────────────────────────────────────────────

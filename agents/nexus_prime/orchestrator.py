@@ -4914,3 +4914,229 @@ Sheet URL: {workbook_url}"""
         "api_calls_24h": api_calls_total,
         "task_id": task_id,
     }
+
+
+# ── handle_cloud_run_error ────────────────────────────────────────────────────
+
+_ERROR_ALERT_COOLDOWN_MINUTES = 15  # minimum gap between alert emails
+
+
+async def handle_cloud_run_error(
+    project_id: str,
+    log_entry: dict[str, Any],
+) -> dict[str, Any]:
+    """Handle a Cloud Logging ERROR+ log entry delivered via Pub/Sub log sink.
+
+    Implements a 15-minute email cooldown stored in System_State (key
+    ``last_error_alert_ts``) to prevent alert storms.  When the cooldown
+    has not elapsed the message is silently ACK'd.  When it has, the
+    function queries ``api_call_log`` for APIs with elevated error rates
+    in the last 30 minutes and emails a combined alert to the owner.
+
+    Args:
+        project_id: Active GAOS project ID.
+        log_entry:  Raw Cloud Logging LogEntry dict decoded from the
+                    Pub/Sub envelope ``message.data`` field.
+
+    Returns:
+        Dict with keys: ``sent`` (bool), ``suppressed`` (bool),
+        ``reason`` (str), ``task_id`` (str).
+    """
+    from config import get_settings
+    from tools.gmail import send_email
+    from tools.google_sheets import append_row, find_row, update_row
+
+    settings = get_settings()
+    task_id = f"cloud-run-error-{log_entry.get('insertId', 'unknown')}"
+
+    # ── 1. Parse log entry ────────────────────────────────────────────────────
+    severity = log_entry.get("severity", "ERROR")
+    timestamp = log_entry.get("timestamp", "")
+    json_payload = log_entry.get("jsonPayload", {})
+    text_payload = log_entry.get("textPayload", "")
+    error_message: str = (
+        json_payload.get("message", "")
+        or json_payload.get("msg", "")
+        or text_payload
+        or "(no message)"
+    )
+    service = log_entry.get("resource", {}).get("labels", {}).get("service_name", "nexus-prime")
+    revision = log_entry.get("resource", {}).get("labels", {}).get("revision_name", "unknown")
+
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"cloud-run-error: received {severity} from {service}/{revision}: {error_message[:120]}",
+        "INFO",
+    )
+
+    # ── 2. Cooldown check ─────────────────────────────────────────────────────
+    try:
+        existing_row = find_row("System_State", "key", "last_error_alert_ts", project_id)
+        last_sent_str: str = existing_row.get("value", "") if existing_row else ""
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"cloud-run-error: cooldown check failed — {exc}",
+            "WARNING",
+        )
+        last_sent_str = ""
+
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    if last_sent_str:
+        try:
+            last_sent = datetime.fromisoformat(last_sent_str)
+            if last_sent.tzinfo is None:
+                last_sent = last_sent.replace(tzinfo=UTC)
+            if now - last_sent < timedelta(minutes=_ERROR_ALERT_COOLDOWN_MINUTES):
+                _log_cloud(
+                    "nexus-prime",
+                    project_id,
+                    "task",
+                    task_id,
+                    (
+                        f"cloud-run-error: suppressed — cooldown active, "
+                        f"last alert {int((now - last_sent).total_seconds() // 60)} min ago"
+                    ),
+                    "INFO",
+                )
+                return {
+                    "sent": False,
+                    "suppressed": True,
+                    "reason": "cooldown",
+                    "task_id": task_id,
+                }
+        except ValueError:
+            pass  # malformed timestamp — proceed with sending
+
+    # ── 3. BQ: API error spikes in last 30 min ────────────────────────────────
+    spike_lines = ""
+    try:
+        from tools.bigquery import query_rows
+
+        _gcp = settings.GCP_PROJECT_ID
+        spike_sql = f"""
+            SELECT
+              api_name,
+              COUNT(*) AS calls,
+              COUNTIF(NOT success) AS failures,
+              ROUND(100.0 * COUNTIF(NOT success) / COUNT(*), 1) AS error_pct,
+              CAST(ROUND(AVG(latency_ms)) AS INT64) AS avg_latency_ms
+            FROM `{_gcp}.aos_logs.api_call_log`
+            WHERE ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 MINUTE)
+              AND project_id = @project_id
+            GROUP BY api_name
+            HAVING COUNTIF(NOT success) > 0
+            ORDER BY failures DESC
+        """
+        spike_rows = query_rows(spike_sql, project_id, params={"project_id": project_id})
+        if spike_rows:
+            spike_lines = "\n".join(
+                f"  ⚠  {r['api_name']:<14} {int(r['calls']):>4} calls  "
+                f"{r['error_pct']}% errors  avg {int(r['avg_latency_ms'])}ms"
+                for r in spike_rows
+            )
+        else:
+            spike_lines = "  (no API errors in last 30 min)"
+    except Exception as exc:
+        spike_lines = f"  (BQ query failed: {exc})"
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"cloud-run-error: BQ spike query failed — {exc}",
+            "WARNING",
+        )
+
+    # ── 4. Compose and send email ─────────────────────────────────────────────
+    recipient = settings.gmail.monitored_address
+    subject = f"[GAOS ALERT] {severity} on {service} — {now.strftime('%Y-%m-%d %H:%M UTC')}"
+    body = (
+        f"GAOS Cloud Run Error Alert\n"
+        f"{'=' * 52}\n\n"
+        f"Service:   {service}\n"
+        f"Revision:  {revision}\n"
+        f"Severity:  {severity}\n"
+        f"Timestamp: {timestamp}\n\n"
+        f"Error Message:\n  {error_message}\n\n"
+        f"{'=' * 52}\n"
+        f"API Error Spikes (last 30 min):\n"
+        f"{spike_lines}\n\n"
+        f"{'=' * 52}\n"
+        f"Cloud Logging:\n"
+        f"  https://console.cloud.google.com/logs/query;"
+        f"query=resource.type%3Dcloud_run_revision%20AND%20"
+        f"resource.labels.service_name%3D{service}%20AND%20severity%3E%3DERROR"
+        f";project={project_id}\n"
+    )
+
+    sent = False
+    sent_id = ""
+    try:
+        sent_id = send_email(
+            project_id=project_id,
+            to=recipient,
+            subject=subject,
+            body=body,
+            from_addr=settings.gmail.sender_address,
+        )
+        sent = True
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"cloud-run-error: alert sent to {recipient} (sent_id={sent_id})",
+            "INFO",
+        )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"cloud-run-error: send_email failed — {exc}",
+            "ERROR",
+        )
+
+    # ── 5. Persist cooldown timestamp ─────────────────────────────────────────
+    try:
+        if existing_row:
+            update_row(
+                "System_State",
+                "last_error_alert_ts",
+                {"value": now.isoformat()},
+                project_id,
+            )
+        else:
+            append_row(
+                "System_State",
+                {"key": "last_error_alert_ts", "value": now.isoformat()},
+                project_id,
+            )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"cloud-run-error: failed to persist cooldown ts — {exc}",
+            "WARNING",
+        )
+
+    return {
+        "sent": sent,
+        "suppressed": False,
+        "sent_id": sent_id,
+        "severity": severity,
+        "service": service,
+        "task_id": task_id,
+    }
