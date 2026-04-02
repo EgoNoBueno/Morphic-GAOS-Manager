@@ -5112,15 +5112,24 @@ async def handle_cloud_run_error(
         existing_row = find_row("System_State", "key", "last_error_alert_ts", project_id)
         last_sent_str: str = existing_row.get("value", "") if existing_row else ""
     except Exception as exc:
+        # Fail closed: if we can't read the cooldown (e.g. Sheets 429), suppress the
+        # alert rather than send it. Sending when Sheets is quota-exhausted creates a
+        # feedback loop: alert email → Gmail watch → history_id Sheet write (429) →
+        # ERROR log → log-sink → cooldown check (429) → sends again → repeat.
         _log_cloud(
             "nexus-prime",
             project_id,
             "task",
             task_id,
-            f"cloud-run-error: cooldown check failed — {exc}",
+            f"cloud-run-error: cooldown check failed — suppressing alert to prevent cascade — {exc}",
             "WARNING",
         )
-        last_sent_str = ""
+        return {
+            "sent": False,
+            "suppressed": True,
+            "reason": "cooldown_check_failed",
+            "task_id": task_id,
+        }
 
     from datetime import UTC, datetime, timedelta
 

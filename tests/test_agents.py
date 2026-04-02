@@ -3564,3 +3564,24 @@ class TestCloudRunError:
 
         assert result["sent"] is True
         mock_send.assert_called_once()
+
+    def test_sheets_cooldown_failure_suppresses_alert(self) -> None:
+        """Sheets 429 on cooldown read must suppress — not send — the alert (Rule 26 fail-closed)."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_cloud_run_error
+
+        with (
+            patch(
+                "tools.google_sheets.find_row",
+                side_effect=RuntimeError("Quota exceeded for sheets API"),
+            ),
+            patch("tools.gmail.send_email") as mock_send,
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = asyncio.run(handle_cloud_run_error(self._PROJECT, self._entry()))
+
+        assert result["sent"] is False
+        assert result["suppressed"] is True
+        assert result["reason"] == "cooldown_check_failed"
+        mock_send.assert_not_called()
