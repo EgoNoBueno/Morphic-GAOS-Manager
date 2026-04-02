@@ -5,6 +5,40 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-04-02T14:45-07:00 — Email Loop Incident + Rule 26
+
+### What happened
+- Sent test email to `dhess@sl10repairtechs.com` with "GAOS" in subject to verify end-to-end pipeline.
+- System replied via `aos@sl10repairtechs.com`. Because `aos@` was in `GMAIL_AUTHORIZED_SENDERS`, the reply landed in the monitored inbox, passed the auth gate, and triggered another reply — infinite loop.
+- Generated ~89,000 Pub/Sub faults, 18 outbound emails, and Cloud Run concurrency exhaustion before manual intervention.
+
+### What was fixed
+- **Secret Manager:** Removed `aos@sl10repairtechs.com` from `GMAIL_AUTHORIZED_SENDERS` (now v5: `dhess@sl10repairtechs.com,denton.hess@gmail.com`).
+- **Pub/Sub backlog:** Ran `gcloud pubsub subscriptions seek --time=now` on all 9 nexus-prime subscriptions to discard queued loop messages.
+- Earlier in session: Shared spreadsheet `1O0GA48SIJtyKPOZku8sV9li71p1KRgbJoTyhfXoooH4` with `nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com` (was causing `init_sheets_client failed` ERROR).
+
+### Files changed
+- `.github/copilot-instructions.md` — Added Rule 26: Outbound-Triggered Inbound Cascade Prevention (3 sub-rules: identity exclusion, per-task caps, time-window flood guard)
+- `config/settings.yaml` — Added `outbound:` block with `max_emails_per_task`, `max_publishes_per_task`, `flood_window_minutes`, `flood_threshold`
+- `Docs/email-comm-plan.md` — Updated step 4 of `process_gmail_notification` logic; added ⚠️ Warning callout for outbound alias in authorized senders
+
+### Infra changes (gcloud only — no code)
+- `GMAIL_AUTHORIZED_SENDERS` secret: v5 created, `aos@` removed
+- All 9 nexus-prime Pub/Sub subscriptions: seeked to current time to flush loop backlog
+
+### Tests
+- No test count change (infra-only + docs + rule change)
+
+### Lesson learned
+> ⚠️ The `GMAIL_AUTHORIZED_SENDERS` secret must never include the outbound alias. The `_own_addresses` code-level check and the secret-level allowlist are both needed — neither alone is sufficient. Defense-in-depth: both must fail simultaneously to produce a loop.
+
+### What's next
+- Implement Rule 26.2 (per-task email counter) and Rule 26.3 (BQ flood guard) in the orchestrator's `send_email` call path
+- Verify `nexus-prime.sub.events` stale URL (`nexus-prime-7bu22bxlda-uc.a.run.app`) — update or delete
+
+
+---
+
 ## 2026-04-02T06:20-07:00 — Crash check + BQ streaming buffer fix
 
 ### What was done

@@ -528,4 +528,89 @@ Pub/Sub message handlers must **never** publish a response that could trigger th
 
 ---
 
-_Last updated: 2026-04-01_
+## 26. Outbound-Triggered Inbound Cascade Prevention
+
+**Rule:** Any action that produces an observable external output (email reply, Pub/Sub publish, webhook call) must be guarded by all three of the following layers. Missing any one layer is a code-review blocker.
+
+> ⚠️ **Lesson learned — 2026-04-02:** A test email sent to the monitored inbox triggered a reply from `aos@sl10repairtechs.com`. Because `aos@` was present in the `GMAIL_AUTHORIZED_SENDERS` secret, it passed the inbound allowlist gate and triggered another reply. The loop generated ~89,000 Pub/Sub faults and 18 unwanted emails before manual intervention. The `_own_addresses` code-level check existed but was bypassed by the configuration gate. The fix: remove the outbound alias from the secret. The rule below prevents any single gate from being sufficient.
+
+### 26.1 Outbound Identity Exclusion — Code AND Config, Not Either/Or
+
+Any inbound channel (Gmail, Pub/Sub, webhook) must reject messages from the system's own outbound identities at **two independent layers**:
+
+1. **Code layer:** The handler must build an `_own_identities` set from all known outbound addresses/IDs (service account email, send-from alias, monitored inbox, OAuth profile) and drop any inbound message whose sender is in that set **before** any allowlist check runs.
+2. **Config layer:** The `GMAIL_AUTHORIZED_SENDERS` secret (and any equivalent allowlist secret) must **never** contain an address that the system sends from. The outbound alias (`aos@...`) and service account emails are permanently excluded.
+
+Neither layer alone is sufficient. If code is the only guard, a misconfigured secret can override it. If config is the only guard, a code regression re-opens the loop.
+
+```python
+# ✅ Correct — code-layer check runs BEFORE authorized_senders check
+_own_identities = {settings.gmail.monitored_address, settings.gmail.sender_address}
+if from_addr in _own_identities:
+    _log_cloud(..., "skipping own outbound address", "WARNING")
+    continue  # ← exits BEFORE reaching the authorized_senders gate
+
+# authorized_senders check comes second — it is a supplementary gate, not the primary one
+if from_addr not in authorized_senders:
+    continue
+```
+
+### 26.2 Per-Task Outbound Action Cap
+
+No single task execution may trigger more than **`settings.outbound.max_emails_per_task`** outbound emails (default: 3) or **`settings.outbound.max_publishes_per_task`** Pub/Sub publishes (default: 10). Counters are local to the task state dict and checked before every outbound call.
+
+```python
+# ✅ Correct — enforce cap before sending
+email_count = state.get("emails_sent_this_task", 0)
+if email_count >= get_settings().outbound.max_emails_per_task:
+    _log_cloud(..., f"outbound cap reached ({email_count}), skipping send", "WARNING")
+    return state
+
+send_email(...)
+state["emails_sent_this_task"] = email_count + 1
+```
+
+If a task legitimately needs to exceed this limit (e.g., a bulk digest job), it must set an explicit override key in state (`allow_bulk_email=True`) documented in its spec entry. This makes the exception visible and reviewable.
+
+### 26.3 Time-Window Flood Guard
+
+Before any outbound email send, check the `api_call_log` BigQuery table for the number of emails sent from this agent in the last **`settings.outbound.flood_window_minutes`** minutes (default: 60). If the count exceeds **`settings.outbound.flood_threshold`** (default: 10), log an ERROR and abort — do not send.
+
+```python
+from tools.bigquery import query_rows
+
+def _check_email_flood(agent_id: str, project_id: str) -> bool:
+    """Return True if within safe outbound limits, False if flood threshold exceeded."""
+    rows = query_rows(
+        f"""
+        SELECT COUNT(*) AS cnt FROM `{project_id}.aos_logs.api_call_log`
+        WHERE agent_id = '{agent_id}'
+          AND tool_name = 'send_email'
+          AND called_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL
+              {get_settings().outbound.flood_window_minutes} MINUTE)
+        """,
+        project_id,
+    )
+    count = rows[0]["cnt"] if rows else 0
+    return count < get_settings().outbound.flood_threshold
+```
+
+This guard is the last line of defense if both 26.1 and 26.2 fail. It is cheap (one BQ read) and catches loops that run across multiple task executions.
+
+### 26.4 Required `settings.yaml` Keys
+
+Add these to `settings.yaml` under a new `outbound:` block. Do not hardcode the values in any source file.
+
+```yaml
+outbound:
+  max_emails_per_task: 3       # Hard cap per single task execution
+  max_publishes_per_task: 10   # Hard cap on Pub/Sub publishes per task
+  flood_window_minutes: 60     # Time window for flood detection
+  flood_threshold: 10          # Max emails in window before abort
+```
+
+**Why three layers?** The 2026-04-02 incident proved that a single configuration gate is insufficient — it can be misconfigured by any contributor who reasonably adds a new address without understanding the loop risk. Defense-in-depth means the system stays safe even when one layer has an error. The three layers are independent: code identity check, per-task counter, and time-window BQ query. All three must fail simultaneously to produce a loop.
+
+---
+
+_Last updated: 2026-04-02_
