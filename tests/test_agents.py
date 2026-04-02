@@ -921,7 +921,7 @@ class TestWebSearch:
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = ddg_payload
 
-        with patch("httpx.get", return_value=mock_resp):
+        with patch("tools.web_search.httpx.get", return_value=mock_resp):
             result = web_search("steel alloy")
 
         assert "Steel is an alloy" in result
@@ -940,7 +940,7 @@ class TestWebSearch:
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = ddg_payload
 
-        with patch("httpx.get", return_value=mock_resp):
+        with patch("tools.web_search.httpx.get", return_value=mock_resp):
             result = web_search("answer to everything")
 
         assert "42" in result
@@ -961,7 +961,7 @@ class TestWebSearch:
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = ddg_payload
 
-        with patch("httpx.get", return_value=mock_resp):
+        with patch("tools.web_search.httpx.get", return_value=mock_resp):
             result = web_search("query")
 
         assert "Topic A" in result
@@ -972,7 +972,7 @@ class TestWebSearch:
 
         from tools.web_search import web_search
 
-        with patch("httpx.get", side_effect=_httpx.TimeoutException("timed out")):
+        with patch("tools.web_search.httpx.get", side_effect=_httpx.TimeoutException("timed out")):
             result = web_search("anything")
 
         assert result == ""
@@ -982,7 +982,7 @@ class TestWebSearch:
 
         from tools.web_search import web_search
 
-        with patch("httpx.get", side_effect=_httpx.ConnectError("refused")):
+        with patch("tools.web_search.httpx.get", side_effect=_httpx.ConnectError("refused")):
             result = web_search("anything")
 
         assert result == ""
@@ -990,7 +990,7 @@ class TestWebSearch:
     def test_empty_query_returns_empty_string(self):
         from tools.web_search import web_search
 
-        with patch("httpx.get") as mock_get:
+        with patch("tools.web_search.httpx.get") as mock_get:
             result = web_search("")
 
         mock_get.assert_not_called()
@@ -1010,7 +1010,7 @@ class TestWebSearch:
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = ddg_payload
 
-        with patch("httpx.get", return_value=mock_resp):
+        with patch("tools.web_search.httpx.get", return_value=mock_resp):
             result = web_search("query", max_results=3)
 
         # Should only include 3 topics

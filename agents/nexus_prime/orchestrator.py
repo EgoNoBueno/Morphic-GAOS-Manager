@@ -2529,7 +2529,7 @@ async def handle_sheets_sync(project_id: str) -> dict[str, Any]:
 
             normalized: list[dict[str, Any]] = []
             for row in raw_rows:
-                normalized_row = {_normalize_header(k): v for k, v in row.items()}
+                normalized_row = {_normalize_header(k): v for k, v in row.items() if k.strip()}
                 normalized_row["synced_at"] = synced_at
                 normalized.append(normalized_row)
 
