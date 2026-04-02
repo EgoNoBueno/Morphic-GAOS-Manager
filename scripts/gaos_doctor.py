@@ -267,7 +267,10 @@ def check_agent_heartbeats() -> None:
             check(f"{agent_id} heartbeat", False, "no heartbeats recorded")
             continue
         last_hb = rows[agent_id]
-        # BigQuery timestamps arrive as datetime; ensure tz-aware
+        # BigQuery may return timestamps as tz-aware datetime, naive datetime,
+        # or ISO-8601 string depending on client version — normalise all three.
+        if isinstance(last_hb, str):
+            last_hb = datetime.fromisoformat(last_hb.replace("Z", "+00:00"))
         if last_hb.tzinfo is None:
             last_hb = last_hb.replace(tzinfo=UTC)
         age_seconds = (now - last_hb).total_seconds()
