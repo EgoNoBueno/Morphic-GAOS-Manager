@@ -148,19 +148,33 @@ class TestPublish:
 class TestEnsureTopicExists:
     @patch("tools.pubsub.pubsub_v1.PublisherClient")
     def test_creates_topic_if_absent(self, mock_cls):
+        """get_topic raises NotFound → create_topic is called once."""
+        from google.api_core.exceptions import NotFound
+
         mock_client = MagicMock()
         mock_cls.return_value = mock_client
+        mock_client.get_topic.side_effect = NotFound("not found")
         ensure_topic_exists("agent/beacon/events")
         mock_client.create_topic.assert_called_once_with(
             request={"name": "projects/test-project/topics/agent.beacon.events"}
         )
 
     @patch("tools.pubsub.pubsub_v1.PublisherClient")
-    def test_idempotent_on_already_exists(self, mock_cls):
-        from google.api_core.exceptions import AlreadyExists
+    def test_no_create_when_topic_exists(self, mock_cls):
+        """get_topic succeeds → create_topic is never called (no API error charged)."""
+        mock_client = MagicMock()
+        mock_cls.return_value = mock_client
+        ensure_topic_exists("agent/beacon/events")  # must not raise
+        mock_client.create_topic.assert_not_called()
+
+    @patch("tools.pubsub.pubsub_v1.PublisherClient")
+    def test_idempotent_on_race_condition(self, mock_cls):
+        """get_topic raises NotFound then create_topic races to AlreadyExists — must not raise."""
+        from google.api_core.exceptions import AlreadyExists, NotFound
 
         mock_client = MagicMock()
         mock_cls.return_value = mock_client
+        mock_client.get_topic.side_effect = NotFound("not found")
         mock_client.create_topic.side_effect = AlreadyExists("exists")
         ensure_topic_exists("agent/beacon/events")  # must not raise
 
@@ -170,7 +184,7 @@ class TestEnsureTopicExists:
 
         mock_client = MagicMock()
         mock_cls.return_value = mock_client
-        mock_client.create_topic.side_effect = PermissionDenied("denied")
+        mock_client.get_topic.side_effect = PermissionDenied("denied")
         with pytest.raises(PubSubAdminError, match="agent.beacon.events"):
             ensure_topic_exists("agent/beacon/events")
 

@@ -123,9 +123,20 @@ def ensure_topic_exists(topic_name: str) -> None:
 
     publisher = pubsub_v1.PublisherClient()
     try:
+        publisher.get_topic(request={"topic": topic})
+        return  # topic already exists — no API error charged
+    except NotFound:
+        pass  # topic missing, fall through to create
+    except Exception as exc:
+        raise PubSubAdminError(
+            f"Cannot check topic '{topic}': {exc}. "
+            "Check that the service account has roles/pubsub.admin."
+        ) from exc
+
+    try:
         publisher.create_topic(request={"name": topic})
     except AlreadyExists:
-        pass  # idempotent — topic already exists
+        pass  # race condition: another instance created it first
     except Exception as exc:
         raise PubSubAdminError(
             f"Cannot create topic '{topic}': {exc}. "
