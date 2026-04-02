@@ -762,3 +762,5 @@ Captured 2026-04-01. Each row is a task category, the planned resolution, and an
 ---
 
 *Last updated: 2026-04-01*
+
+test_api_key = 'AKIAIOSFODNN7EXAMPLE'
