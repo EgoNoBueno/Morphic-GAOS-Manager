@@ -142,6 +142,16 @@ output "nexus_prime_url" {
   value       = google_cloud_run_v2_service.agent["nexus-prime"].uri
 }
 
+# Agent SAs need dataEditor (streaming insert) on the BigQuery dataset so they
+# can write heartbeats, task outcomes, api_call_log, and circuit_breaker_events.
+# dataViewer alone (read-only) causes silent 403s on all insert_row() calls.
+resource "google_project_iam_member" "agent_bq_editor" {
+  for_each = local.agents
+  project  = var.project_id
+  role     = "roles/bigquery.dataEditor"
+  member   = "serviceAccount:${each.value}-sa@${var.project_id}.iam.gserviceaccount.com"
+}
+
 # ── Grafana CEO Dashboard ─────────────────────────────────────────────────────
 # Separate service account for Grafana. Granted BigQuery read-only access so
 # the dashboard can query aos_logs.* tables. No agent credentials are shared.
