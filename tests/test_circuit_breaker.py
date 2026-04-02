@@ -1,6 +1,7 @@
 """tests/test_circuit_breaker.py — Unit tests for tools/circuit_breaker.py"""
 
 import time
+from unittest.mock import patch
 
 import pytest
 
@@ -49,6 +50,19 @@ def load_test_settings(tmp_path):
     yield
     reset_all()
     config._reset_for_testing()
+
+
+@pytest.fixture(autouse=True)
+def suppress_bq_writes():
+    """Prevent _write_cb_event and @tracked from making real BQ calls.
+
+    Circuit breaker tests use very short cooldown windows (0.01 s). Without
+    this patch, real network calls inside _write_cb_event can exceed the
+    cooldown before check() is called, causing timing-sensitive tests to fail.
+    BQ write behaviour is covered in tests/test_api_metrics.py.
+    """
+    with patch("tools.circuit_breaker._write_cb_event"), patch("tools._write_metric"):
+        yield
 
 
 # ── Happy path ────────────────────────────────────────────────────────────────

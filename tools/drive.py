@@ -23,6 +23,7 @@ from googleapiclient.errors import HttpError  # type: ignore[import-untyped]
 from googleapiclient.http import MediaIoBaseUpload  # type: ignore[import-untyped]
 
 from config import get_settings
+from tools import tracked
 
 # ── Error types ──────────────────────────────────────────────────────────────
 
@@ -152,6 +153,7 @@ def _retry_drive(
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
+@tracked("drive")
 def read_file(file_path: str, project_id: str) -> str:
     """
     Read a Markdown file from the Knowledge/ folder tree.
@@ -175,6 +177,7 @@ def read_file(file_path: str, project_id: str) -> str:
     return content.decode("utf-8") if isinstance(content, bytes) else content
 
 
+@tracked("drive")
 def write_file(file_path: str, content: str, project_id: str) -> str:
     """
     Create or overwrite a Markdown file in the Knowledge/ folder tree.
@@ -235,6 +238,7 @@ def write_file(file_path: str, content: str, project_id: str) -> str:
     return result["id"]
 
 
+@tracked("drive")
 def copy_file(source_path: str, dest_path: str, project_id: str) -> str:
     """
     Copy a file within the Knowledge/ tree (used for version archiving).
@@ -274,6 +278,7 @@ def copy_file(source_path: str, dest_path: str, project_id: str) -> str:
     return result["id"]
 
 
+@tracked("drive")
 def list_folder(folder_path: str, project_id: str) -> list[str]:
     """
     Return relative file paths under a Knowledge/ subfolder.
@@ -300,6 +305,7 @@ def list_folder(folder_path: str, project_id: str) -> list[str]:
     return results
 
 
+@tracked("drive")
 def write_playbook(doc: Any, body: str, project_id: str) -> str:
     """
     Write a Playbook Markdown document to Knowledge/playbooks/ in Drive.
@@ -343,6 +349,7 @@ def write_playbook(doc: Any, body: str, project_id: str) -> str:
     return write_file(filename, front_matter + body, project_id)
 
 
+@tracked("drive")
 def move_file(
     source_path: str,
     dest_folder_path: str,

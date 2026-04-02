@@ -18,6 +18,7 @@ import warnings
 from typing import TYPE_CHECKING, Any
 
 from config import get_settings
+from tools import tracked
 
 if TYPE_CHECKING:
     from models import MemoryEntry
@@ -37,6 +38,7 @@ class UnauthorizedMemoryWrite(Exception):
 # ── Layer 2 — Episodic (BigQuery) ─────────────────────────────────────────────
 
 
+@tracked("memory")
 def query_episodic(
     agent_id: str,
     project_id: str,
@@ -86,6 +88,7 @@ def query_episodic(
 # ── Layer 3 — Observation Buffer (Sheets) ────────────────────────────────────
 
 
+@tracked("memory")
 def flush_observations(observations: list[dict[str, Any]], project_id: str) -> None:
     """
     Write buffered observations to the ``Pending_Knowledge`` Sheet tab.
@@ -120,6 +123,7 @@ def flush_observations(observations: list[dict[str, Any]], project_id: str) -> N
 # ── Layer 4 — Semantic Memory (Vertex AI Memory Bank) ────────────────────────
 
 
+@tracked("memory")
 def load_domain_memory(agent_id: str, project_id: str) -> dict[str, Any]:
     """
     Batch-fetch all active memory entries for this agent's domain from the
@@ -219,6 +223,7 @@ def load_domain_memory(agent_id: str, project_id: str) -> dict[str, Any]:
         raise MemoryBankError(f"load_domain_memory failed: {exc}") from exc
 
 
+@tracked("memory")
 def count_active_entries(agent_id: str, project_id: str) -> int:
     """
     Return the number of active Memory Bank entries for this agent.
@@ -258,6 +263,7 @@ def count_active_entries(agent_id: str, project_id: str) -> int:
         raise MemoryBankError(f"count_active_entries failed: {exc}") from exc
 
 
+@tracked("memory")
 def write_approved_memory(entry: MemoryEntry, project_id: str) -> str:
     """
     Write a newly approved memory entry to the Vertex AI Memory Bank.
@@ -290,6 +296,7 @@ def write_approved_memory(entry: MemoryEntry, project_id: str) -> str:
         raise MemoryBankError(f"write_approved_memory failed: {exc}") from exc
 
 
+@tracked("memory")
 def query_memory_bank(
     query: str,
     corpus: str,

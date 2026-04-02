@@ -21,6 +21,8 @@ from typing import Any
 
 import httpx
 
+from tools import tracked
+
 logger = logging.getLogger(__name__)
 
 _SEARCH_URL = "https://www.googleapis.com/customsearch/v1"
@@ -39,6 +41,7 @@ class GoogleSearchError(Exception):
 # ── Core search ──────────────────────────────────────────────────────────────
 
 
+@tracked("google_search")
 def search(
     query: str,
     project_id: str,
@@ -125,6 +128,7 @@ def search(
 # ── Multi-query research ─────────────────────────────────────────────────────
 
 
+@tracked("google_search")
 def research_topic(
     queries: list[str],
     project_id: str,

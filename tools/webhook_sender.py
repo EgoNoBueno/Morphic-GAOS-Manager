@@ -22,6 +22,7 @@ from urllib.parse import quote, urlparse
 import httpx
 
 from config import get_settings
+from tools import tracked
 from tools.secrets import get_secret
 
 # ── Error types ─────────────────────────────────────────────────────────────
@@ -48,6 +49,7 @@ _MAX_RETRIES = 3
 # ── Core function ────────────────────────────────────────────────────────────
 
 
+@tracked("webhook")
 def post_to_webhook(payload: dict, project_id: str) -> None:
     """
     Sign the JSON payload with HMAC-SHA256 and POST it to

@@ -22,6 +22,7 @@ from google.cloud import pubsub_v1
 
 from config import get_settings
 from models import A2AMessage
+from tools import tracked
 
 # ── Error types ────────────────────────────────────────────────────────────
 
@@ -63,6 +64,7 @@ def _topic_path(topic_name: str, project_id: str) -> str:
 # ── Public API ─────────────────────────────────────────────────────────────
 
 
+@tracked("pubsub")
 def publish(topic_name: str, message: A2AMessage) -> str:
     """
     Serialize and publish one A2AMessage to the named topic.
@@ -102,6 +104,7 @@ def publish(topic_name: str, message: A2AMessage) -> str:
         raise PubSubPublishError(f"Failed to publish message to '{topic}': {exc}") from exc
 
 
+@tracked("pubsub")
 def ensure_topic_exists(topic_name: str) -> None:
     """
     Idempotent topic creation. Creates the topic if it does not exist.

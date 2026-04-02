@@ -1,6 +1,6 @@
 """
-scripts/create_staging_tables.py — Run-once idempotent DDL to create the 4 BigQuery
-staging tables used by the Grafana live dashboard sync (Phase 5, Step 8.1).
+scripts/create_staging_tables.py — Run-once idempotent DDL to create the 6 BigQuery
+tables used by the Grafana live dashboard (Phase 5, Step 8.1 + API metrics).
 
 Each table mirrors a Google Sheets control-plane tab. All data columns are
 STRING to avoid schema drift on Sheet column renames. The ``synced_at`` column
@@ -92,6 +92,44 @@ CREATE TABLE IF NOT EXISTS `{project}.aos_logs.staging_pending_knowledge` (
     synced_at   TIMESTAMP
 )""",
     ),
+    (
+        "api_call_log",
+        """\
+CREATE TABLE IF NOT EXISTS `{project}.aos_logs.api_call_log` (
+    ts          TIMESTAMP,
+    api_name    STRING,
+    operation   STRING,
+    caller      STRING,
+    project_id  STRING,
+    success     BOOL,
+    latency_ms  INT64,
+    error_code  STRING,
+    attempts    INT64,
+    tokens_used INT64,
+    model       STRING
+)
+PARTITION BY DATE(ts)
+OPTIONS (
+    partition_expiration_days = 30,
+    description = 'Runtime API call telemetry for GAOS tool layer'
+)""",
+    ),
+    (
+        "circuit_breaker_events",
+        """\
+CREATE TABLE IF NOT EXISTS `{project}.aos_logs.circuit_breaker_events` (
+    ts            TIMESTAMP,
+    agent_id      STRING,
+    resource_key  STRING,
+    old_state     STRING,
+    new_state     STRING
+)
+PARTITION BY DATE(ts)
+OPTIONS (
+    partition_expiration_days = 30,
+    description = 'Circuit breaker state transitions'
+)""",
+    ),
 ]
 
 
@@ -138,7 +176,7 @@ def main() -> None:
     if failed:
         print("One or more tables failed to create. See errors above.")
         sys.exit(1)
-    print("Done. All 4 staging tables are ready in aos_logs.")
+    print(f"Done. All {len(_DDL_STATEMENTS)} tables are ready in aos_logs.")
 
 
 if __name__ == "__main__":

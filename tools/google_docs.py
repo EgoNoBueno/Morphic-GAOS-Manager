@@ -25,6 +25,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from config import get_settings
+from tools import tracked
 
 log = logging.getLogger(__name__)
 
@@ -160,6 +161,7 @@ def _extract_text(doc: dict[str, Any]) -> str:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
+@tracked("google_docs")
 def create_document(
     title: str,
     project_id: str,
@@ -235,6 +237,7 @@ def create_document(
         raise DocsApiError(f"create_document failed for '{title}': {exc}") from exc
 
 
+@tracked("google_docs")
 def read_document(doc_id: str, project_id: str) -> str:
     """
     Read the full plain-text content of a Google Doc.
@@ -267,6 +270,7 @@ def read_document(doc_id: str, project_id: str) -> str:
         raise DocsApiError(f"read_document failed for '{doc_id}': {exc}") from exc
 
 
+@tracked("google_docs")
 def append_content(doc_id: str, content: str, project_id: str) -> None:
     """
     Append text to the end of an existing Google Doc.
@@ -319,6 +323,7 @@ def append_content(doc_id: str, content: str, project_id: str) -> None:
         raise DocsApiError(f"append_content failed for '{doc_id}': {exc}") from exc
 
 
+@tracked("google_docs")
 def list_comments(doc_id: str, project_id: str) -> list[dict[str, Any]]:
     """
     List all comments on a Google Doc via the Drive API.

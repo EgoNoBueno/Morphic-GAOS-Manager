@@ -48,6 +48,19 @@ def load_test_settings(tmp_path):
     config._reset_for_testing()
 
 
+@pytest.fixture(autouse=True)
+def suppress_telemetry():
+    """Prevent @tracked from making real BQ calls during bigquery unit tests.
+
+    The bigquery tests assert on exact call counts of the BQ client. Without
+    this patch the @tracked decorator adds a second insert_rows_json call for
+    each invocation (to write the api_call_log row), breaking those assertions.
+    Telemetry is covered separately in tests/test_api_metrics.py.
+    """
+    with patch("tools._write_metric"):
+        yield
+
+
 # ── _full_table_ref ────────────────────────────────────────────────────────
 
 

@@ -30,6 +30,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from config import get_settings
+from tools import tracked
 
 log = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ def _get_chat_service() -> Any:
 # ── Public API ──────────────────────────────────────────────────────────────
 
 
+@tracked("google_chat")
 def send_message(space_name: str, text: str) -> dict:
     """
     Send a plain-text message to a Google Chat space.
@@ -118,6 +120,7 @@ def send_message(space_name: str, text: str) -> dict:
         ) from exc
 
 
+@tracked("google_chat")
 def send_threaded_reply(space_name: str, thread_key: str, text: str) -> dict:
     """Send a reply that stays inside a specific thread using a developer-chosen thread key.
 
@@ -171,6 +174,7 @@ def send_threaded_reply(space_name: str, thread_key: str, text: str) -> dict:
         ) from exc
 
 
+@tracked("google_chat")
 def send_reply_in_thread(space_name: str, thread_name: str, text: str) -> dict:
     """Send a reply in an existing Chat thread using the server-assigned thread resource name.
 
@@ -227,6 +231,7 @@ def send_reply_in_thread(space_name: str, thread_name: str, text: str) -> dict:
         ) from exc
 
 
+@tracked("google_chat")
 def send_card(space_name: str, card: dict) -> dict:
     """
     Send a Card v2 message to a Chat space.
@@ -258,6 +263,7 @@ def send_card(space_name: str, card: dict) -> dict:
         ) from exc
 
 
+@tracked("google_chat")
 def send_approval_card(
     space_name: str,
     proposal_id: str,
@@ -401,6 +407,7 @@ def send_approval_card(
     return send_card(space_name, card)
 
 
+@tracked("google_chat")
 def send_skill_import_card(
     space_name: str,
     proposal_id: str,
@@ -486,6 +493,7 @@ def send_skill_import_card(
     return send_card(space_name, card)
 
 
+@tracked("google_chat")
 def send_infra_proposal_card(
     space_name: str,
     proposal_id: str,

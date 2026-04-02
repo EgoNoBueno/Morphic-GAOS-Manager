@@ -166,6 +166,33 @@ A single deployment can manage multiple business units or client accounts. Each 
 
 **Infrastructure:** Cloud Run (scale-to-zero) · Cloud Pub/Sub · Secret Manager · BigQuery · Vertex AI · Cloud Scheduler · Google Apps Script
 
+### External APIs & Services
+
+| Category | API / Service | Tool module | Purpose |
+|----------|--------------|-------------|---------|
+| **AI / LLM** | Gemini AI (`google-genai`) | `agents/__init__.py` | LLM inference — FAST_MODEL, DEEP_MODEL |
+| **AI / LLM** | Ollama (local HTTP via loca.lt tunnel) | `agents/__init__.py` | LLM inference — LOCAL_MODEL |
+| **AI / LLM** | Vertex AI Memory Bank | `tools/memory.py` | Semantic memory (RAG corpora) |
+| **AI / LLM** | Vertex AI Search | `tools/vertex_search.py` | Knowledge base search over Drive |
+| **AI / LLM** | Vertex AI RAG (`vertexai.rag`) | `scripts/_create_corpora.py` | Corpus provisioning |
+| **Google Cloud** | Cloud Pub/Sub | `tools/pubsub.py` | Agent-to-agent messaging |
+| **Google Cloud** | BigQuery | `tools/bigquery.py`, `tools/memory.py` | Task outcomes, audit logs, episodic memory |
+| **Google Cloud** | Secret Manager | `tools/secrets.py` | All credentials at runtime |
+| **Google Cloud** | Cloud Run | `main.py` (host) | Serves all 7 agents as HTTP services |
+| **Google Cloud** | Cloud Scheduler | `tools/infra_provision.py` | Scheduled job triggers |
+| **Google Cloud** | Cloud Logging | `agents/__init__.py` | Structured runtime logs |
+| **Google Workspace** | Gmail API | `tools/gmail.py` | Read inbox, send replies, push watch |
+| **Google Workspace** | Google Sheets (`gspread`) | `tools/google_sheets.py` | Approval Gate, task state, logs |
+| **Google Workspace** | Google Drive | `tools/drive.py` | File organization, Knowledge base |
+| **Google Workspace** | Google Docs | `tools/google_docs.py` | Blueprint creation, comment polling |
+| **Google Workspace** | Google Chat | `tools/google_chat.py` | Approval cards (currently deprecated) |
+| **Google Workspace** | Google Custom Search | `tools/google_search.py` | Structured web research for Scout |
+| **Google Workspace** | Apps Script (webhook) | `apps_script/` | Sheet-side approval trigger → Pub/Sub |
+| **Other** | Google ADK (`google.adk`) | `agents/` | Agent framework / LangGraph orchestration |
+| **Other** | Outbound webhook (HMAC-signed HTTP) | `tools/webhook_sender.py` | External notifications |
+| **Other** | Web search | `tools/web_search.py` | Open web research |
+| **Other** | Grafana | `dashboard/grafana/` | Observability dashboard (Cloud Run) |
+
 <div align="center">
 <img src="Docs/assets/Pub-Sub-Message-Flow.png" alt="Pub/Sub Message Flow" width="85%"/>
 </div>

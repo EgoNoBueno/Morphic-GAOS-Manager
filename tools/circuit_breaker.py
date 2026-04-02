@@ -81,6 +81,34 @@ def _get_or_create(
         return _breakers[key]
 
 
+def _write_cb_event(
+    agent_id: str,
+    resource_key: str,
+    old_state: CircuitState,
+    new_state: CircuitState,
+) -> None:
+    """Best-effort BQ write on a circuit breaker state transition. Never raises."""
+    try:
+        from datetime import UTC, datetime
+
+        from tools.bigquery import insert_row
+
+        insert_row(
+            "aos_logs.circuit_breaker_events",
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "agent_id": agent_id,
+                "resource_key": resource_key,
+                "old_state": old_state.name,
+                "new_state": new_state.name,
+            },
+        )
+    except Exception as exc:
+        import logging
+
+        logging.getLogger(__name__).warning("CB event write failed (non-fatal): %s", exc)
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
@@ -132,12 +160,16 @@ def record_success(agent_id: str, resource_key: str) -> None:
         resource_key: The resource that succeeded.
     """
     key = (agent_id, resource_key)
+    old_state: CircuitState | None = None
     with _lock:
         breaker = _breakers.get(key)
         if breaker is not None:
+            old_state = breaker.state
             breaker.state = CircuitState.CLOSED
             breaker.failure_count = 0
             breaker.probe_in_flight = False
+    if old_state is not None and old_state is not CircuitState.CLOSED:
+        _write_cb_event(agent_id, resource_key, old_state, CircuitState.CLOSED)
 
 
 def record_failure(
@@ -162,6 +194,7 @@ def record_failure(
     """
     breaker = _get_or_create(agent_id, resource_key, failure_threshold, cooldown_seconds)
     with _lock:
+        old_state = breaker.state
         breaker.failure_count += 1
         breaker.last_failure_ts = time.monotonic()
         breaker.probe_in_flight = False
@@ -170,7 +203,10 @@ def record_failure(
             or breaker.failure_count >= breaker.failure_threshold
         ):
             breaker.state = CircuitState.OPEN
-        return breaker.state
+        new_state = breaker.state
+    if old_state is not CircuitState.OPEN and new_state is CircuitState.OPEN:
+        _write_cb_event(agent_id, resource_key, old_state, new_state)
+    return new_state
 
 
 def get_state(agent_id: str, resource_key: str) -> CircuitState | None:

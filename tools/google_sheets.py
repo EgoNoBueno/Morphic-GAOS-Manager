@@ -26,6 +26,7 @@ import gspread
 import gspread.exceptions
 
 from config import get_settings
+from tools import tracked
 
 # ── Error types ────────────────────────────────────────────────────────────
 
@@ -155,6 +156,7 @@ def _col_index(ws: gspread.Worksheet, header: str) -> int:
 # ── Initialisation ─────────────────────────────────────────────────────────
 
 
+@tracked("google_sheets")
 def init_sheets_client(project_id: str) -> None:
     """
     Authenticate gspread via Application Default Credentials (ADC) and open
@@ -209,6 +211,7 @@ def init_sheets_client(project_id: str) -> None:
 # ── Core functions ─────────────────────────────────────────────────────────
 
 
+@tracked("google_sheets")
 def append_row(tab: str, row: dict[str, Any], project_id: str) -> None:
     """
     Append one row to the named Sheet tab.
@@ -222,6 +225,7 @@ def append_row(tab: str, row: dict[str, Any], project_id: str) -> None:
     batch_append_rows(tab, [row], project_id)
 
 
+@tracked("google_sheets")
 def batch_append_rows(tab: str, rows: list[dict[str, Any]], project_id: str) -> None:
     """
     Insert multiple rows immediately below the header row (row 2) so the newest
@@ -257,6 +261,7 @@ def batch_append_rows(tab: str, rows: list[dict[str, Any]], project_id: str) -> 
         raise SheetsWriteError(f"Write to '{tab}' failed: {exc}") from exc
 
 
+@tracked("google_sheets")
 def get_all_records(tab: str, project_id: str) -> list[dict[str, Any]]:
     """
     Return all rows in a tab as a list of dicts keyed by the header row.
@@ -274,6 +279,7 @@ def get_all_records(tab: str, project_id: str) -> list[dict[str, Any]]:
         raise SheetsReadError(f"Read from '{tab}' failed: {exc}") from exc
 
 
+@tracked("google_sheets")
 def read_range(tab: str, a1_range: str, project_id: str) -> list[list[Any]]:
     """
     Return raw cell values for an A1-notation range (e.g. "A2:D50").
@@ -293,6 +299,7 @@ def read_range(tab: str, a1_range: str, project_id: str) -> list[list[Any]]:
         raise SheetsReadError(f"Range read '{full_range}' failed: {exc}") from exc
 
 
+@tracked("google_sheets")
 def update_row(tab: str, row_index: int | str, updates: dict[str, Any], project_id: str) -> None:
     """
     Update specific columns in an existing row.
@@ -343,6 +350,7 @@ def update_row(tab: str, row_index: int | str, updates: dict[str, Any], project_
         raise SheetsWriteError(f"Row update on '{tab}' row {row_index} failed: {exc}") from exc
 
 
+@tracked("google_sheets")
 def find_row(tab: str, column: str, value: str, project_id: str) -> dict[str, Any] | None:
     """
     Return the first row where `column` equals `value`, as a dict.
@@ -358,6 +366,7 @@ def find_row(tab: str, column: str, value: str, project_id: str) -> dict[str, An
     return None
 
 
+@tracked("google_sheets")
 def find_rows(tab: str, column: str, value: str, project_id: str) -> list[dict[str, Any]]:
     """
     Return all rows where `column` equals `value`. Returns empty list if none match.
@@ -366,6 +375,7 @@ def find_rows(tab: str, column: str, value: str, project_id: str) -> list[dict[s
     return [r for r in records if str(r.get(column, "")) == value]
 
 
+@tracked("google_sheets")
 def get_all_records_with_row_numbers(tab: str, project_id: str) -> list[tuple[int, dict[str, Any]]]:
     """
     Return all data rows as (sheet_row_number, record) pairs.
@@ -398,6 +408,7 @@ def get_all_records_with_row_numbers(tab: str, project_id: str) -> list[tuple[in
     return result
 
 
+@tracked("google_sheets")
 def delete_rows(tab: str, row_numbers: list[int], project_id: str) -> None:
     """
     Delete specific rows from a tab by their 1-based sheet row numbers.

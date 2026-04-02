@@ -13,6 +13,8 @@ from __future__ import annotations
 from google.api_core.exceptions import NotFound, PermissionDenied
 from google.cloud import secretmanager
 
+from tools import tracked
+
 # ── Error types ────────────────────────────────────────────────────────────
 
 
@@ -31,6 +33,7 @@ class SecretManagerError(Exception):
 # ── Public API ─────────────────────────────────────────────────────────────
 
 
+@tracked("secret_manager")
 def get_secret(secret_id: str, project_id: str) -> str:
     """
     Retrieve the latest version of a secret from Google Secret Manager.

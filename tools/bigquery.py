@@ -20,6 +20,7 @@ from google.api_core.exceptions import GoogleAPICallError, RetryError
 from google.cloud import bigquery
 
 from config import get_settings
+from tools import tracked
 
 # ── Error types ──────────────────────────────────────────────────────────────
 
@@ -54,6 +55,7 @@ def _full_table_ref(table_ref: str, gcp_project: str) -> str:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
+@tracked("bigquery")
 def insert_row(table_ref: str, row: dict[str, Any], project_id: str = "") -> None:
     """
     Stream one row into a BigQuery table.
@@ -91,6 +93,7 @@ def insert_row(table_ref: str, row: dict[str, Any], project_id: str = "") -> Non
         raise BigQueryInsertError(f"BigQuery insert into '{full_ref}' failed: {exc}") from exc
 
 
+@tracked("bigquery")
 def insert_rows(
     table_ref: str,
     rows: list[dict[str, Any]],
@@ -142,6 +145,7 @@ def insert_rows(
         raise BigQueryInsertError(f"BigQuery batch insert into '{full_ref}' failed: {exc}") from exc
 
 
+@tracked("bigquery")
 def replace_rows(
     table_ref: str,
     rows: list[dict[str, Any]],
@@ -188,6 +192,7 @@ def replace_rows(
     insert_rows(table_ref, rows, project_id=project_id)
 
 
+@tracked("bigquery")
 def query_rows(
     sql: str,
     project_id: str = "",

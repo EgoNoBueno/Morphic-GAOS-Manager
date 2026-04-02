@@ -5,9 +5,67 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
-## 2026-04-01T12:00-03:00 — GAOS-Deploy-Spec.md audit and overhaul
+## 2026-04-01T23:21-03:00 — API Metrics Telemetry — Full Build Complete
 
 ### What was done
+Built complete API metrics observability system across two sessions (resumed from "switched models — continue").
+
+**New infrastructure (`tools/__init__.py`):**
+- `record_api_call()` context manager — wraps any tool call and writes to `aos_logs.api_call_log`
+- `tracked(api_name)` decorator — instruments a public tool function via `record_api_call`; extracts `project_id` from call arguments using `inspect.signature.bind()`
+- `set_caller()` / `get_caller()` thread-locals — pass caller identity from agent into telemetry rows
+- Thread-local recursion guard (`_tls.in_metrics_write`) — prevents `insert_row → @tracked → insert_row` infinite loop
+- `_write_metric()` private helper — best-effort BQ write, swallows all exceptions
+
+**Instrumented 58 public functions across 12 tool files:**
+`bigquery`, `drive`, `gmail`, `google_chat`, `google_docs`, `google_search`, `google_sheets`, `memory`, `pubsub`, `secrets`, `vertex_search`, `webhook_sender` — each got `from tools import tracked` import and `@tracked("api_name")` on every public function.
+
+**LLM instrumentation (`agents/__init__.py`):**
+- `_call_model()` now wraps both Ollama and Gemini dispatch in `record_api_call`
+- `ctx["tokens_used"]` and `ctx["model"]` set from `ModelResponse` after dispatch
+
+**Circuit Breaker → BQ events (`tools/circuit_breaker.py`):**
+- Added `_write_cb_event()` private helper (deferred import of `tools.bigquery.insert_row`)
+- `record_failure()` and `record_success()` capture `old_state` before mutation, write BQ event on CLOSED/HALF_OPEN→OPEN and OPEN/HALF_OPEN→CLOSED transitions
+
+**Grafana dashboard (`dashboard/grafana/dashboards/ceo-overview.json`):**
+- Panel 1 (Agent Status): added `mins_since_heartbeat` column with yellow≥5 / red≥15 threshold coloring
+- Panel 2 (duplicate Approval Queue): removed
+- Panel 20: Gmail Watch — Mins Until Expiry (stat, queries `api_call_log`)
+- Panel 21: Circuit Breakers — Open Count (stat, queries `circuit_breaker_events`)
+- Panel 22: API Health 24h / 7d / All-Time (table, `api_call_log`)
+- Panel 23: API Calls — Success vs Failure bar chart (stacked, last 24h)
+- Panel 24: Circuit Breaker Events last 50 (table with state color-coding)
+
+**DDL (`scripts/create_staging_tables.py`):** Added `api_call_log` (10 cols) and `circuit_breaker_events` (5 cols) DDL statements.
+
+**Tests (`tests/test_api_metrics.py`):** 12 new tests — `TestRecordApiCallContextManager` (5), `TestRecursionGuard` (1), `TestTrackedDecorator` (3), `TestCircuitBreakerBqEvents` (3).
+
+### Files changed
+- `tools/__init__.py` — NEW `record_api_call`, `tracked`, `set_caller`, `get_caller`, `_write_metric`; Callable return type annotations
+- `tools/bigquery.py` — `@tracked("bigquery")` on 4 functions (import fix: merged `get_settingsfrom tools` → split)
+- `tools/circuit_breaker.py` — `_write_cb_event` + `record_failure`/`record_success` transition writes
+- `tools/drive.py`, `gmail.py`, `google_chat.py`, `google_docs.py`, `google_search.py`, `google_sheets.py`, `memory.py`, `pubsub.py`, `secrets.py`, `vertex_search.py`, `webhook_sender.py` — `@tracked` on all public functions; import/decorator merge fixes applied to `drive.py`, `google_chat.py`, `google_docs.py`, `google_sheets.py`, `memory.py`
+- `agents/__init__.py` — `_call_model` wrapped in `record_api_call`
+- `dashboard/grafana/dashboards/ceo-overview.json` — Panels 1 updated, 2 removed, 20-24 added
+- `scripts/create_staging_tables.py` — 2 new DDL statements
+- `tests/test_api_metrics.py` — NEW (12 tests)
+- `tests/test_bigquery.py` — `suppress_telemetry` autouse fixture added
+- `tests/test_circuit_breaker.py` — `suppress_bq_writes` autouse fixture added
+
+### Lessons learned
+**`multi_replace_string_in_file` can silently strip `\n` between adjacent replacements in the same file.** When batch-inserting two adjacent blocks, the newline between them may be dropped. Symptom: `from config import get_settingsfrom tools import tracked` on one line; `@tracked("drive")def read_file(` on one line. Affected 12 files. Fix: always run `Select-String '@tracked\("..."\)def '` and `Select-String 'get_settingsfrom'` against all modified files before running tests.
+
+**Circuit breaker timing tests require BQ writes to be mocked.** `_write_cb_event` makes real network calls (even if they fail, they take time). CB tests use 10ms cooldowns — real BQ call latency easily exceeds this. Fix: `suppress_bq_writes` autouse fixture patches both `_write_cb_event` and `_write_metric`.
+
+**`@tracked` on `insert_row` causes double BQ client calls in unit tests.** Existing `test_bigquery.py` tests assert `insert_rows_json.call_count == 1`. With `@tracked`, the decorator writes a telemetry row after every call. Fix: `suppress_telemetry` autouse fixture patches `tools._write_metric` so bigquery tests remain isolated.
+
+### What's next
+- Run `scripts/create_staging_tables.py` in production to create `api_call_log` and `circuit_breaker_events` tables
+- Import updated Grafana dashboard JSON
+- Phase 4 exit criteria review
+
+
 - **Full deployability audit of GAOS-Deploy-Spec.md:** Reviewed the entire document (~2,100 lines) against the question "can a new user build this system from scratch using only this document?"
 - **4 critical blockers fixed:**
   - Added `Copy-Item config\settings.yaml.template config\settings.yaml` to §0.3 (was missing entirely)

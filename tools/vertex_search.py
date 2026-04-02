@@ -17,6 +17,7 @@ import logging
 from typing import Any
 
 from config import get_settings
+from tools import tracked
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,7 @@ def _extract_result(result: Any) -> dict[str, Any]:
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
+@tracked("vertex_search")
 def search_knowledge(
     query: str,
     project_id: str,
@@ -125,6 +127,7 @@ def search_knowledge(
         raise VertexSearchError(f"search_knowledge failed: {exc}") from exc
 
 
+@tracked("vertex_search")
 def query_playbooks(
     query: str,
     project_id: str,
@@ -152,6 +155,7 @@ def query_playbooks(
     return search_knowledge(query, project_id, ds_id, max_results)
 
 
+@tracked("vertex_search")
 def query_domain_knowledge(
     query: str,
     project_id: str,

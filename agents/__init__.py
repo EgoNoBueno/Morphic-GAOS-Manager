@@ -190,6 +190,7 @@ def _call_model(
         ModelResponse with text, rough cost_usd, and parsed data dict.
     """
     from config import get_settings
+    from tools import get_caller, record_api_call
 
     settings = get_settings()
 
@@ -200,16 +201,27 @@ def _call_model(
         if snippets:
             prompt = f"Web search results for context:\n{snippets}\n\n---\n\n{prompt}"
 
-    if model.startswith("ollama/"):
-        if image_bytes is not None:
-            logger.warning(
-                "image_bytes provided for Ollama model '%s' — multimodal is not supported "
-                "for local models. The image will be ignored.",
-                model,
-            )
-        return _call_model_ollama(prompt, model, system_prompt, parse_json, settings)
+    api_name = "ollama" if model.startswith("ollama/") else "gemini"
+    caller = get_caller()
+    pid = settings.GCP_PROJECT_ID
 
-    return _call_model_gemini(prompt, model, system_prompt, parse_json, settings, image_bytes)
+    with record_api_call(api_name, "_call_model", caller, pid) as ctx:
+        if model.startswith("ollama/"):
+            if image_bytes is not None:
+                logger.warning(
+                    "image_bytes provided for Ollama model '%s' — multimodal is not supported "
+                    "for local models. The image will be ignored.",
+                    model,
+                )
+            resp = _call_model_ollama(prompt, model, system_prompt, parse_json, settings)
+        else:
+            resp = _call_model_gemini(
+                prompt, model, system_prompt, parse_json, settings, image_bytes
+            )
+        ctx["tokens_used"] = resp.tokens_used
+        ctx["model"] = model
+
+    return resp
 
 
 def _call_model_ollama(

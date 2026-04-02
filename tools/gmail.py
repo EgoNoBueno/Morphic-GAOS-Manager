@@ -25,6 +25,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from tools import tracked
 from tools.secrets import SecretNotFoundError, get_secret
 
 _gmail_log = logging.getLogger(__name__)
@@ -138,6 +139,7 @@ def _parse_headers(headers: list[dict]) -> dict[str, str]:
 # ── Public API ─────────────────────────────────────────────────────────────
 
 
+@tracked("gmail")
 def get_gmail_service(project_id: str) -> Any:
     """
     Build and return an authenticated Gmail API service object.
@@ -165,6 +167,7 @@ def get_gmail_service(project_id: str) -> Any:
         raise GmailAuthError(f"Failed to build Gmail service: {exc}") from exc
 
 
+@tracked("gmail")
 def fetch_new_messages(
     project_id: str,
     history_id: str,
@@ -282,6 +285,7 @@ def fetch_new_messages(
     return messages, new_history_id, skipped_ids
 
 
+@tracked("gmail")
 def get_thread_context(
     project_id: str,
     thread_id: str,
@@ -345,6 +349,7 @@ def get_thread_context(
     return result
 
 
+@tracked("gmail")
 def mark_as_read(project_id: str, message_id: str) -> None:
     """
     Remove the UNREAD label from a Gmail message.
@@ -378,6 +383,7 @@ def mark_as_read(project_id: str, message_id: str) -> None:
         raise GmailAPIError(f"Unexpected error in mark_as_read for {message_id}: {exc}") from exc
 
 
+@tracked("gmail")
 def send_email(
     project_id: str,
     to: str,
@@ -442,6 +448,7 @@ def send_email(
         raise GmailAPIError(f"Unexpected error in send_email to {to!r}: {exc}") from exc
 
 
+@tracked("gmail")
 def setup_watch(project_id: str, topic_name: str, label_id: str) -> tuple[str, str]:
     """
     Register or renew a Gmail push watch for the given label.
