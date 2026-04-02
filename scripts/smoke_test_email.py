@@ -37,6 +37,7 @@ import base64
 import datetime
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -58,8 +59,6 @@ _ENV_PATH = _REPO_ROOT / ".env"
 
 def _load_dotenv() -> None:
     """Load key=value pairs from .env into os.environ (no-op if file absent)."""
-    import os
-
     if not _ENV_PATH.exists():
         return
     with open(_ENV_PATH, encoding="utf-8") as fh:
@@ -106,8 +105,6 @@ def _resolve_url(explicit: str | None, settings: dict) -> str:
     Raises:
         SystemExit: If the URL cannot be determined by any method.
     """
-    import os
-
     url = explicit or os.environ.get("CLOUD_RUN_URL", "").strip()
     if url:
         return url.rstrip("/")
@@ -164,7 +161,13 @@ def _get_id_token(audience: str, project_id: str = "") -> str:
          with user ADC from ``gcloud auth application-default login``.
 
     Args:
-        audience: The Cloud Run service URL used as the token audience.
+        audience:   The Cloud Run service URL used as the token audience.
+        project_id: GCP project ID used for service account impersonation in
+                    the ``gcloud auth print-identity-token`` fallback path.
+                    When non-empty and ADC resolves to a user credential,
+                    the ``--impersonate-service-account`` flag is set to
+                    ``nexus-prime-sa@<project_id>.iam.gserviceaccount.com``.
+                    Defaults to ``""`` (no impersonation).
 
     Returns:
         A signed JWT string.
@@ -183,11 +186,18 @@ def _get_id_token(audience: str, project_id: str = "") -> str:
 
     import platform
 
-    gcloud_cmd = (
-        r"C:\Program Files (x86)\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd"
-        if platform.system() == "Windows"
-        else "gcloud"
-    )
+    # Probe PATH for the gcloud executable rather than relying on a hardcoded path.
+    # On Windows prefer "gcloud.cmd" (the shim installed by Cloud SDK); fall back
+    # to "gcloud" (works when the SDK bin dir is on PATH without the .cmd extension).
+    if platform.system() == "Windows":
+        gcloud_cmd = shutil.which("gcloud.cmd") or shutil.which("gcloud")
+    else:
+        gcloud_cmd = shutil.which("gcloud")
+    if not gcloud_cmd:
+        raise RuntimeError(
+            "gcloud executable not found on PATH. "
+            "Install the Google Cloud SDK and ensure its bin directory is on PATH."
+        )
     sa = (
         os.getenv("SERVICE_ACCOUNT_EMAIL") or f"nexus-prime-sa@{project_id}.iam.gserviceaccount.com"
     )
@@ -299,7 +309,12 @@ def _build_pubsub_payload(monitored_address: str, history_id: str, project_id: s
 
     Args:
         monitored_address: The Gmail address being watched.
-        history_id: The historyId value Gmail would include in the push.
+        history_id:        The historyId value Gmail would include in the push.
+        project_id:        GCP project ID used to construct the Pub/Sub
+                           subscription path in the payload.  When empty,
+                           falls back to ``GMAIL_SUBSCRIPTION`` env var or the
+                           hard-coded ``morphic-gaos-prod`` default.
+                           Defaults to ``""``.
 
     Returns:
         A dict in Pub/Sub push message format.

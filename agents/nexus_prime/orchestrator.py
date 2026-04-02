@@ -2487,6 +2487,34 @@ def _normalize_header(header: str) -> str:
     return header.strip().lower().replace(" ", "_").replace("/", "_")
 
 
+def _redact_sender(sender: str) -> str:
+    """Return a privacy-safe token for a sender address suitable for logging.
+
+    Keeps the domain portion and replaces the local-part with ``***`` so logs
+    remain useful for debugging (domain identifies the organisation) without
+    exposing the individual's address.
+
+    Examples::
+
+        _redact_sender("alice@example.com")  # → "***@example.com"
+        _redact_sender("badformat")            # → "***"
+
+    Args:
+        sender: Raw sender string (may include display name + angle-bracket addr).
+
+    Returns:
+        Redacted string safe for structured log messages.
+    """
+    # Strip optional display name: "Alice <alice@example.com>" → "alice@example.com"
+    addr = sender.strip()
+    if "<" in addr and addr.endswith(">"):
+        addr = addr[addr.index("<") + 1 : -1].strip()
+    if "@" in addr:
+        _, domain = addr.split("@", 1)
+        return f"***@{domain}"
+    return "***"
+
+
 async def handle_sheets_sync(project_id: str) -> dict[str, Any]:
     """Sync 4 operational Sheet tabs to BigQuery staging tables for Grafana.
 
@@ -4285,8 +4313,8 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
                 project_id,
                 "task",
                 task_id,
-                f"process_gmail: subject keyword '{settings.gmail.trigger_keyword}' not found "
-                f"in subject '{subject}' from {from_addr} — skipping",
+                f"process_gmail: subject keyword gate rejected message_id={message_id} "
+                f"from {_redact_sender(from_addr)} — skipping",
                 "INFO",
             )
             skipped += 1
