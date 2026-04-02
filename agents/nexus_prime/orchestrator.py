@@ -4558,16 +4558,17 @@ async def handle_daily_digest(project_id: str) -> dict[str, Any]:
       3. Read Logs tab — count 24 h task activity by agent
       4. Read Error Logs tab — count 24 h errors
       5. Read Agent_Approvals tab — count pending proposals
-      6. Compose plain-text digest using FAST_MODEL
-      7. Send email to the configured monitored_address
-      8. Return summary dict
+      6. Query BQ api_call_log — 24 h API performance stats (calls, errors, latency, tokens)
+      7. Compose plain-text digest using FAST_MODEL
+      8. Send email to the configured monitored_address
+      9. Return summary dict
 
     Args:
         project_id: Active GAOS project ID.
 
     Returns:
         Dict with counts and send status: emails_24h, errors_24h, logs_24h,
-        pending_approvals, sent_to, task_id.
+        pending_approvals, api_calls_24h, sent_to, task_id.
     """
     from datetime import datetime, timedelta
 
@@ -4728,7 +4729,44 @@ async def handle_daily_digest(project_id: str) -> dict[str, Any]:
             "WARNING",
         )
 
-    # ── 6. Compose digest with FAST_MODEL ─────────────────────────────────────
+    # ── 6. BQ api_call_log — API performance stats (last 24 h) ──────────────────
+    api_stats: list[dict] = []
+    api_calls_total = 0
+    api_errors_total = 0
+    api_tokens_total = 0
+    try:
+        from tools.bigquery import query_rows
+
+        _gcp = settings.GCP_PROJECT_ID
+        _api_sql = f"""
+            SELECT
+              api_name,
+              COUNT(*) AS calls,
+              COUNTIF(success) AS successes,
+              COUNT(*) - COUNTIF(success) AS failures,
+              CAST(ROUND(AVG(latency_ms)) AS INT64) AS avg_latency_ms,
+              SUM(COALESCE(tokens_used, 0)) AS tokens_used
+            FROM `{_gcp}.aos_logs.api_call_log`
+            WHERE ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+              AND project_id = @project_id
+            GROUP BY api_name
+            ORDER BY calls DESC
+        """
+        api_stats = query_rows(_api_sql, project_id, params={"project_id": project_id})
+        api_calls_total = sum(int(r.get("calls", 0)) for r in api_stats)
+        api_errors_total = sum(int(r.get("failures", 0)) for r in api_stats)
+        api_tokens_total = sum(int(r.get("tokens_used", 0)) for r in api_stats)
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"daily-digest: failed to read api_call_log: {exc}",
+            "WARNING",
+        )
+
+    # ── 7. Compose digest with FAST_MODEL ─────────────────────────────────────
     workbook_url = (
         f"https://docs.google.com/spreadsheets/d/{settings.sheet.workbook_id}/edit"
         if settings.sheet.workbook_id
@@ -4750,6 +4788,15 @@ async def handle_daily_digest(project_id: str) -> dict[str, Any]:
         if gmail_watch_expires
         else "Gmail watch: expiry unknown"
     )
+    if api_stats:
+        api_stat_lines = "\n".join(
+            f"  • {r['api_name']:<12} {int(r['calls']):>4} calls  "
+            f"{int(r['successes']) / int(r['calls']) * 100:.0f}% success  "
+            f"avg {int(r['avg_latency_ms'])}ms"
+            for r in api_stats
+        )
+    else:
+        api_stat_lines = "  (no data)"
 
     raw_data = f"""GAOS Daily Digest — {date_str}
 Generated at: {now.strftime("%H:%M UTC")}
@@ -4759,6 +4806,11 @@ Generated at: {now.strftime("%H:%M UTC")}
 Active agents (24 h): {", ".join(sorted(active_agents)) or "none"}
 Agent heartbeats:
 {heartbeat_lines}
+
+=== API PERFORMANCE (24h) ===
+Total calls: {api_calls_total}  |  Errors: {api_errors_total}  |  Tokens: {api_tokens_total:,}
+Per service:
+{api_stat_lines}
 
 === LAST 24-HOUR ACTIVITY ===
 Log entries: {len(logs_24h)}
@@ -4859,5 +4911,6 @@ Sheet URL: {workbook_url}"""
         "emails_replied": emails_replied,
         "emails_pending": emails_pending,
         "pending_approvals": pending_approvals,
+        "api_calls_24h": api_calls_total,
         "task_id": task_id,
     }

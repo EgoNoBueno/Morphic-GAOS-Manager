@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -64,13 +65,20 @@ def _run_oauth_flow(client_secrets_path: Path) -> dict:
     print(f"\n[Step 1] Running OAuth2 flow using: {client_secrets_path}")
     print("         A browser tab will open. Sign in and grant Gmail access.\n")
 
+    # port=0 (random) is unreliable on Windows — use a fixed port so the
+    # redirect URI is stable and the local server is ready before the browser hits it.
+    _PORT = 8085
     try:
         flow = InstalledAppFlow.from_client_secrets_file(
             str(client_secrets_path), scopes=GMAIL_SCOPES
         )
-        creds = flow.run_local_server(port=0)
+        creds = flow.run_local_server(port=_PORT, open_browser=True)
     except Exception as exc:
         print(f"\n[ERROR] OAuth2 flow failed: {exc}\n")
+        print(
+            f"  If you see ERR_CONNECTION_REFUSED, ensure port {_PORT} is not in use:\n"
+            f"    netstat -ano | findstr :{_PORT}\n"
+        )
         sys.exit(1)
 
     if not creds.refresh_token:
@@ -191,6 +199,16 @@ def main() -> None:
     # ── Step 1: OAuth2 flow ───────────────────────────────────────────────────
     cred_dict = _run_oauth_flow(secrets_path)
     cred_json = json.dumps(cred_dict)
+
+    # Write to a recovery file so the token is never lost if the terminal scrollback is gone.
+    # Use os.open with O_CREAT|O_WRONLY|O_TRUNC and mode 0o600 so the file is never
+    # world-readable, even briefly — Path.write_text() would create it with umask defaults.
+    _out_path = Path("oauth_creds_output.json")
+    _fd = os.open(_out_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    with os.fdopen(_fd, "w") as _f:
+        _f.write(cred_json)
+    print(f"\n[Saved] Credentials also written to: {_out_path.resolve()}")
+    print("        Delete this file after storing the secret.\n")
 
     print("\n" + "=" * 60)
     print("[Step 1 OUTPUT] Store this as Secret Manager secret: GMAIL_OAUTH_CREDENTIALS")

@@ -2927,6 +2927,126 @@ class TestDailyDigest:
         mock_send.assert_not_called()
         assert result["sent"] is False
 
+    def test_api_stats_included_in_digest(self):
+        """API PERFORMANCE section appears in email body when query_rows returns data."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_daily_digest
+
+        api_rows = [
+            {
+                "api_name": "gemini",
+                "calls": 40,
+                "successes": 38,
+                "failures": 2,
+                "avg_latency_ms": 312,
+                "tokens_used": 5000,
+            },
+            {
+                "api_name": "gmail",
+                "calls": 10,
+                "successes": 10,
+                "failures": 0,
+                "avg_latency_ms": 145,
+                "tokens_used": 0,
+            },
+        ]
+
+        with (
+            patch(
+                "tools.google_sheets.get_all_records",
+                side_effect=self._patch_sheets(),
+            ),
+            patch("tools.google_sheets.init_sheets_client"),
+            patch("tools.bigquery.query_rows", return_value=api_rows),
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                return_value=self._mock_resp(),
+            ),
+            patch("tools.gmail.send_email", return_value="sent-010"),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = asyncio.run(handle_daily_digest(self._PROJECT_ID))
+
+        assert result["sent"] is True
+        assert result["api_calls_24h"] == 50
+        # Verify the aggregated totals from the two api_rows are summed correctly
+        assert result["api_calls_24h"] == 40 + 10
+
+    def test_api_stats_raw_data_section_present(self):
+        """API PERFORMANCE block is present in raw_data when LLM is bypassed."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_daily_digest
+
+        api_rows = [
+            {
+                "api_name": "bigquery",
+                "calls": 20,
+                "successes": 20,
+                "failures": 0,
+                "avg_latency_ms": 55,
+                "tokens_used": 0,
+            },
+        ]
+
+        captured_body: list[str] = []
+
+        def _capture_send(**kwargs):  # noqa: ANN001, ANN202
+            captured_body.append(kwargs.get("body", ""))
+            return "sent-011"
+
+        with (
+            patch(
+                "tools.google_sheets.get_all_records",
+                side_effect=self._patch_sheets(),
+            ),
+            patch("tools.google_sheets.init_sheets_client"),
+            patch("tools.bigquery.query_rows", return_value=api_rows),
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                side_effect=RuntimeError("timeout"),  # force raw_data fallback
+            ),
+            patch("tools.gmail.send_email", side_effect=_capture_send),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            asyncio.run(handle_daily_digest(self._PROJECT_ID))
+
+        assert captured_body, "send_email was never called"
+        assert "API PERFORMANCE" in captured_body[0]
+        assert "bigquery" in captured_body[0]
+
+    def test_api_stats_bq_failure_degrades_gracefully(self):
+        """BQ query failure logs a warning but digest still sends with zeroed API counts."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_daily_digest
+
+        with (
+            patch(
+                "tools.google_sheets.get_all_records",
+                side_effect=self._patch_sheets(),
+            ),
+            patch("tools.google_sheets.init_sheets_client"),
+            patch(
+                "tools.bigquery.query_rows",
+                side_effect=RuntimeError("BQ unavailable"),
+            ),
+            patch(
+                "agents.nexus_prime.orchestrator._call_model",
+                return_value=self._mock_resp(),
+            ),
+            patch("tools.gmail.send_email", return_value="sent-012"),
+            patch("agents.nexus_prime.orchestrator._log_cloud") as mock_log,
+        ):
+            result = asyncio.run(handle_daily_digest(self._PROJECT_ID))
+
+        assert result["sent"] is True
+        assert result["api_calls_24h"] == 0
+        # Warning must have been logged for the BQ failure
+        warning_calls = [c for c in mock_log.call_args_list if c.args[5] == "WARNING"]
+        assert any("api_call_log" in str(c) for c in warning_calls)
+
 
 # ── Email intent dispatch (_dispatch_task_from_email) ─────────────────────────
 

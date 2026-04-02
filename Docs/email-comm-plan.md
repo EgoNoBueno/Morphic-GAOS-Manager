@@ -119,8 +119,10 @@ EMAIL_RECEIVED     = "EMAIL_RECEIVED"       # Authorized email parsed and ready 
 1. Add `"System_State"` to the `TABS` list.
 2. Add to `HEADERS`:
 ```python
-"System_State": ["key", "value", "updated_at"],
+"System_State": ["key", "value"],
 ```
+
+> ⚠️ **Warning — `updated_at` is NOT a column in `System_State`:** The sheet only has `key`/`value`. Any dict passed to `update_row` or `append_row` on this tab that includes `updated_at` will raise `SheetsWriteError`. Strip it before writing. Discovered 2026-03-31.
 
 **Runtime keys written to this tab:**
 
@@ -128,6 +130,8 @@ EMAIL_RECEIVED     = "EMAIL_RECEIVED"       # Authorized email parsed and ready 
 |-----|-------|---------------|
 | `gmail_last_history_id` | `"12345678"` | Prevents reprocessing already-seen messages |
 | `gmail_watch_expiration` | ISO-8601 datetime | Single source of truth for watch health — tells you exactly when/why the agent went deaf if Cloud Scheduler fails or hits quota |
+
+> ⚠️ **Warning — Seed `gmail_last_history_id` after every watch re-registration:** The orchestrator reads this key to start the delta fetch. If the row is missing or stale, the fallback is the notification's `historyId` and `fetch_new_messages` will return 404s for every message in the Pub/Sub backlog (messages deleted/archived before the slow fetch). After running `renew_gmail_watch.py`, write the returned `historyId` to `System_State` manually or via the `gcloud auth application-default login --scopes=...` path. Discovered 2026-04-02.
 
 ---
 
@@ -247,6 +251,17 @@ Steps performed by this script:
 7. Call `setup_watch()` to register the initial watch and print the expiration datetime
 
 The script is **interactive** and **idempotent** — safe to re-run if a step failed.
+
+> ⚠️ **Warning — ADC `invalid_grant` is a local credentials problem, not a Gmail token problem:** When `renew_gmail_watch.py` (or any local script using Secret Manager) fails with `invalid_grant: Token has been expired or revoked` at step 1/4, it means the **Application Default Credentials** have expired — not the `GMAIL_OAUTH_CREDENTIALS` secret. Fix: `gcloud auth application-default login`. The Gmail OAuth `refresh_token` in Secret Manager is separate and unaffected. Discovered 2026-04-02.
+
+> ⚠️ **Warning — Pub/Sub push subscription requires an OIDC service account to call Cloud Run:** Cloud Run rejects unauthenticated requests with 401. The `gmail-notifications-push` subscription must be configured with `--push-auth-service-account=pubsub-push-sa@<project>.iam.gserviceaccount.com` and that SA must have `roles/run.invoker` on the service. Set it with:
+> ```bash
+> gcloud pubsub subscriptions modify-push-config gmail-notifications-push \
+>   --push-endpoint="https://<service-url>/gmail-webhook" \
+>   --push-auth-service-account="pubsub-push-sa@<project>.iam.gserviceaccount.com" \
+>   --project=<project>
+> ```
+> Without this, every push hits 401 and Pub/Sub floods Cloud Run logs with unauthenticated errors at ~1/second. Discovered 2026-04-02.
 
 ---
 

@@ -12,12 +12,13 @@ import argparse
 import json
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 # Allow imports from the project root (tools/, config/, etc.)
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from config import get_settings
 from tools.secrets import get_secret
@@ -33,8 +34,9 @@ def renew_watch(project_id: str) -> None:
     """
     settings = get_settings()
     topic_name: str = settings.gmail.pubsub_topic
-    label_id: str = settings.gmail.label_id
-    labels: list[str] = [label_id] if label_id else ["INBOX"]
+    # Always watch INBOX — Gmail applies the watch filter before user label rules run,
+    # so custom labels (e.g. Label_6 / GAOS-Tasks) never trigger push for plain inbox mail.
+    labels: list[str] = ["INBOX"]
 
     print(f"[1/4] Loading GMAIL_OAUTH_CREDENTIALS from Secret Manager ({project_id})...")
     token_json = get_secret("GMAIL_OAUTH_CREDENTIALS", project_id)
