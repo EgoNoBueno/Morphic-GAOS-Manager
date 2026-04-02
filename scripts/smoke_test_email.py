@@ -177,7 +177,9 @@ def _get_id_token(audience: str, project_id: str = "") -> str:
     """
     try:
         auth_req = google.auth.transport.requests.Request()
-        return google.oauth2.id_token.fetch_id_token(auth_req, audience)
+        token = google.oauth2.id_token.fetch_id_token(auth_req, audience)
+        if token:
+            return str(token)
     except Exception as e:
         print(
             f"[smoke_test_email] fetch_id_token failed (audience={audience}): {e}",
