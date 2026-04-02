@@ -3492,7 +3492,7 @@ class TestCloudRunError:
 
         from agents.nexus_prime.orchestrator import handle_cloud_run_error
 
-        old_ts = (datetime.now(UTC) - timedelta(minutes=20)).isoformat()
+        old_ts = (datetime.now(UTC) - timedelta(minutes=70)).isoformat()
 
         with (
             patch(

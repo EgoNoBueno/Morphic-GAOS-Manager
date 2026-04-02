@@ -4918,7 +4918,7 @@ Sheet URL: {workbook_url}"""
 
 # ── handle_cloud_run_error ────────────────────────────────────────────────────
 
-_ERROR_ALERT_COOLDOWN_MINUTES = 15  # minimum gap between alert emails
+_ERROR_ALERT_COOLDOWN_MINUTES = 60  # minimum gap between alert emails
 
 
 async def handle_cloud_run_error(
