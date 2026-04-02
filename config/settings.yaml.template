@@ -110,3 +110,11 @@ google_search:
   cx_secret: "GOOGLE_SEARCH_CX"            # Secret Manager key name for the CX (Engine ID)
   max_search_depth: 3               # Maximum recursive query depth per RESEARCH_MANDATE
   max_queries_per_mandate: 15       # Hard cap on total queries per RESEARCH_MANDATE
+
+# Outbound action caps — Rule 26.2 (per-task) and Rule 26.3 (time-window flood guard)
+# These values must not be hardcoded in source files.
+outbound:
+  max_emails_per_task: 3       # Hard cap per single task execution
+  max_publishes_per_task: 10   # Hard cap on Pub/Sub publishes per task
+  flood_window_minutes: 60     # Rolling window for flood detection
+  flood_threshold: 10          # Max emails in window before abort

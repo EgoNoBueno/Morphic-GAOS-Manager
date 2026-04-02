@@ -613,4 +613,77 @@ outbound:
 
 ---
 
+## 27. Push Endpoint Verification Gate — Re-Point Before Enabling
+
+**Rule:** After any Cloud Run redeploy that changes the service URL, **all** of the following must be updated before the service handles live traffic:
+
+1. Every Pub/Sub push subscription pointing at that service
+2. Every Cloud Scheduler job targeting that service
+3. Every Apps Script Script Property containing a Cloud Run URL (`VERTEX_AGENT_ENDPOINT`)
+
+And before enabling a **new** push subscription (or re-enabling an existing one), a synthetic probe request must return HTTP 200 from the current endpoint. Do not assume the URL is live — verify it.
+
+> ⚠️ **Lesson learned — WORKLOG 2026-03-31:** After a nexus-prime redeploy, `nexus-prime.sub.events` continued pointing at the old URL (`nexus-prime-7bu22bxlda-uc.a.run.app`). Pub/Sub delivered silently to a dead endpoint — 404s generated a perpetual retry backlog with no alerts, no consumer-side errors, and no visibility. The subscription appeared healthy in `gcloud pubsub subscriptions list`. The only symptom was messages never being processed.
+
+### 27.1 Post-Deploy Checklist (run after every Cloud Run redeploy)
+
+```powershell
+$PROJECT = "morphic-gaos-prod"
+$SERVICE = "<service-name>"           # e.g. nexus-prime
+$NEW_URL = "<new-cloud-run-url>"      # from: gcloud run services describe $SERVICE ...
+
+# 1. Get current URL (confirm it changed)
+$CURRENT_URL = gcloud run services describe $SERVICE `
+    --project=$PROJECT --region=us-central1 `
+    --format="value(status.url)"
+
+# 2. List all push subscriptions pointing at the old URL and re-point them
+gcloud pubsub subscriptions list `
+    --project=$PROJECT `
+    --filter="pushConfig.pushEndpoint~$SERVICE" `
+    --format="value(name)" | ForEach-Object {
+        gcloud pubsub subscriptions modify-push-config $_ `
+            --push-endpoint="$NEW_URL/pubsub" `
+            --project=$PROJECT
+    }
+
+# 3. List and update Cloud Scheduler jobs targeting the old URL
+gcloud scheduler jobs list `
+    --project=$PROJECT --location=us-central1 `
+    --format="value(name,httpTarget.uri)" |
+    Select-String $SERVICE   # review output; update manually if URI changed
+```
+
+### 27.2 New Push Subscription — Smoke-Test Before Enabling
+
+Before enabling any new or re-created push subscription, send a synthetic probe and confirm 200:
+
+```powershell
+# Confirm the endpoint returns 200 before Pub/Sub starts delivering
+$TOKEN = gcloud auth print-identity-token
+Invoke-WebRequest -Uri "$NEW_URL/health" `
+    -Headers @{ Authorization = "Bearer $TOKEN" } `
+    -Method GET
+```
+
+If the endpoint returns anything other than 200, resolve the deployment issue before creating the push subscription. A push subscription enabled against a non-200 endpoint will immediately begin generating a 401/404 retry storm (see Rule 25, Pattern 2).
+
+### 27.3 Stale URL Detection
+
+Add stale-URL detection to the observability loop. In `scripts/observability_loop.py`, periodically verify that each known push subscription's `pushEndpoint` matches the current Cloud Run URL. Log a WARNING if any mismatch is found.
+
+```python
+# ✅ Correct — verify subscriptions are pointed at current URL
+for sub_name, expected_suffix in _KNOWN_PUSH_SUBS.items():
+    sub = subscriber.get_subscription(request={"subscription": sub_name})
+    endpoint = sub.push_config.push_endpoint
+    if not endpoint.endswith(expected_suffix):
+        _log_cloud("nexus-prime", project_id, "task", task_id,
+                   f"Stale endpoint detected: {sub_name} → {endpoint}", "WARNING")
+```
+
+**Why:** Cloud Run generates a new URL on every service creation (not just every deploy — the hash suffix changes only when the service is deleted and recreated). Subscriptions and schedulers do not update automatically. The stale-URL pattern has appeared twice in the WORKLOG already and will appear again without an automated check.
+
+---
+
 _Last updated: 2026-04-02_

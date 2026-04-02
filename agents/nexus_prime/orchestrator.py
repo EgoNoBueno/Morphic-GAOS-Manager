@@ -3247,6 +3247,34 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
     sender_address: str = settings.gmail.sender_address or None  # type: ignore[assignment]
 
+    # ── Rule 26.2 — per-task email cap ────────────────────────────────────────
+    emails_sent: int = state.get("emails_sent_this_task", 0)  # type: ignore[typeddict-item]
+    if emails_sent >= settings.outbound.max_emails_per_task:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"compose_reply: Rule 26.2 — per-task cap reached ({emails_sent}), skipping send",
+            "WARNING",
+        )
+        return state
+
+    # ── Rule 26.3 — time-window flood guard ───────────────────────────────────
+    if not _check_email_flood(project_id):
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            (
+                f"compose_reply: Rule 26.3 — flood threshold reached in last "
+                f"{settings.outbound.flood_window_minutes} min, skipping send"
+            ),
+            "ERROR",
+        )
+        return state
+
     try:
         sent_id = send_email(
             project_id=project_id,
@@ -3257,6 +3285,7 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             in_reply_to=message_id_header or None,
             from_addr=sender_address,
         )
+        state["emails_sent_this_task"] = emails_sent + 1  # type: ignore[typeddict-item]
     except (GmailAuthError, GmailAPIError) as exc:
         _log_cloud(
             "nexus-prime",
@@ -4914,6 +4943,18 @@ Sheet URL: {workbook_url}"""
             "daily-digest: gmail.monitored_address not configured — digest not sent",
             "WARNING",
         )
+    elif not _check_email_flood(project_id):
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            (
+                f"daily-digest: Rule 26.3 — flood threshold reached in last "
+                f"{settings.outbound.flood_window_minutes} min, digest not sent"
+            ),
+            "ERROR",
+        )
     else:
         try:
             sent_id = send_email(
@@ -4965,6 +5006,54 @@ Sheet URL: {workbook_url}"""
 # ── handle_cloud_run_error ────────────────────────────────────────────────────
 
 _ERROR_ALERT_COOLDOWN_MINUTES = 60  # minimum gap between alert emails
+
+
+def _check_email_flood(project_id: str) -> bool:
+    """Return True if within safe outbound email limits, False if flood threshold exceeded.
+
+    Rule 26.3 guard: queries api_call_log for successful send_email operations from
+    nexus-prime within the configured rolling window and aborts if the count exceeds
+    the flood_threshold. This is the last-resort guard that fires even if the per-task
+    counter (Rule 26.2) and identity exclusion (Rule 26.1) both fail simultaneously.
+
+    Args:
+        project_id: GCP project ID to scope the query.
+
+    Returns:
+        True if safe to send, False if the flood threshold has been reached.
+    """
+    from config import get_settings
+
+    try:
+        from tools.bigquery import query_rows
+
+        settings = get_settings()
+        window = settings.outbound.flood_window_minutes
+        threshold = settings.outbound.flood_threshold
+        gcp = settings.GCP_PROJECT_ID
+        sql = f"""
+            SELECT COUNT(*) AS cnt
+            FROM `{gcp}.aos_logs.api_call_log`
+            WHERE project_id = @project_id
+              AND api_name = 'gmail'
+              AND operation = 'send_email'
+              AND success = TRUE
+              AND ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {window} MINUTE)
+        """
+        rows = query_rows(sql, project_id, params={"project_id": project_id})
+        count = int(rows[0]["cnt"]) if rows else 0
+        return count < threshold
+    except Exception as exc:
+        # BQ query failure is non-fatal — fail open (allow the send) and log
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            "flood-guard",
+            f"_check_email_flood: BQ query failed (failing open) — {exc}",
+            "WARNING",
+        )
+        return True
 
 
 async def handle_cloud_run_error(
@@ -5126,6 +5215,25 @@ async def handle_cloud_run_error(
 
     sent = False
     sent_id = ""
+    # ── Rule 26.3 — time-window flood guard ───────────────────────────────────
+    if not _check_email_flood(project_id):
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            (
+                f"cloud-run-error: Rule 26.3 — flood threshold reached in last "
+                f"{settings.outbound.flood_window_minutes} min, alert suppressed"
+            ),
+            "ERROR",
+        )
+        return {
+            "sent": False,
+            "suppressed": True,
+            "reason": "flood_guard",
+            "task_id": task_id,
+        }
     try:
         sent_id = send_email(
             project_id=project_id,
