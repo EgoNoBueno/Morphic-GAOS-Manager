@@ -33,6 +33,17 @@ projects:
 
 
 @pytest.fixture(autouse=True)
+def _suppress_telemetry_writes():
+    """Override the conftest global suppression.
+
+    test_api_metrics.py tests assert on actual _write_metric invocations and
+    row content, so _write_metric must NOT be no-op'd here.  Each test that
+    needs to capture BQ writes patches tools.bigquery.insert_row directly.
+    """
+    yield
+
+
+@pytest.fixture(autouse=True)
 def load_test_settings(tmp_path):
     cfg = tmp_path / "settings.yaml"
     cfg.write_text(SETTINGS_YAML)

@@ -119,6 +119,21 @@ def _mock_agents_log_cloud():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _suppress_telemetry_writes():
+    """
+    Prevent @tracked tool functions from making real BigQuery API calls during
+    unit tests.  Without this, every tracked tool call attempts an HTTP INSERT
+    to `test-project.aos_logs.api_call_log`, receives a 401 (no credentials in
+    test env), and floods the error log — producing the high "API failure rate"
+    visible in monitoring.  Best-effort telemetry writes are suppressed globally
+    here; individual test files that verify telemetry behaviour patch
+    _write_metric directly.
+    """
+    with patch("tools._write_metric"):
+        yield
+
+
 # ── Shared model-mock helpers ─────────────────────────────────────────────────
 # These centralise the patch-target strings and canonical response shape so
 # that a signature change to _call_model or ModelResponse requires updating
