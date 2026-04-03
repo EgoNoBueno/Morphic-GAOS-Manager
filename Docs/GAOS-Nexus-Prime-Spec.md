@@ -93,7 +93,9 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
 
 ### 3.1 Node Inventory
 
-Nexus-Prime's `StateGraph` has 21 nodes. The router node determines which branch to execute based on message type. Added since original design: `market_watchdog`, `roi_optimizer` (Phase 3 reactive routing), `handle_infra_provision` (Phase 4 InfraProvisioner), `handle_approval_request` (Phase 4 — routes inbound `APPROVAL_REQUEST` messages from domain agents to a Chat card notification), `chat_respond` (conversational DM reply node — routes here from `think()` when `msg_type == CHAT_MESSAGE`).
+Nexus-Prime's `StateGraph` has 22 nodes. Added since original design: `market_watchdog`, `roi_optimizer` (Phase 3 reactive routing), `handle_infra_provision` (Phase 4 InfraProvisioner), `handle_approval_request` (Phase 4 — routes inbound `APPROVAL_REQUEST` messages from domain agents to a Chat card notification), `chat_respond` (conversational DM reply node — routes here from `think()` when `msg_type == CHAT_MESSAGE`), `process_gmail` (Gmail notification handler — triggers push-to-ingest flow), `compose_reply` (email composition node — called on `EMAIL_RECEIVED` to draft and send a reply via `gmail_reply()`).
+
+> **Note:** `route` is a **pure routing function**, not a registered graph node. It is used as the routing function in `graph.add_conditional_edges("monitor", route, {...})`. Do not add it to `add_node()`.
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -115,7 +117,7 @@ Nexus-Prime's `StateGraph` has 21 nodes. The router node determines which branch
 └────────────────────────────────────────────────────────────────┘
 ```
 
-Node abbreviations: diag=diagnose, know=knowledge\_review, init=init\_project, conf=conflict\_resolve, park=park\_or\_broadcast, vision=vision\_blueprint, iter=iterate\_plan, skill=handle\_skill\_request, prop=propose\_gate, prom=promote, notif=notify\_agents, think=think, chat=chat\_respond
+Node abbreviations: diag=diagnose, know=knowledge\_review, init=init\_project, conf=conflict\_resolve, park=park\_or\_broadcast, vision=vision\_blueprint, iter=iterate\_plan, skill=handle\_skill\_request, prop=propose\_gate, prom=promote, notif=notify\_agents, think=think, chat=chat\_respond, pg=process\_gmail, cr=compose\_reply
 
 ### 3.2 Node Definitions
 
@@ -181,41 +183,47 @@ Examines `incoming_message.message_type` and returns the next node name. This is
 
 ```python
 def route(state: NexusPrimeWorkingMemory) -> str:
-    msg = state["incoming_message"]
+    msg = state.get("incoming_message")
     if msg is None:
         return "record"   # TTL sweep or heartbeat with no action needed
 
+    # APPROVAL_RESULT: inline sub-routing so LangGraph receives a node name directly.
+    # (Avoids adding _route_approval as a passthrough node.)
+    if msg.message_type == MessageType.APPROVAL_RESULT:
+        payload = msg.payload or {}
+        status = payload.get("status", "")
+        if status == "Approved":
+            return "promote"
+        if status == "Rejected":
+            return "record"
+        return "park_or_broadcast"
+
     # Keys are MessageType enum members, not raw strings.
     routing_table = {
-        MessageType.STATUS_UPDATE:       "record",           # Log and store; no action
-        MessageType.TASK_COMPLETE:       "record",           # Log and store; no action
-        MessageType.ESCALATION:          "think",            # think → diagnose
-        MessageType.EVOLUTION_REQUEST:   "think",            # think → diagnose
-        MessageType.APPROVAL_RESULT:     "_route_approval",  # Human responded to a proposal
-        MessageType.KNOWLEDGE_CANDIDATE: "think",            # think → knowledge_review
-        MessageType.BROADCAST:           "conflict_resolve", # Cross-domain state conflict
-        MessageType.NEW_PROJECT:         "init_project",     # Project Registry change detected
-        MessageType.VISION_SUBMITTED:    "vision_blueprint", # Owner vision → Blueprint Doc
-        MessageType.PLAN_REVIEW:         "iterate_plan",     # Owner comment on Blueprint
-        MessageType.COMMENT_RECEIVED:    "iterate_plan",     # Doc comment poll found new comment
-        MessageType.SKILL_REQUEST:       "handle_skill_request",  # Agent requests package install approval
-        # ── Phase 3 — Reactive cross-domain routing ────────────────────────────
-        MessageType.STOCK_INSUFFICIENT:  "market_watchdog",       # Foreman stockout → dispatch Scout
-        MessageType.DEAL_CLOSED:         "roi_optimizer",         # Pursuit deal closed → check margin → dispatch Beacon
-        # ── Phase 4 — Approval Gate inbound notifications ──────────────────────
-        MessageType.APPROVAL_REQUEST:    "handle_approval_request",  # Domain agent _park() → send Chat card
+        MessageType.STATUS_UPDATE:            "record",                  # Log and store; no action
+        MessageType.TASK_COMPLETE:            "record",                  # Log and store; no action
+        MessageType.ESCALATION:               "think",                   # think → diagnose
+        MessageType.EVOLUTION_REQUEST:        "think",                   # think → diagnose
+        MessageType.KNOWLEDGE_CANDIDATE:      "think",                   # think → knowledge_review
+        MessageType.CHAT_MESSAGE:             "think",                   # think → chat_respond
+        MessageType.BROADCAST:                "conflict_resolve",        # Cross-domain state conflict
+        MessageType.NEW_PROJECT:              "init_project",            # Project Registry change detected
+        MessageType.VISION_SUBMITTED:         "vision_blueprint",        # Owner vision → Blueprint Doc
+        MessageType.PLAN_REVIEW:              "iterate_plan",            # Owner comment on Blueprint
+        MessageType.COMMENT_RECEIVED:         "iterate_plan",            # Doc comment poll found new comment
+        MessageType.SKILL_REQUEST:            "handle_skill_request",    # Agent requests package install approval
+        # ── Phase 3 — Reactive cross-domain routing ─────────────────────────────────────
+        MessageType.STOCK_INSUFFICIENT:       "market_watchdog",         # Foreman stockout → dispatch Scout
+        MessageType.DEAL_CLOSED:              "roi_optimizer",           # Pursuit deal closed → check margin → dispatch Beacon
+        # ── Phase 4 — Approval Gate + infra notifications ───────────────────────────────
+        MessageType.APPROVAL_REQUEST:         "handle_approval_request", # Domain agent _park() → send Chat card
+        MessageType.INFRA_PROVISION_APPROVED: "handle_infra_provision",  # InfraProvisioner APPLY
+        MessageType.INFRA_PROVISION_REJECTED: "handle_infra_provision",  # InfraProvisioner REJECT
+        # ── Gmail integration ────────────────────────────────────────────────────────────
+        MessageType.GMAIL_NOTIFICATION:       "process_gmail",           # Gmail push → ingest
+        MessageType.EMAIL_RECEIVED:           "compose_reply",           # Parsed email → reply draft
     }
     return routing_table.get(msg.message_type, "record")
-
-# Approval sub-router — called via add_conditional_edges when APPROVAL_RESULT arrives
-def _route_approval(state: NexusPrimeWorkingMemory) -> str:
-    msg = state.get("incoming_message")
-    status = msg.payload.get("status", "") if (msg and msg.payload) else ""
-    if status == "Approved":
-        return "promote"
-    if status == "Rejected":
-        return "record"   # Log rejection; no further action
-    return "park_or_broadcast"
 ```
 
 #### `think`
@@ -224,7 +232,7 @@ def _route_approval(state: NexusPrimeWorkingMemory) -> str:
 
 **Tactical mode trigger:** `incoming_message.priority >= 4`. This overrides any model-selected mode.
 
-**Wiring:** `route` returns `"think"` for `ESCALATION`, `EVOLUTION_REQUEST`, and `KNOWLEDGE_CANDIDATE`. `think` stores `state["_next_node"]` and a `_route_from_think()` sub-router reads it via `add_conditional_edges`.
+**Wiring:** `route` returns `"think"` for `ESCALATION`, `EVOLUTION_REQUEST`, `KNOWLEDGE_CANDIDATE`, and `CHAT_MESSAGE`. `think` stores `state["_next_node"]` and a `_route_from_think()` sub-router reads it via `add_conditional_edges`.
 
 ```python
 def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
@@ -242,6 +250,8 @@ def think(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         next_node = "diagnose"
     elif msg_type == MessageType.KNOWLEDGE_CANDIDATE:
         next_node = "knowledge_review"
+    elif msg_type == MessageType.CHAT_MESSAGE:
+        next_node = "chat_respond"
     else:
         next_node = "record"
     state["_next_node"] = next_node
@@ -1152,81 +1162,91 @@ from langgraph.graph import StateGraph, END
 def build_nexus_prime_graph() -> Any:
     graph = StateGraph(NexusPrimeWorkingMemory)
 
-    graph.add_node("boot",                 boot)
-    graph.add_node("monitor",              monitor)
-    graph.add_node("route",                route)
-    graph.add_node("think",                think)
-    graph.add_node("diagnose",             diagnose)
-    graph.add_node("propose_gate",         propose_gate)
-    graph.add_node("knowledge_review",     knowledge_review)
-    graph.add_node("promote",              promote)
-    graph.add_node("init_project",         init_project)
-    graph.add_node("notify_agents",        notify_agents)
-    graph.add_node("conflict_resolve",     conflict_resolve)
-    graph.add_node("park_or_broadcast",    park_or_broadcast)
-    graph.add_node("record",               record)
-    graph.add_node("vision_blueprint",     vision_blueprint)
-    graph.add_node("iterate_plan",         iterate_plan)
-    graph.add_node("handle_skill_request", handle_skill_request)
-    graph.add_node("market_watchdog",      market_watchdog)   # Phase 3
-    graph.add_node("roi_optimizer",        roi_optimizer)     # Phase 3
-    graph.add_node("handle_infra_provision", _infra_provision_node)  # Phase 4
-    graph.add_node("handle_approval_request", handle_approval_request)  # Phase 4
+    # NOTE: route() is NOT registered as a node — it is a pure routing function
+    # (returns str, not dict) used in add_conditional_edges below.
+    graph.add_node("boot",                    boot)
+    graph.add_node("monitor",                 monitor)
+    graph.add_node("think",                   think)
+    graph.add_node("chat_respond",            chat_respond)
+    graph.add_node("diagnose",                diagnose)
+    graph.add_node("propose_gate",            propose_gate)
+    graph.add_node("knowledge_review",        knowledge_review)
+    graph.add_node("promote",                 promote)
+    graph.add_node("init_project",            init_project)
+    graph.add_node("notify_agents",           notify_agents)
+    graph.add_node("conflict_resolve",        conflict_resolve)
+    graph.add_node("park_or_broadcast",       park_or_broadcast)
+    graph.add_node("record",                  record)
+    graph.add_node("vision_blueprint",        vision_blueprint)
+    graph.add_node("iterate_plan",            iterate_plan)
+    graph.add_node("handle_skill_request",    handle_skill_request)
+    graph.add_node("market_watchdog",         market_watchdog)          # Phase 3
+    graph.add_node("roi_optimizer",           roi_optimizer)            # Phase 3
+    graph.add_node("handle_infra_provision",  _infra_provision_node)   # Phase 4
+    graph.add_node("handle_approval_request", handle_approval_request) # Phase 4
+    graph.add_node("process_gmail",           _process_gmail_node)     # Gmail integration
+    graph.add_node("compose_reply",           compose_reply)           # Gmail integration
 
     graph.set_entry_point("boot")
     graph.add_edge("boot", "monitor")
-    graph.add_edge("monitor", "route")
 
-    # route() returns a node name string for each MessageType
+    # monitor is the source of all conditional edges — route() is a pure routing
+    # function (returns str) and must NOT be registered as a node (nodes must return dict).
     graph.add_conditional_edges(
-        "route",
+        "monitor",
         route,
         {
-            "think":                "think",
-            "diagnose":             "diagnose",
-            "knowledge_review":     "knowledge_review",
-            "init_project":         "init_project",
-            "conflict_resolve":     "conflict_resolve",
-            "promote":              "promote",
-            "park_or_broadcast":    "park_or_broadcast",
-            "record":               "record",
-            "vision_blueprint":     "vision_blueprint",
-            "iterate_plan":         "iterate_plan",
-            "handle_skill_request": "handle_skill_request",
-            "market_watchdog":      "market_watchdog",    # Phase 3
-            "roi_optimizer":        "roi_optimizer",      # Phase 3
-            "handle_infra_provision": "handle_infra_provision",  # Phase 4
-            "handle_approval_request": "handle_approval_request",  # Phase 4
+            "think":                   "think",
+            "diagnose":                "diagnose",
+            "knowledge_review":        "knowledge_review",
+            "init_project":            "init_project",
+            "conflict_resolve":        "conflict_resolve",
+            "promote":                 "promote",
+            "park_or_broadcast":       "park_or_broadcast",
+            "record":                  "record",
+            "vision_blueprint":        "vision_blueprint",
+            "iterate_plan":            "iterate_plan",
+            "handle_skill_request":    "handle_skill_request",
+            "market_watchdog":         "market_watchdog",         # Phase 3
+            "roi_optimizer":           "roi_optimizer",           # Phase 3
+            "handle_infra_provision":  "handle_infra_provision",  # Phase 4
+            "handle_approval_request": "handle_approval_request", # Phase 4
+            "process_gmail":           "process_gmail",           # Gmail integration
+            "compose_reply":           "compose_reply",           # Gmail integration
         },
     )
 
-    # think routes to diagnose, knowledge_review, or record based on message type
+    # think routes to diagnose, knowledge_review, chat_respond, or record
     graph.add_conditional_edges(
         "think",
         _route_from_think,
         {
             "diagnose":         "diagnose",
             "knowledge_review": "knowledge_review",
+            "chat_respond":     "chat_respond",
             "record":           "record",
         },
     )
 
-    graph.add_edge("diagnose",             "propose_gate")
-    graph.add_edge("propose_gate",         "record")
-    graph.add_edge("knowledge_review",     "record")
-    graph.add_edge("promote",              "record")
-    graph.add_edge("init_project",         "notify_agents")
-    graph.add_edge("notify_agents",        "record")
-    graph.add_edge("conflict_resolve",     "record")
-    graph.add_edge("park_or_broadcast",    "record")
-    graph.add_edge("vision_blueprint",     "record")
-    graph.add_edge("iterate_plan",         "record")
-    graph.add_edge("handle_skill_request", "record")
-    graph.add_edge("market_watchdog",       "record")   # Phase 3
-    graph.add_edge("roi_optimizer",         "record")   # Phase 3
-    graph.add_edge("handle_infra_provision", "record")  # Phase 4
-    graph.add_edge("handle_approval_request", "record")  # Phase 4
-    graph.add_edge("record",               END)
+    graph.add_edge("diagnose",                "propose_gate")
+    graph.add_edge("propose_gate",            "record")
+    graph.add_edge("knowledge_review",        "record")
+    graph.add_edge("chat_respond",            "record")
+    graph.add_edge("promote",                 "record")
+    graph.add_edge("init_project",            "notify_agents")
+    graph.add_edge("notify_agents",           "record")
+    graph.add_edge("conflict_resolve",        "record")
+    graph.add_edge("park_or_broadcast",       "record")
+    graph.add_edge("vision_blueprint",        "record")
+    graph.add_edge("iterate_plan",            "record")
+    graph.add_edge("handle_skill_request",    "record")
+    graph.add_edge("market_watchdog",          "record")          # Phase 3
+    graph.add_edge("roi_optimizer",            "record")          # Phase 3
+    graph.add_edge("handle_infra_provision",   "record")          # Phase 4
+    graph.add_edge("handle_approval_request",  "record")          # Phase 4
+    graph.add_edge("process_gmail",            "record")          # Gmail integration
+    graph.add_edge("compose_reply",            "record")          # Gmail integration
+    graph.add_edge("record",                  END)
 
     return graph.compile(checkpointer=MemorySaver())
 ```
@@ -1255,17 +1275,20 @@ These are enforcement rules — not configurable behavior. Each must be verified
 | Node | Model alias | Rationale |
 |------|-------------|----------|
 | `diagnose`, `knowledge_review`, `conflict_resolve` | `DEEP_MODEL` | High-stakes decisions — full reasoning quality required |
-| `record`, `chat_respond` | `LOCAL_MODEL` | Cost optimisation — formatting and conversational replies run on Ollama |
+| `record` | `LOCAL_MODEL` (via `_model_for_node`) | Cost optimisation — status formatting runs on Ollama |
+| `chat_respond` | `LOCAL_MODEL` (direct — bypasses `_model_for_node`) | Conversational replies run on Ollama; `settings.models.LOCAL_MODEL` called directly in the node function |
 | `think`, `propose_gate`, `promote`, and all other nodes | `FAST_MODEL` | Lightweight routing / utility calls |
 
 ```python
-DECISION_NODES = {"diagnose", "knowledge_review", "conflict_resolve"}
-FORMAT_NODES   = {"record", "chat_respond"}  # Both use LOCAL_MODEL
+_DECISION_NODES = {"diagnose", "knowledge_review", "conflict_resolve"}
+_FORMAT_NODES   = {"record"}  # Uses LOCAL_MODEL via _model_for_node
+# Note: chat_respond also uses LOCAL_MODEL but calls settings.models.LOCAL_MODEL
+# directly — it is NOT routed through _model_for_node.
 
 def _model_for_node(node_name: str) -> str:
-    if node_name in DECISION_NODES:
+    if node_name in _DECISION_NODES:
         return settings.models.DEEP_MODEL
-    if node_name in FORMAT_NODES:
+    if node_name in _FORMAT_NODES:
         return settings.models.LOCAL_MODEL
     return settings.models.FAST_MODEL
 ```
@@ -1279,8 +1302,8 @@ def _model_for_node(node_name: str) -> str:
 3. Run two manual DM tests via `chat_emulator.py` and confirm Ollama replies are coherent and within the latency budget (< 8 seconds end-to-end).
 4. In `agents/nexus_prime/orchestrator.py`, in `chat_respond()`, change:
    `model=settings.models.LOCAL_MODEL` → `model=settings.models.FAST_MODEL`
-5. Update this table — move `chat_respond` from `LOCAL_MODEL` row to `FAST_MODEL` row.
-6. Update `FORMAT_NODES` constant above to remove `chat_respond`.
+5. Update this table — move `chat_respond` from the `LOCAL_MODEL (direct)` row to the `FAST_MODEL` row.
+6. `_FORMAT_NODES` requires no change — `chat_respond` was never in this constant (it uses `settings.models.LOCAL_MODEL` directly in the function, not via `_model_for_node`).
 7. Run `pytest --tb=short` — confirm 600/600 pass.
 8. Commit: `fix: restore chat_respond to FAST_MODEL — Ollama tunnel stable`.
 
@@ -1499,7 +1522,7 @@ Run current Nexus-Prime-related tests before claiming Phase 4 complete. Nexus-Pr
 
 | Test | What it verifies |
 |------|-----------------|
-| `test_route_escalate` | `route()` returns `"diagnose"` for `ESCALATE` messages |
+| `test_route_escalate` | `route()` returns `"think"` for `ESCALATION` messages (`think` then routes to `diagnose` via `_route_from_think`) |
 | `test_route_knowledge` | `route()` returns `"knowledge_review"` for `KNOWLEDGE_CANDIDATE` |
 | `test_route_approval_approved` | approval sub-route returns `"promote"` |
 | `test_route_approval_rejected` | approval sub-route returns `"record"` |
