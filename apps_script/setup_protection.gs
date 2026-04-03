@@ -10,13 +10,16 @@
 function setupProtections() {
   const ss = getSpreadsheet_();
   const me = Session.getEffectiveUser();
+  const SA_EMAIL = 'nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com';
 
   // Lock Status column (col I) on Agent_Approvals tab
+  // nexus-prime SA is an explicit editor so it can write Deployed/Needs Revision.
   const approvals = ss.getSheetByName('Agent_Approvals');
   const statusCol = approvals.getRange('I:I');
   const p1 = statusCol.protect().setDescription('Status — owner only');
   p1.removeEditors(p1.getEditors());
   p1.addEditor(me);
+  p1.addEditor(SA_EMAIL);
   p1.setWarningOnly(false);
 
   // Lock entire Authorized Approvers tab
@@ -45,4 +48,26 @@ function setupProtections() {
   p4.setWarningOnly(false);
 
   Logger.log('Protections applied: I (Status), Authorized Approvers tab, H (Code), M (Hash).');
+}
+
+// Run this if setupProtections was already applied and you need to grant
+// the nexus-prime service account write access to the Status column.
+// Safe to run multiple times — addEditor is idempotent.
+function patchStatusProtectionForSA() {
+  const SA_EMAIL = 'nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com';
+  const ss = getSpreadsheet_();
+  const approvals = ss.getSheetByName('Agent_Approvals');
+  const protections = approvals.getProtections(SpreadsheetApp.ProtectionType.RANGE);
+
+  let patched = false;
+  for (const p of protections) {
+    if (p.getDescription() === 'Status — owner only') {
+      p.addEditor(SA_EMAIL);
+      Logger.log('Patched: added ' + SA_EMAIL + ' to Status column protection.');
+      patched = true;
+    }
+  }
+  if (!patched) {
+    Logger.log('No protection with description "Status — owner only" found. Run setupProtections first.');
+  }
 }
