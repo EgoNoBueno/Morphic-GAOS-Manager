@@ -1143,7 +1143,7 @@ projects:
 models:
   LOCAL_MODEL: "ollama/llama3"
   LOCAL_MODEL_FALLBACK: "gemini-2.5-flash"
-  LOCAL_MODEL_TIMEOUT_SECONDS: 30
+  LOCAL_MODEL_TIMEOUT_SECONDS: 90
   FAST_MODEL: "gemini-2.5-flash"
   DEEP_MODEL: "gemini-2.5-pro"
 
@@ -1288,7 +1288,7 @@ done
 > }
 > ```
 
-Each service exposes fourteen endpoints:
+Each service exposes fifteen endpoints:
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
@@ -1305,6 +1305,7 @@ Each service exposes fourteen endpoints:
 | `/gmail-webhook` | POST | Gmail Pub/Sub push notification — enqueues for async processing (Nexus-Prime only) |
 | `/daily-digest` | POST | Cloud Scheduler 6 AM email digest (Nexus-Prime only) |
 | `/gmail-renew-watch` | POST | Renew Gmail watch subscription — called every 23h by Cloud Scheduler (Nexus-Prime only) |
+| `/log-sink` | POST | Cloud Logging error-sink — receives structured log alerts and dispatches an email to the owner (Nexus-Prime only) |
 | `/health` | GET | Liveness probe — always returns `{"status":"ok"}` |
 
 All POST endpoints require a `Bearer` token in the `Authorization` header. Cloud Run ingress validates the OIDC token before the request reaches the handler; the handler check is defense-in-depth only.
@@ -1460,6 +1461,7 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 > *URLs in this section are from the original deployment. Your deployment URLs will be different — use your `gcloud run services list` output.*
 
 - [x] All Pub/Sub push subscriptions confirmed: 22 subscriptions exist with OIDC push auth; `pubsub-push-sa` has `roles/run.invoker` on all 7 services; Pub/Sub service agent granted `roles/iam.serviceAccountTokenCreator` — 2026-03-21. URLs use `*-975461050387.us-central1.run.app` (confirmed valid alias per `run.googleapis.com/urls` annotation — both URL formats work)
+  > *(Note: 2026-04-02 — 8 `/pubsub` push subscriptions were found to be missing `--push-auth-service-account` (OIDC). All re-configured; a 9th Gmail subscription was already correct. All 25 active subscriptions verified with OIDC auth as of 2026-04-03.)*
 - [x] `VERTEX_AGENT_ENDPOINT` Script Property in Apps Script updated via Apps Script editor → Project Settings → Script Properties — set to `https://nexus-prime-975461050387.us-central1.run.app/sync` — 2026-04-03
 - [x] `CLOUD_RUN_URL` environment variable on `nexus-prime` — **set automatically by CI/CD pipeline** (`Wire CLOUD_RUN_URL on nexus-prime` step in apply job reads TF output `nexus_prime_url` and updates the service in-place)
 - [x] `settings.yaml` `chat.owner_space` set to `spaces/jbpdpSAAAAE` — confirmed 2026-03-21 via `Select-String owner_space config/settings.yaml`
@@ -1488,6 +1490,7 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 ### 4f — GAOS-Doctor Runbook
 
 - [x] Run the full GAOS-Doctor checklist (`scripts/gaos_doctor.py`) and confirm all health checks pass — **33/33 passed 2026-03-21**: Sheet connectivity ✅, all 8 Pub/Sub topics ✅, 23 subscriptions active ✅, all 6 secrets accessible ✅, all 7 Cloud Run `/health` endpoints HTTP 200 ✅, all 7 Vertex AI RAG corpora indexed ✅
+  > *(Re-run 2026-04-03 after Phase 4 deploy and OIDC/timeout fixes: **41 OK, 1 WARN, 0 FAIL** — GAOS-Doctor expanded to 42 checks across 8 groups. 1 WARN = transient Cloud Logging error in prior 1h, not a pattern.)*
 
 > **Note:** The GAOS-Doctor runbook is implemented as `scripts/gaos_doctor.py` (not yet the CLI described in `Docs/GAOS-Doctor.md`). Run with: `.venv\Scripts\python.exe scripts/gaos_doctor.py`
 
@@ -1826,9 +1829,69 @@ When the script finishes, it prints:
 - Three `settings.yaml` values to update: `monitored_address`, `label_id`, `pubsub_topic`.
 - A reminder to also store `GMAIL_AUTHORIZED_SENDERS` in Secret Manager.
 
+> ⚠️ **Warning — `GMAIL_AUTHORIZED_SENDERS` must never contain the outbound send-from alias:**
+> The system sends email from `settings.gmail.sender_address` (e.g. `aos@sl10repairtechs.com`).
+> If that address appears in `GMAIL_AUTHORIZED_SENDERS`, every outbound reply triggers an inbound
+> processing cycle, which sends another reply — an infinite loop. The 2026-04-02 incident produced
+> ~89,000 Pub/Sub faults and 18 unwanted emails from this exact misconfiguration.
+> **Correct value:** only real human inboxes — e.g. `dhess@sl10repairtechs.com,denton.hess@gmail.com`.
+> No outbound alias, no service account address. See Rule 26.1 in `AI-Autocoding-Rules.md`.
+
 **Verification:** After running the script, check Cloud Logging — you should see `gmail-renew-watch: watch registered` or a similar confirmation. Force-run the `gmail-renew-watch` Scheduler job — it should return HTTP 200.
 
 > ⚠️ **Gmail watch expires after 7 days.** If the Cloud Scheduler renewal job fails (or doesn't exist yet), the watch will silently expire and Nexus-Prime stops receiving email events. The `gmail-renew-watch` job (§10.5) prevents this by renewing every 23 hours. Ensure that job is deployed and healthy before relying on Gmail-based workflows.
+
+---
+
+### 10.7 Sheets → BigQuery Staging Sync (every 5 minutes)
+
+Keeps the `bigquery_staging` dataset in sync with the live Google Sheet tabs so Grafana dashboards reflect near-real-time data.
+
+| Field | Value |
+|-------|-------|
+| **Job name** | `gaos-sheets-sync` |
+| **Schedule** | `*/5 * * * *` (every 5 minutes) |
+| **Endpoint** | `POST /sheets-sync` |
+| **Agent** | Nexus-Prime only |
+| **Provisioned by** | `scripts/provision_schedulers.py` |
+
+**What it does:** Reads each configured Sheet tab, normalizes headers, and calls `replace_rows()` to overwrite the matching staging table in BigQuery. Logs `sheets-sync: <tab> → <table> (<N> rows)` per tab.
+
+**Verification:**
+```powershell
+gcloud scheduler jobs describe gaos-sheets-sync --project=morphic-gaos-prod --location=us-central1
+# Force a run:
+gcloud scheduler jobs run gaos-sheets-sync --project=morphic-gaos-prod --location=us-central1
+```
+
+Check Cloud Logging for `sheets-sync:` entries confirming rows written.
+
+---
+
+### 10.8 Daily Digest Email (6:00 AM PST daily)
+
+Sends a daily system health and activity summary email to the owner at 6 AM PST.
+
+| Field | Value |
+|-------|-------|
+| **Job name** | `gaos-daily-digest` |
+| **Schedule** | `0 14 * * *` (14:00 UTC = 6:00 AM PST / 7:00 AM PDT) |
+| **Endpoint** | `POST /daily-digest` |
+| **Agent** | Nexus-Prime only |
+| **Provisioned by** | `scripts/provision_schedulers.py` |
+
+**What it does:** Reads System_State, Main Control Plane, Email Inbox, Logs, Error Logs, Agent_Approvals, and the `api_call_log` BQ table. Formats a structured digest via `FAST_MODEL` and sends it via Gmail. Subject: `GAOS Daily Digest — <date>`.
+
+**Verification:**
+```powershell
+gcloud scheduler jobs describe gaos-daily-digest --project=morphic-gaos-prod --location=us-central1
+# Force a run:
+gcloud scheduler jobs run gaos-daily-digest --project=morphic-gaos-prod --location=us-central1
+```
+
+Check the owner inbox for the digest email and Cloud Logging for `daily-digest:` confirmation.
+
+> ⚠️ **Outbound cap applies.** The digest send is subject to Rule 26 flood guard (`settings.outbound.flood_threshold`). If more than 10 emails were sent in the prior 60 minutes, the digest will be skipped and logged at ERROR.
 
 ---
 
@@ -1909,7 +1972,7 @@ Phase 1 is complete — and Phase 2 (Ollama integration) may begin — when **ev
 - [x] Cloud Scheduler TTL sweep job exists and can be triggered manually (HTTP 200 response)
 - [x] Cloud Scheduler nightly archive job exists with state `ENABLED` — `POST /archive` implemented in Phase 2 Item 3 (returns HTTP 200)
 - [x] **[Phase 2.5]** Google Chat App created in Google Cloud console; Chat API enabled; `nexus-prime-sa` added to the Chat space as the bot identity (authenticated via service account ADC — no Secret Manager token required)
-- ❌ **[Phase 2.5 — ABANDONED 2026-03-30]** Google Chat end-to-end delivery: never successfully delivered a message from mobile after ~2 weeks. Failure summary: (1) `CLOUD_RUN_URL` env var missing from initial deploy → fixed; (2) `chat@system.gserviceaccount.com` not in `roles/run.invoker` → fixed; (3) Chat exhausts 2–3 retries in ~60s — IAM propagation took longer, retry budget spent; (4) tunnel URL instability caused stale `OLLAMA_HOST` → fallback Gemini calls hitting 429; (5) stale Cloud Run image (6 days old) deployed during active testing. Full post-mortem in `GAOS-Nexus-Prime-Spec.md §3.2 chat_respond` warning block. **Replaced by Gmail polling — see §10.X.**
+- ❌ **[Phase 2.5 — ABANDONED 2026-03-30]** Google Chat end-to-end delivery: never successfully delivered a message from mobile after ~2 weeks. Failure summary: (1) `CLOUD_RUN_URL` env var missing from initial deploy → fixed; (2) `chat@system.gserviceaccount.com` not in `roles/run.invoker` → fixed; (3) Chat exhausts 2–3 retries in ~60s — IAM propagation took longer, retry budget spent; (4) tunnel URL instability caused stale `OLLAMA_HOST` → fallback Gemini calls hitting 429; (5) stale Cloud Run image (6 days old) deployed during active testing. Full post-mortem in `GAOS-Nexus-Prime-Spec.md §3.2 chat_respond` warning block. **Replaced by Gmail polling — see §10.6.**
 - [x] **[Phase 2.5]** Vertex AI Search datastore created and indexed against Drive `Knowledge/` folder; datastore ID stored in `settings.yaml`
 - [x] **[Phase 2.5]** Google Custom Search Engine created; CSE ID and API key stored in Secret Manager as `GOOGLE_SEARCH_CX` and `GOOGLE_SEARCH_API_KEY`
 - ❌ **[Phase 2.5 — NOT YET DOCUMENTED]** AppSheet app deployed and connected to the Google Sheets workbook (`Agent_Approvals` + `Project Registry` tabs at minimum) — setup instructions have not been written. **Skip this item.** No AppSheet setup is required for core system function; this is an optional mobile UI layer that may be documented in a future phase.
