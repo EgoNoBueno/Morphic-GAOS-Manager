@@ -1,5 +1,25 @@
 # Google Chat Development Reference — Morphic-GAOS
 
+*Last updated: 2026-04-03*
+
+> ⚠️ **Status — Google Chat delivery ABANDONED (2026-03-30)**
+>
+> The `/chat` endpoint is deployed, JWT verification works, and all routing logic is
+> intact. However, Google Chat never reliably delivered messages from mobile after
+> ~2 weeks of testing. The feature was abandoned in favour of Gmail polling.
+> **Primary user communication channel is now Gmail** — see `GAOS-Email-Pipeline-Spec.md`.
+>
+> This reference document is preserved because:
+> - The `/chat` endpoint still handles inbound `CARD_CLICKED` events (Approval Gate
+>   card buttons) — that path is wired and correct
+> - The `tools/google_chat.py` helpers are used by `chat_respond`, `send_approval_card()`,
+>   and `send_skill_import_card()` — all still active
+> - The architecture patterns (JWT verification, threading, card widgets) remain valid
+>   if Chat delivery is re-enabled
+>
+> Full post-mortem: `GAOS-Nexus-Prime-Spec.md §3.2 chat_respond` and
+> `GAOS-Deploy-Spec.md §14 (❌ ABANDONED items)`.
+
 A practical reference for working with the Chat integration layer in this codebase.
 All patterns map directly to live code — every example points to a real file.
 
@@ -122,6 +142,48 @@ send_skill_import_card(
     package_name="shapely",
     reason="Needed for geospatial bounding-box queries in territory analysis.",
     pypi_url="https://pypi.org/project/shapely/",
+)
+```
+
+### Threaded replies
+
+Two helpers exist in `tools/google_chat.py` for keeping replies inside a thread:
+
+```python
+from tools.google_chat import send_threaded_reply, send_reply_in_thread
+
+# Bot-initiated thread — developer-chosen stable key (approval cards, briefings)
+send_threaded_reply(
+    space_name="spaces/XXXXXXXXX",
+    thread_key="approval-abc-123",   # any stable string you choose
+    text="Approval request filed.",
+)
+
+# Reply to a user message — use server-assigned thread.name from the Chat event
+send_reply_in_thread(
+    space_name="spaces/XXXXXXXXX",
+    thread_name="spaces/XXXXXXXXX/threads/YYYYY",   # from parse_chat_event()["thread_name"]
+    text="Got it — processing your request.",
+)
+```
+
+See §16 for when to use each. `parse_chat_event()` returns the server thread name as
+`event["thread_name"]`.
+
+### Infrastructure proposal card (built-in)
+
+```python
+from tools.google_chat import send_infra_proposal_card
+
+send_infra_proposal_card(
+    space_name="spaces/XXXXXXXXX",
+    proposal_id="infra-789",
+    agent_id="foreman",
+    resource_type="Cloud Run service",
+    resource_name="pursuit",
+    proposed_action="Scale min-instances from 0 to 1 to reduce cold-start latency.",
+    estimated_cost_usd=0.08,
+    reasoning="pursuit handles time-sensitive stock alert tasks.",
 )
 ```
 
@@ -450,7 +512,7 @@ Before deploying any Chat integration change:
 - [ ] Any handler returning 204 uses `Response(status_code=204)` with no body — not `JSONResponse` (see §5 warning)
 - [ ] `record()` / `publish()` calls from `nexus-prime` do **not** publish `STATUS_UPDATE` messages to `agent.nexus-prime.events` — guard with `if not (msg and msg.message_type == MessageType.STATUS_UPDATE)`
 - [ ] New `settings.yaml` keys have a corresponding field declared in the Pydantic model in `config/__init__.py` — Pydantic silently drops unknown fields with no error
-- [ ] 408/408 tests pass: `python -m pytest --tb=short -q`
+- [ ] Full test suite passes: `python -m pytest --tb=short -q` (727+ tests as of 2026-04-03)
 - [ ] WORKLOG updated with the change
 
 ---
@@ -540,13 +602,25 @@ already implements this pattern — keep it.
 
 ```python
 routing_table = {
-    MessageType.STATUS_UPDATE:       "record",
-    MessageType.ESCALATION:          "think",
-    MessageType.CHAT_MESSAGE:        "think",
-    MessageType.BROADCAST:           "conflict_resolve",
-    MessageType.NEW_PROJECT:         "init_project",
-    MessageType.VISION_SUBMITTED:    "vision_blueprint",
-    MessageType.SKILL_REQUEST:       "handle_skill_request",
+    MessageType.STATUS_UPDATE:              "record",
+    MessageType.TASK_COMPLETE:              "record",
+    MessageType.ESCALATION:                "think",          # think → diagnose
+    MessageType.EVOLUTION_REQUEST:         "think",          # think → diagnose
+    MessageType.KNOWLEDGE_CANDIDATE:       "think",          # think → knowledge_review
+    MessageType.CHAT_MESSAGE:              "think",          # think → chat_respond
+    MessageType.BROADCAST:                 "conflict_resolve",
+    MessageType.NEW_PROJECT:               "init_project",
+    MessageType.VISION_SUBMITTED:          "vision_blueprint",
+    MessageType.PLAN_REVIEW:               "iterate_plan",
+    MessageType.COMMENT_RECEIVED:          "iterate_plan",
+    MessageType.SKILL_REQUEST:             "handle_skill_request",
+    MessageType.STOCK_INSUFFICIENT:        "market_watchdog",
+    MessageType.DEAL_CLOSED:               "roi_optimizer",
+    MessageType.INFRA_PROVISION_APPROVED:  "handle_infra_provision",
+    MessageType.INFRA_PROVISION_REJECTED:  "handle_infra_provision",
+    MessageType.GMAIL_NOTIFICATION:        "process_gmail",
+    MessageType.EMAIL_RECEIVED:            "compose_reply",
+    MessageType.APPROVAL_REQUEST:          "handle_approval_request",
     # ... add new types here, not as elif blocks
 }
 return routing_table.get(msg.message_type, "record")
@@ -598,12 +672,6 @@ that Chat maps to a real thread. Good values:
 | Daily briefing | `f"daily-sync-{date}"` |
 | Vision session | `f"vision-{task_id}"` |
 
-**Current gap in GAOS:** `chat_respond` calls `send_message(space_name, reply)` with
-no `threadKey`, so every reply starts a new conversation. To fix this, the
-`CHAT_MESSAGE` payload should carry `message_name` (already present — it's
-`message.name` from the original Chat event), and `chat_respond` should thread
-its reply back to that message's thread.
-
 > ⚠️ **Warning — `threadKey` does NOT work for replies to user-originated messages.**
 > `threadKey` is a developer-assigned namespace. For messages sent by a human, Chat has
 > never seen your `threadKey`, so `REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD` falls back to a
@@ -625,22 +693,19 @@ its reply back to that message's thread.
 > ```
 >
 > `thread_name` is `message["thread"]["name"]` from the raw Chat event body.
-> `parse_chat_event()` returns it as `event["thread_name"]`. Pass it through the
-> A2A envelope payload so `chat_respond` can use it.
+> `parse_chat_event()` returns it as `event["thread_name"]`.
 >
 > **`threadKey` is correct for bot-initiated threads** (approval cards, briefings)
 > where no user message exists to anchor the thread — the table above still applies
 > for that use case.
 
-**Current implementation in GAOS:** `send_reply_in_thread(space, thread_name, text)` in
+**Current implementation in GAOS:** `send_reply_in_thread(space_name, thread_name, text)` in
 `tools/google_chat.py` uses the `thread.name` pattern above. `chat_respond` in the
 orchestrator extracts `thread_name` from the payload and calls it directly.
 
-Copilot prompt: _"Add a `send_reply_in_thread()` function to `tools/google_chat.py`
-that accepts `space_name`, `thread_name`, and `text`, using `thread.name` (not
-`threadKey`) with `messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD`. Update
-`chat_respond` in the orchestrator to extract `thread_name` from the payload and call it
-instead of `send_message()`."_
+`send_threaded_reply(space_name, thread_key, text)` uses `threadKey` and is the correct
+choice for bot-initiated threads (e.g. approval card follow-ups) where no server thread
+name is available.
 
 ---
 
