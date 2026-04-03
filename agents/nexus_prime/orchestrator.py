@@ -5210,7 +5210,9 @@ async def handle_cloud_run_error(
         )
 
     # ── 4. Compose and send email ─────────────────────────────────────────────
-    recipient = settings.gmail.monitored_address
+    # Rule 26.1: alert_address must not be the watched inbox — use it if configured,
+    # fall back to monitored_address only if alert_address is absent (old deployments).
+    recipient = settings.gmail.alert_address or settings.gmail.monitored_address
     subject = f"[GAOS ALERT] {severity} on {service} — {now.strftime('%Y-%m-%d %H:%M UTC')}"
     body = (
         f"GAOS Cloud Run Error Alert\n"

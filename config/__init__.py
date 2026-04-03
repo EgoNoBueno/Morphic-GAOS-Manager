@@ -91,6 +91,7 @@ class MemoryConfig(BaseModel):
 class GmailConfig(BaseModel):
     monitored_address: str = ""  # Inbox watched by Gmail push
     sender_address: str = ""  # Authorised reply-from address
+    alert_address: str = ""  # Destination for system error alerts — must NOT equal monitored_address
     label_id: str = ""  # Gmail label ID (e.g. Label_6)
     pubsub_topic: str = ""  # Full topic path: projects/<pid>/topics/...
     max_results: int = 50

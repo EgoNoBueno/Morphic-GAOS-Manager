@@ -3409,6 +3409,15 @@ class TestStewardExecuteDriveMoves:
 # ── Cloud Run error alerting ───────────────────────────────────────────────────
 
 
+def _make_settings(alert_address: str = "benny.hess918@gmail.com"):  # noqa: ANN201
+    """Return a real Settings object with gmail.alert_address overridden."""
+    from config import get_settings
+
+    s = get_settings()
+    s.gmail.alert_address = alert_address
+    return s
+
+
 class TestCloudRunError:
     """Unit tests for handle_cloud_run_error."""
 
@@ -3585,6 +3594,52 @@ class TestCloudRunError:
         assert result["suppressed"] is True
         assert result["reason"] == "cooldown_check_failed"
         mock_send.assert_not_called()
+
+    def test_alert_routes_to_alert_address(self) -> None:
+        """Rule 26.1: alert email is sent to alert_address, not monitored_address."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_cloud_run_error
+
+        with (
+            patch("tools.google_sheets.find_row", return_value=None),
+            patch("tools.google_sheets.append_row"),
+            patch("tools.google_sheets.update_row"),
+            patch("tools.bigquery.query_rows", return_value=[]),
+            patch("tools.gmail.send_email", return_value="sent-alert-addr") as mock_send,
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+            patch(
+                "config.get_settings",
+                return_value=_make_settings(alert_address="benny.hess918@gmail.com"),
+            ),
+        ):
+            result = asyncio.run(handle_cloud_run_error(self._PROJECT, self._entry()))
+
+        assert result["sent"] is True
+        assert mock_send.call_args.kwargs["to"] == "benny.hess918@gmail.com"
+
+    def test_alert_falls_back_to_monitored_when_no_alert_address(self) -> None:
+        """Fallback: no alert_address configured → uses monitored_address (old deployments)."""
+        import asyncio
+
+        from agents.nexus_prime.orchestrator import handle_cloud_run_error
+
+        with (
+            patch("tools.google_sheets.find_row", return_value=None),
+            patch("tools.google_sheets.append_row"),
+            patch("tools.google_sheets.update_row"),
+            patch("tools.bigquery.query_rows", return_value=[]),
+            patch("tools.gmail.send_email", return_value="sent-fallback") as mock_send,
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+            patch(
+                "config.get_settings",
+                return_value=_make_settings(alert_address=""),
+            ),
+        ):
+            result = asyncio.run(handle_cloud_run_error(self._PROJECT, self._entry()))
+
+        assert result["sent"] is True
+        assert mock_send.call_args.kwargs["to"] == "owner@example.com"
 
 
 class TestCheckEmailFlood:

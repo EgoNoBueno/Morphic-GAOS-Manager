@@ -111,6 +111,17 @@ google_search:
   max_search_depth: 3               # Maximum recursive query depth per RESEARCH_MANDATE
   max_queries_per_mandate: 15       # Hard cap on total queries per RESEARCH_MANDATE
 
+# Gmail integration — addresses for inbound watch and outbound alerts
+# alert_address MUST differ from monitored_address (Rule 26.1 — outbound→inbound loop prevention)
+gmail:
+  monitored_address: "aos@yourdomain.com"         # Inbox watched by Gmail push notification
+  sender_address: "aos@yourdomain.com"             # From address on outbound replies
+  alert_address: "benny.hess918@gmail.com"         # System error alerts land here — NOT the watched inbox
+  label_id: ""                                     # Gmail label ID filter (leave empty to process all)
+  pubsub_topic: ""                                 # Full Pub/Sub topic path (set by renew_gmail_watch.py)
+  max_results: 50
+  trigger_keyword: ""                              # Optional subject keyword filter
+
 # Outbound action caps — Rule 26.2 (per-task) and Rule 26.3 (time-window flood guard)
 # These values must not be hardcoded in source files.
 outbound:
