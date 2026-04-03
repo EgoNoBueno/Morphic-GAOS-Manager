@@ -50,7 +50,7 @@ SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 _TOKEN_PATH = _REPO_ROOT / "config" / "keys" / "sheets_token.json"
 _OAUTH_CLIENT_PATH = _REPO_ROOT / "oauth-client.json"
 
-NEXUS_PRIME_URL = "https://nexus-prime-7bu22bxlda-uc.a.run.app"
+NEXUS_PRIME_URL = "https://nexus-prime-975461050387.us-central1.run.app"
 POLL_INTERVAL = 4  # seconds
 POLL_TIMEOUT = 90  # seconds — /sync does hash verification + vertex sync
 FULL_LOOP_HUMAN_TIMEOUT = 300  # seconds — time budget for human to tap Approve in Chat

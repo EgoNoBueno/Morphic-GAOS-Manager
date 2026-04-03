@@ -965,18 +965,33 @@ def promote(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     if not proposal_id:
         return state
 
+    task_id = state.get("task_id", "")
+    project_id = state["project_id"]
+
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"promote: starting for proposal {proposal_id}",
+        "INFO",
+    )
+
     try:
-        row = find_row("Agent_Approvals", "ID", proposal_id, state["project_id"])
-    except Exception:
+        row = find_row("Agent_Approvals", "ID", proposal_id, project_id)
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime", project_id, "task", task_id, f"promote: find_row failed — {exc}", "ERROR"
+        )
         return state
 
     if row is None:
         _log_cloud(
             "nexus-prime",
-            state["project_id"],
+            project_id,
             "security",
-            state.get("task_id", ""),
-            f"promote: proposal {proposal_id} not found",
+            task_id,
+            f"promote: proposal {proposal_id} not found in Agent_Approvals",
             "ERROR",
         )
         return state
@@ -984,29 +999,57 @@ def promote(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     # Hash verification — reject if tampered
     live_sha = hashlib.sha256((row.get("Proposed Code") or "").encode()).hexdigest()
     stored_sha = row.get("code_sha256", "")
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"promote: hash check live={live_sha[:12]} stored={stored_sha[:12]}",
+        "INFO",
+    )
     if live_sha != stored_sha:
         _log_cloud(
             "nexus-prime",
-            state["project_id"],
+            project_id,
             "security",
-            state.get("task_id", ""),
-            f"CODE_HASH_MISMATCH proposal={proposal_id}",
+            task_id,
+            f"CODE_HASH_MISMATCH proposal={proposal_id} live={live_sha} stored={stored_sha}",
             "CRITICAL",
         )
         try:
-            update_row(
-                "Agent_Approvals", proposal_id, {"Status": "Needs Revision"}, state["project_id"]
+            update_row("Agent_Approvals", proposal_id, {"Status": "Needs Revision"}, project_id)
+        except Exception as exc:
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"promote: update_row(Needs Revision) failed — {exc}",
+                "ERROR",
             )
-        except Exception:
-            pass
         return state
 
     _trigger_sync_to_vertex(row, state)
 
     try:
-        update_row("Agent_Approvals", proposal_id, {"Status": "Deployed"}, state["project_id"])
-    except Exception:
-        pass
+        update_row("Agent_Approvals", proposal_id, {"Status": "Deployed"}, project_id)
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"promote: status set to Deployed for {proposal_id}",
+            "INFO",
+        )
+    except Exception as exc:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"promote: update_row(Deployed) failed — {exc}",
+            "ERROR",
+        )
 
     state["parked_proposals"] = [p for p in state.get("parked_proposals", []) if p != proposal_id]
     return state

@@ -9,7 +9,7 @@
 The AOS must approach every task as a Systems Architect, not a tactician.
 
 - **Modular Construction:** Build with LEGO bricks, not monoliths. Solutions must be interoperable and follow the established 7-agent hierarchy.
-- **Minimum Complexity (Rule 4):** Always prefer the simplest path that solves the problem. Do not over-engineer. Be goal results oriented.
+- **Minimum Complexity:** Always prefer the simplest path that solves the problem. Do not over-engineer. Be goal results oriented.
 - **Fail-Safe Design:** Anticipate where systems break at the seams. Apply "no bare except" and "search before writing" protocols to prevent silent failures.
 
 ---

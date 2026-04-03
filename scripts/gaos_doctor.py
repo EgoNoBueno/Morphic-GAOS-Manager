@@ -46,13 +46,13 @@ REGION = "us-central1"
 AGENTS = ["nexus-prime", "ledger", "beacon", "pursuit", "foreman", "steward", "scout"]
 
 SERVICE_URLS: dict[str, str] = {
-    "nexus-prime": "https://nexus-prime-7bu22bxlda-uc.a.run.app",
-    "ledger": "https://ledger-7bu22bxlda-uc.a.run.app",
-    "beacon": "https://beacon-7bu22bxlda-uc.a.run.app",
-    "pursuit": "https://pursuit-7bu22bxlda-uc.a.run.app",
-    "foreman": "https://foreman-7bu22bxlda-uc.a.run.app",
-    "steward": "https://steward-7bu22bxlda-uc.a.run.app",
-    "scout": "https://scout-7bu22bxlda-uc.a.run.app",
+    "nexus-prime": "https://nexus-prime-975461050387.us-central1.run.app",
+    "ledger": "https://ledger-975461050387.us-central1.run.app",
+    "beacon": "https://beacon-975461050387.us-central1.run.app",
+    "pursuit": "https://pursuit-975461050387.us-central1.run.app",
+    "foreman": "https://foreman-975461050387.us-central1.run.app",
+    "steward": "https://steward-975461050387.us-central1.run.app",
+    "scout": "https://scout-975461050387.us-central1.run.app",
 }
 
 SECRETS = [

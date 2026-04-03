@@ -393,7 +393,7 @@ def phase2() -> None:
     if cr_result.returncode == 0 and cr_result.stdout.strip():
         nexus_prime_url = cr_result.stdout.strip().rstrip("/")
     else:
-        nexus_prime_url = "https://nexus-prime-7bu22bxlda-uc.a.run.app"
+        nexus_prime_url = "https://nexus-prime-975461050387.us-central1.run.app"
     vertex_endpoint = f"{nexus_prime_url}/sync"
 
     creds = get_credentials()

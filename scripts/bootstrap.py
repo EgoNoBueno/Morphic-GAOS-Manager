@@ -607,7 +607,7 @@ def print_next_steps(github_repo: str) -> None:
        a. Set VERTEX_AGENT_ENDPOINT in Apps Script Script Properties:
             Apps Script editor → Project Settings → Script Properties
             Key: VERTEX_AGENT_ENDPOINT
-            Value: https://nexus-prime-7bu22bxlda-uc.a.run.app/sync
+            Value: https://nexus-prime-975461050387.us-central1.run.app/sync
        b. CLOUD_RUN_URL on nexus-prime is set automatically by CI/CD — no action needed.
 
   5. Validate: python scripts/gaos_doctor.py --project morphic-gaos-prod
