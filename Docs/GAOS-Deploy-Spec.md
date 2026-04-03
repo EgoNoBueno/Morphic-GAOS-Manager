@@ -1447,6 +1447,7 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 - [x] `apply` job gated behind `production` environment approval; after approval, all 7 Cloud Run services deploy at the correct revision — 7 imported, 0 added, 7 changed, 0 destroyed
 - [x] `gcloud run services list --region=us-central1 --project=$PROJECT` shows all 7 services with state `Ready` — verified 2026-03-21
 - [x] `GET /health` returns HTTP 200 for all 7 services — verified 2026-03-21 with OIDC token
+- [x] **Grafana CEO Dashboard infrastructure deployed** — `grafana-sa`, BQ viewer/jobUser IAM bindings, Secret Manager accessor, `deployer_actAs_grafana`, and `google_cloud_run_v2_service.grafana` all in TF state — apply run `23944096299`, 2026-04-03. Required 4 partial-apply iterations due to cascading 409s on orphaned resources (see §2.2 import block warning).
 
 ### 4c — Production Wiring
 
@@ -1459,6 +1460,7 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 
 ### 4d — Live End-to-End Validation
 
+- [x] **Email pipeline E2E:** Sent test email from `denton.hess@gmail.com` to monitored inbox — `compose_reply` sent reply (sent_id=`19d530ea9f5fb966`); second Gmail notification (from the outbound reply) dropped cleanly at terminal node with no loop — dedup gate and own-address exclusion both confirmed working — 2026-04-03.
 - [ ] **Approval Gate Chat-path E2E:** Submit a test approval proposal via the `/sync` endpoint → a Chat card appears in the owner's DM space → tap **Approve** → confirm `APPROVAL_RESULT` published to Pub/Sub → Nexus-Prime resumes the parked task → `Agent_Approvals` row updated to `Approved` + audit row in Logs tab
 - [ ] **Vision path E2E:** Send an image directly to the Nexus-Prime Chat bot → confirm DEEP_MODEL vision extraction runs → Blueprint Doc created in Drive → doc link posted as Chat reply
 - [x] **Nightly archive job:** Force-run the `nightly-archive` Cloud Scheduler job → `POST /archive` returns HTTP 200 → `NIGHTLY_ARCHIVE complete: 0 rows archived` logged (no rows aged ≥30 days yet); confirmed 2026-03-21. *(BQ timestamp parse bug + `approval_history` schema mismatch fixed same session — see bug note below.)*
@@ -1757,7 +1759,7 @@ gcloud scheduler jobs create http gmail-renew-watch \
 1. Revoke the current grant: go to <https://myaccount.google.com/permissions> and remove the GAOS app entry. This step is required — without it the OAuth flow re-uses the existing session and does not issue a new `refresh_token`.
 2. Re-run `scripts/setup_gmail_oauth.py --project morphic-gaos-prod`.
 3. Store the new JSON blob printed by the script into Secret Manager:
-   ```powershell
+   ```powershellOpt
    # Paste the JSON output from setup_gmail_oauth.py between the quotes below
    $newJson = '{"client_id": "...", "client_secret": "...", "refresh_token": "..."}'
    $newJson | gcloud secrets versions add GMAIL_OAUTH_CREDENTIALS `

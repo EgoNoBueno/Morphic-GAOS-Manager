@@ -5,6 +5,29 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-04-03T04:15-07:00 — Grafana TF Cleanup + Email E2E Verification
+
+### What was done
+
+- **Fixed final Terraform 409** — `google_cloud_run_v2_service.grafana` existed in GCP (created by partial apply run #3) but not in TF state. Added import block (commit `891fe34`). Apply run `23944096299` — all 3 jobs passed clean. All Grafana resources (SA, IAM bindings, Cloud Run service) are now fully managed by OpenTofu.
+- **Both Grafana import blocks removed** post-apply (commit `003663d`). `infra/main.tf` is clean — no more import scaffolding needed.
+- **Email E2E verified live** — sent test email from `denton.hess@gmail.com` to monitored inbox. Pipeline executed correctly:
+  - `process_gmail: processed=0 skipped=0` — first notification (history sync)
+  - `compose_reply: reply sent to Denton Hess <denton.hess@gmail.com> (sent_id=19d530ea9f5fb966, chars=35)`
+  - Second notification (triggered by the outbound reply) hit terminal node cleanly — dedup gate and own-address exclusion both working, zero loop.
+
+### Files changed
+- `infra/main.tf` — import block for `google_cloud_run_v2_service.grafana` added then removed after clean apply (commits `891fe34`, `003663d`)
+- `WORKLOG.md` — this entry
+
+### What's next
+- Set `VERTEX_AGENT_ENDPOINT` Script Property in Apps Script (manual — Apps Script Properties API requires OAuth user credentials, not ADC)
+- Approval Gate Chat-path E2E (interactive — requires Chat card click by user)
+- Vision path E2E (interactive — requires image sent to Chat bot)
+- 7-day billing check (calendar wait, ~2026-04-10)
+
+---
+
 ## 2026-04-02T22:30-07:00 — Deployment + Infra Fixes
 
 ### What was done
