@@ -3585,3 +3585,63 @@ class TestCloudRunError:
         assert result["suppressed"] is True
         assert result["reason"] == "cooldown_check_failed"
         mock_send.assert_not_called()
+
+
+class TestCheckEmailFlood:
+    """Unit tests for _check_email_flood (Rule 26.3)."""
+
+    _PROJECT = "test-project"
+
+    def test_safe_when_below_threshold(self) -> None:
+        """Returns True when BQ count is below flood_threshold."""
+        from agents.nexus_prime.orchestrator import _check_email_flood
+
+        with patch("tools.bigquery.query_rows", return_value=[{"cnt": 5}]) as mock_qr:
+            result = _check_email_flood(self._PROJECT)
+
+        assert result is True
+        _sql, _pid = mock_qr.call_args.args
+        assert "caller = @caller" in _sql
+        assert mock_qr.call_args.kwargs["params"]["caller"] == "nexus-prime"
+
+    def test_blocked_when_at_threshold(self) -> None:
+        """Returns False when BQ count equals flood_threshold (10)."""
+        from agents.nexus_prime.orchestrator import _check_email_flood
+
+        with patch("tools.bigquery.query_rows", return_value=[{"cnt": 10}]):
+            result = _check_email_flood(self._PROJECT)
+
+        assert result is False
+
+    def test_blocked_when_above_threshold(self) -> None:
+        """Returns False when BQ count exceeds flood_threshold."""
+        from agents.nexus_prime.orchestrator import _check_email_flood
+
+        with patch("tools.bigquery.query_rows", return_value=[{"cnt": 89000}]):
+            result = _check_email_flood(self._PROJECT)
+
+        assert result is False
+
+    def test_fails_open_on_bq_error(self) -> None:
+        """BQ failure fails open (returns True) — flood guard is non-fatal."""
+        from agents.nexus_prime.orchestrator import _check_email_flood
+
+        with (
+            patch("tools.bigquery.query_rows", side_effect=RuntimeError("BQ down")),
+            patch("agents.nexus_prime.orchestrator._log_cloud"),
+        ):
+            result = _check_email_flood(self._PROJECT)
+
+        assert result is True
+
+    def test_caller_param_is_nexus_prime(self) -> None:
+        """Verifies the query is scoped to caller='nexus-prime' (not project-wide)."""
+        from agents.nexus_prime.orchestrator import _check_email_flood
+
+        with patch("tools.bigquery.query_rows", return_value=[{"cnt": 0}]) as mock_qr:
+            _check_email_flood(self._PROJECT)
+
+        params = mock_qr.call_args.kwargs["params"]
+        assert params.get("caller") == "nexus-prime", (
+            "flood guard must scope to nexus-prime only, not all project agents"
+        )

@@ -5016,6 +5016,9 @@ def _check_email_flood(project_id: str) -> bool:
     the flood_threshold. This is the last-resort guard that fires even if the per-task
     counter (Rule 26.2) and identity exclusion (Rule 26.1) both fail simultaneously.
 
+    The query is scoped to ``caller = 'nexus-prime'`` via the ``api_call_log.caller``
+    column to avoid counting emails sent by other agents in a multi-agent deployment.
+
     Args:
         project_id: GCP project ID to scope the query.
 
@@ -5035,12 +5038,15 @@ def _check_email_flood(project_id: str) -> bool:
             SELECT COUNT(*) AS cnt
             FROM `{gcp}.aos_logs.api_call_log`
             WHERE project_id = @project_id
+              AND caller = @caller
               AND api_name = 'gmail'
               AND operation = 'send_email'
               AND success = TRUE
               AND ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {window} MINUTE)
         """
-        rows = query_rows(sql, project_id, params={"project_id": project_id})
+        rows = query_rows(
+            sql, project_id, params={"project_id": project_id, "caller": "nexus-prime"}
+        )
         count = int(rows[0]["cnt"]) if rows else 0
         return count < threshold
     except Exception as exc:
