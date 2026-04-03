@@ -348,6 +348,15 @@ def collect_config(state: dict) -> dict:
     cfg["webhook_hmac"]      = _secrets.token_hex(32)
     ok(f"WEBHOOK_HMAC_SECRET generated automatically")
 
+    # Model aliases — stored in settings.yaml; set here so smoke tests can reference them
+    local_model = f"ollama/{cfg['ollama_model']}"
+    if cfg["privacy_topology"] == "local-first":
+        cfg["fast_model"] = local_model
+        cfg["deep_model"] = local_model
+    else:
+        cfg["fast_model"] = "gemini-2.5-flash"
+        cfg["deep_model"] = "gemini-2.5-pro"
+
     state["config"] = cfg
     mark_done(state, "config_collected")
     save_state(state)
@@ -382,6 +391,11 @@ def provision_gcp(cfg: dict, state: dict, dry_run: bool):
         "bigquery.googleapis.com", "logging.googleapis.com",
         "monitoring.googleapis.com", "aiplatform.googleapis.com",
         "cloudresourcemanager.googleapis.com",
+        "gmail.googleapis.com",          # Gmail push watch + inbox polling
+        "chat.googleapis.com",           # Google Chat bot
+        "docs.googleapis.com",           # Google Docs (Blueprint Factory)
+        "discoveryengine.googleapis.com", # Vertex AI Search
+        "customsearch.googleapis.com",   # Google Custom Search (Scout)
     ])
     code, out = run(f"gcloud services enable {apis} --project={project}", dry_run)
     if code != 0:
@@ -441,13 +455,11 @@ def write_settings_yaml(cfg: dict, state: dict):
         ok("settings.yaml already written — skipping")
         return
 
-    fast_model  = "gemini-2.5-flash"
-    deep_model  = "gemini-2.5-pro"
+    fast_model  = cfg["fast_model"]   # Set in collect_config() from privacy_topology
+    deep_model  = cfg["deep_model"]
     local_model = f"ollama/{cfg['ollama_model']}"
 
     if cfg["privacy_topology"] == "local-first":
-        fast_model = local_model
-        deep_model = local_model
         local_fallback = "null  # Local-First: no cloud fallback"
     else:
         local_fallback = fast_model
@@ -471,7 +483,7 @@ projects:
 models:
   LOCAL_MODEL: "{local_model}"
   LOCAL_MODEL_FALLBACK: "{local_fallback}"
-  LOCAL_MODEL_TIMEOUT_SECONDS: 30  # Seconds before falling back to LOCAL_MODEL_FALLBACK; 30 s accommodates slower CPU-only inference — lower if your GPU responds faster
+  LOCAL_MODEL_TIMEOUT_SECONDS: 90  # Seconds to wait for Ollama before raising RuntimeError; 90 s accommodates CPU-only inference on low-end hardware
   FAST_MODEL: "{fast_model}"
   DEEP_MODEL: "{deep_model}"
 
@@ -480,6 +492,7 @@ memory_bank:
   corpora: {{}}              # Populated by scripts/_create_corpora.py
 
 pubsub:
+  max_hop_count: 5  # A2A loop prevention — drop messages with hop_count >= this value (Rule 25.4)
   all_topics:
     - agent.nexus-prime.events
     - agent.ledger.events
@@ -491,15 +504,44 @@ pubsub:
     - agent.approvals.events
 
 apps_script:
+  timezone: America/Los_Angeles
   script_id: ""           # Fill in after Apps Script deploy (GAOS-Deploy-Spec.md §4.4)
   deployment_id: ""       # Fill in after Apps Script deploy
-  webhook_url: ""         # Fill in after Apps Script deploy
+  # webhook_url is intentionally absent — stored in Secret Manager as WEBHOOK_URL
 
 chat:
   owner_space: ""         # spaces/<id> — owner DM for morning briefings
+  service_account_key: "" # Optional path to SA key JSON; leave blank for ADC
 
 docs:
-  blueprints_folder_id: ""  # Drive folder ID for Blueprint Docs
+  blueprints_folder_id: ""      # Drive folder ID for Blueprint Docs
+  knowledge_atlas_doc_id: ""    # Pre-create in Drive; paste doc ID here (GAOS-Tools-Spec.md §18)
+  service_account_key: ""       # Optional path to SA key JSON; leave blank for ADC
+
+gmail:
+  monitored_address: ""         # Inbox watched by Gmail push — fill in your address
+  sender_address: ""            # "Send mail as" alias for outbound email
+  alert_address: ""             # Must NOT equal monitored_address
+  label_id: ""
+  pubsub_topic: "projects/{cfg['project_id']}/topics/gmail-notifications"
+  max_results: 50
+
+outbound:
+  max_emails_per_task: 3        # Hard cap per single task execution (Rule 26.2)
+  max_publishes_per_task: 10    # Hard cap on Pub/Sub publishes per task (Rule 26.2)
+  flood_window_minutes: 60      # Rolling window for flood detection (Rule 26.3)
+  flood_threshold: 10           # Max emails in window before abort (Rule 26.3)
+
+memory:
+  max_boot_chars: 32000
+  max_active_entries:
+    nexus-prime: 200
+    ledger: 200
+    beacon: 150
+    pursuit: 150
+    foreman: 150
+    steward: 100
+    scout: 100
 
 # Note: code_safety.allowed_imports is NOT configured here.
 # The import allowlist is hardcoded in agents/__init__.py._ALLOWED_IMPORTS.
@@ -541,7 +583,7 @@ def run_smoke_tests(cfg: dict, state: dict):
         import google.genai as genai
         client = genai.Client(api_key=cfg["gemini_api_key"])
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=cfg["fast_model"],  # Use configured model alias — never hardcode version strings
             contents="Reply with the single word: READY"
         )
         gemini_ok = "READY" in (resp.text or "")
@@ -687,7 +729,7 @@ Use this checklist after running the onboarding script. Check each item before s
 - [ ] Google Drive `Knowledge/` folder created with subfolder structure
 - [ ] `drive.knowledge_folder_id` filled into `config/settings.yaml`
 - [ ] Seed knowledge files created (policies/, procedures/, workflows/)
-- [ ] BigQuery `aos_logs` dataset and 6 tables created with TTL partitioning (includes `monologue_frames` — `GAOS-Persona-Spec.md §4`)
+- [ ] BigQuery `aos_logs` dataset and 9 tables created (`GAOS-Deploy-Spec.md §7`): 6 Grafana staging tables via `scripts/create_staging_tables.py`, plus `task_outcomes`, `agent_checkpoints`, and `monologue_frames` via separate Python snippets in §7
 - [ ] Vertex AI Memory Bank — 7 corpora created (global + 6 domains)
 - [ ] All 7 agent Cloud Run services deployed
 - [ ] Pub/Sub subscription push endpoints updated with Cloud Run URLs
