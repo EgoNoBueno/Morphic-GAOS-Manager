@@ -2001,7 +2001,7 @@ Phase 2 is complete — and Phase 3 (multi-agent orchestration) may begin — wh
 
 - [x] Ollama installed locally (`ollama list` shows at least one model) ✅ (`llama3:latest`, `qwen2.5-coder:7b` — confirmed 2026-03-18)
 - [x] `LOCAL_MODEL` alias in `settings.yaml` resolves to an installed Ollama model (`ollama/llama3`) ✅ (2026-03-18)
-- [x] `LOCAL_MODEL_TIMEOUT_SECONDS` set high enough to avoid false Gemini fallback (`30`) ✅ (2026-03-18)
+- [x] `LOCAL_MODEL_TIMEOUT_SECONDS` set high enough to avoid false Gemini fallback (`90`) ✅ (2026-03-18 → initially `30`; later raised to `90` after continued CPU-only timeouts)
 - [x] `_call_model()` routes to Ollama when `web_access=False` and model is `LOCAL_MODEL` ✅ (confirmed via direct API call, HTTP 200)
 - [x] `scripts/observability_loop.py --once` completes with no errors and appends a `SYSTEM_THOUGHTS` row to the Logs tab ✅ (2026-03-18 — 49 rows sampled, `ollama/llama3`)
 - [x] All 332 unit tests still passing after Ollama integration ✅ (2026-03-18)

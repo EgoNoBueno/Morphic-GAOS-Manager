@@ -338,6 +338,7 @@ Morphic-GAOS-Manager/
 │   ├── drive.py                  # Knowledge/ folder read/write
 │   ├── memory.py                 # Vertex AI Memory Bank read/write
 │   ├── webhook_sender.py         # HMAC-signed Approval Gate proposals
+│   ├── gmail.py                  # Gmail API read/send via OAuth2 — inbound email monitoring and outbound sending
 │   ├── google_chat.py            # Google Chat card + message sender (Phase 2.5 Step 1)
 │   ├── web_search.py             # DuckDuckGo Instant Answer API — free, no key, Ollama context injection only
 │   ├── vertex_search.py          # Vertex AI Search over Drive Knowledge/ corpus (Phase 2.5 Step 3)
@@ -485,7 +486,7 @@ Volume includes the `think` node (`GAOS-Persona-Spec.md` §4) and weekly frictio
 |---------|-----------|---------------------|-------------------|
 | **Cloud Pub/Sub** | $0.04/GB after 10 GB free | ~50 MB messages | **$0.00** (under free tier) |
 | **Cloud Run** (agent runtime + triggers) | $0.000024/vCPU-sec + $0.0000025/GB-sec | ~500 agent invocations × 2 s × 0.25 vCPU + 2 scheduled jobs | **~$0.01** |
-| **Cloud Scheduler** | $0.10/job/month (first 3 free) | 3 jobs (TTL sweep + archive + daily-kickoff); 4th job `doc-comment-poll` = $0.10/month (Phase 2.5 Step 5) | **$0.00** (3 jobs within free tier); **$0.10** when Phase 2.5 Step 5 is deployed |
+| **Cloud Scheduler** | $0.10/job/month (first 3 free) | 5 jobs: `gaos-archive` (2 AM nightly), `gaos-daily-sync` (6 AM), `gaos-sheets-sync` (every 5 min), `gaos-gmail-renew-watch` (every 23 h), `gaos-daily-digest` (2 PM UTC) — provisioned via `scripts/provision_schedulers.py` | **$0.20/month** (3 free; 2 above free tier at $0.10 each) |
 | **Gemini Flash (`FAST_MODEL`)** | ~$0.075/1M input + ~$0.30/1M output tokens | ~700K in + 150K out (routing, Scout synthesis, fallback tasks) | **~$0.10** |
 | **Gemini Pro (`DEEP_MODEL`)** | ~$1.25/1M input + ~$5.00/1M output tokens | ~800K in + 200K out (approvals, think node, diagnostics, weekly review) | **~$2.00** |
 | **Vertex AI Code Execution** | ~$0.001/session | ~10 sessions (evolution tasks) | **~$0.01** |
@@ -493,7 +494,7 @@ Volume includes the `think` node (`GAOS-Persona-Spec.md` §4) and weekly frictio
 | **Google Secret Manager** | Free first 6 secrets; $0.06/10K accesses | 6 secrets, ~1K accesses | **$0.00** |
 | **BigQuery** | $0.02/GB storage after 10 GB free | ~1 GB cold archive | **$0.00** (under free tier) |
 | **Vertex AI Agent Engine** | ~$50–$135/month (1 vCPU / 2 GB, always-on) | **Not used in Phase 1–4** | **$0.00** *(deferred)* |
-| **Total (Phase 1–4)** | | | **≈ $5/month** |
+| **Total (Phase 1–4)** | | | **≈ $3–5/month** |
 
 > **Budget trigger:** If monthly spend exceeds **$5.00**, Nexus-Prime publishes a Priority-4 `ALERT`. Review and adjust this threshold after three months of live operation based on actual usage data.
 
@@ -710,7 +711,7 @@ models:
   DEEP_MODEL: "gemini-2.5-pro"          # High-capability cloud model
   LOCAL_MODEL: "ollama/llama3"          # Local zero-cost model (primary)
   LOCAL_MODEL_FALLBACK: "gemini-2.5-flash"  # Cloud fallback when Ollama unreachable
-  LOCAL_MODEL_TIMEOUT_SECONDS: 30       # Timeout before switching to fallback
+  LOCAL_MODEL_TIMEOUT_SECONDS: 90       # Timeout before switching to fallback
 ```
 
 ### `DEEP_MODEL` — The Executive Kernel
@@ -758,7 +759,7 @@ When Google releases a new Gemini version or a better local model becomes availa
 | `DEEP_MODEL` | `gemini-2.0-pro` | `gemini-2.5-pro` | 2.0 deprecated (404); 2.5-pro confirmed via `models.list()` |
 | `LOCAL_MODEL` | `ollama/llama3.1` | `ollama/llama3` | `llama3.1` is not installed locally; only `llama3:latest` is present — using the old identifier would cause silent fallback on every call |
 | `LOCAL_MODEL_FALLBACK` | `gemini-2.0-flash` | `gemini-2.5-flash` | Matches FAST_MODEL migration above |
-| `LOCAL_MODEL_TIMEOUT_SECONDS` | `2` | `30` | 2 s was empirically insufficient for local Ollama inference; 30 s matches the observed p95 response time on this hardware. UX tradeoff: worst-case task start time increases by 28 s before cloud fallback kicks in — acceptable for background jobs (observability, summaries) that do not block interactive responses |
+| `LOCAL_MODEL_TIMEOUT_SECONDS` | `2` | `90` | 2 s was empirically insufficient for local Ollama inference; initially set to 30 s on 2026-03-18, then raised to 90 s after continued Ollama timeouts on CPU-only inference. 90 s matches the p95 response under load without triggering excessive cloud fallback. |
 
 **Approval Gate status:** Emergency migration — `gemini-2.0-flash` was returning 404 in production, making the fallback path non-functional. Change applied immediately under the deprecation-forced exception. A Priority 2 Approval Gate entry should be logged to the Audit Trail sheet tab before the next planned model change.
 
@@ -1397,6 +1398,8 @@ Storing API keys in `.env` files is acceptable **only during local development**
 | `WEBHOOK_URL` | Apps Script Web App URL | Nexus-Prime (`webhook_sender.py`) |
 | `GOOGLE_SEARCH_API_KEY` | Google Custom Search JSON API key | Scout (`tools/google_search.py` — `_discover` node, Phase 2.5 Step 6) |
 | `GOOGLE_SEARCH_CX` | Custom Search Engine ID (CX) | Scout (`tools/google_search.py` — `_discover` node, Phase 2.5 Step 6) |
+| `GMAIL_OAUTH_CREDENTIALS` | OAuth2 credentials JSON for Gmail API (generated via `scripts/setup_gmail_oauth.py`) | Nexus-Prime (`tools/gmail.py` — inbound email monitoring and outbound email send) |
+| `GMAIL_AUTHORIZED_SENDERS` | Newline-delimited list of email addresses that may trigger Nexus-Prime tasks via inbound email | Nexus-Prime (`orchestrator.py` — inbound allowlist gate; **must never contain the outbound `sender_address`** — see Rule 26.1) |
 
 > **No JSON key files in Secret Manager.** All Google service access (Sheets, Pub/Sub, BigQuery, Drive, Vertex AI) is handled via service account identity — each Cloud Run service runs as its own SA and calls `google.auth.default()`. Service account JSON keys are not created, stored, or injected anywhere in this system. See `GAOS-Deploy-Spec.md §2`.
 | Environment | Secret Source | `.env` allowed? |
@@ -1681,7 +1684,9 @@ Inserted between Phase 2 and Phase 3. All items below must be deployed and verif
   4. Resume only when the Apps Script `onChange` push arrives via Pub/Sub with status `"Approved"` or `"Rejected"`.
   5. Cloud Scheduler TTL sweep handles the no-response case (see Section 3.B).
 
-### Phase 4: The Validation ("First Run")
+### Phase 4: The Validation ("First Run") — *Complete*
+> **Status: Complete — Full GAOS stack deployed and verified 2026-04-03. GAOS-Doctor: 41 OK, 1 WARN, 0 FAIL (42 checks across 8 groups). All Tier 2 orchestrators live on Cloud Run; Pub/Sub OIDC auth verified on all 25 subscriptions.**
+
 1. Run connectivity test — verify a row appears in the sheet.
 2. Manually change status to `Approved`.
 3. Click **🤖 Agent OS > Sync**.
