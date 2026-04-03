@@ -1852,3 +1852,5 @@ Last evolution task: <task ID or "none">
 ```
 
 **Convention:** File name is the agent's lowercase short name (`beacon.md`, `ledger.md`, `pursuit.md`, `foreman.md`, `steward.md`, `scout.md`). Files live in `Docs/agents/` and are loaded individually — never the full spec.
+
+> ⚠️ **Warning — §18.2 template vs. live agent files:** The `Knowledge Sources` section in the template above references `Docs/architecture/a2a-protocol.md`. That path does not exist — the `Docs/architecture/` subdirectory was never created (Phase 1 exit criterion #5, the doc split, was deferred and remains unexecuted as of 2026-04-03). The live agent identity files in `Docs/agents/` reference Google Drive `Knowledge/` folder paths instead (e.g., `Knowledge/workflows/weekly_reporting.md`, `Knowledge/policies/expense_approval_policy.md`). When creating a new agent identity file, use `Knowledge/<domain>/<filename>.md` Drive paths in the Knowledge Sources section — not `Docs/architecture/` paths.
