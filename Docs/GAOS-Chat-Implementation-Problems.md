@@ -1,9 +1,15 @@
-# Google Chat Implementation Problems — Morphic-GAOS
+# GAOS Integration Problems — Morphic-GAOS
 
-Production failures encountered during GAOS Chat integration development.
+Production failures encountered during GAOS Chat and Gmail integration development.
 Organized by failure class. Each entry has root cause, symptom, and exact fix.
 
-_Last updated: 2026-03-24 — Morphic-GAOS Phase 2.5_
+_Last updated: 2026-04-03 — Phase 4_
+
+> ⚠️ **Note — Google Chat delivery abandoned 2026-03-30.** The `/chat` endpoint
+> remains deployed and card-button callbacks still function, but Google Chat never
+> reliably delivered messages from mobile. The primary communication channel is now
+> Gmail. Entries in this document apply to the full GAOS integration stack, not
+> Chat exclusively. See `GAOS-Chat-Dev-Reference.md` for the full post-mortem.
 
 ---
 
@@ -46,9 +52,46 @@ Any 204 path must have zero body.
 
 ---
 
+### 3. Gmail outbound reply triggers infinite inbound loop (2026-04-02)
+
+**Root cause:** `GMAIL_AUTHORIZED_SENDERS` contained `aos@sl10repairtechs.com` — the
+same address the system sends from. When a test email was sent from the monitored
+inbox, an auto-reply arrived from `aos@`. It passed the authorized-senders gate,
+triggered a new `compose_reply` run, which sent another reply, which triggered
+another auto-reply — indefinitely. The code-layer `_own_addresses` check existed
+but was not yet deployed in the active Cloud Run revision at the time.
+
+**Symptom:** ~89,000 Pub/Sub faults and 18 outbound emails before manual
+intervention. Cloud Logging showed `EMAIL_RECEIVED` messages at burst rate. No
+exception was raised — the loop looked like normal high-volume processing.
+
+**Impact scale:** A 25-turn loop at ~$0.003/reply = ~$0.075. At Pub/Sub fanout rates
+this reached saturation in under 3 minutes.
+
+**Fix — two independent layers required:**
+
+1. **Code layer** — `_own_addresses` check runs *before* the authorized-senders
+   gate in `process_gmail` (per Rule 26.1):
+   ```python
+   _own_addresses = {settings.gmail.monitored_address, settings.gmail.sender_address}
+   if from_addr in _own_addresses:
+       continue  # exits before authorized_senders check
+   ```
+2. **Config layer** — remove `aos@sl10repairtechs.com` from `GMAIL_AUTHORIZED_SENDERS`.
+   The secret must only contain real human inboxes. Correct value:
+   `dhess@sl10repairtechs.com,denton.hess@gmail.com`.
+
+Neither layer alone is sufficient: a code-only guard is bypassed by misconfiguration;
+a config-only guard is bypassed by code regression. Both must pass simultaneously
+for a loop to form.
+
+**Fixed:** 2026-04-02 — removed `aos@` from secret; code-layer guard deployed.
+
+---
+
 ## Auth Failures That Present as Silent 403s
 
-### 3. `impersonated_credentials.Credentials(subject=...)` silently ignores `subject`
+### 4. `impersonated_credentials.Credentials(subject=...)` silently ignores `subject`
 
 **Root cause:** The generated token has no `sub` claim — the SA acts as itself with
 no Drive quota → 403 on every Docs/Drive call. This is a known limitation of
@@ -66,7 +109,7 @@ Google Workspace Admin → Security → API Controls → Domain-wide Delegation.
 
 ---
 
-### 4. `iamcredentials.googleapis.com` must be enabled — error message is misleading
+### 5. `iamcredentials.googleapis.com` must be enabled — error message is misleading
 
 **Root cause:** `google.auth.iam.Signer` calls the IAM Credentials API (`signBlob`).
 If the API is not enabled on the project, the call returns `403 SERVICE_DISABLED`.
@@ -84,7 +127,7 @@ gcloud services enable iamcredentials.googleapis.com --project=morphic-gaos-prod
 
 ---
 
-### 5. Chat JWT audience must include the `/chat` path
+### 6. Chat JWT audience must include the `/chat` path
 
 **Root cause:** `_verify_chat_jwt()` was verifying against the base `CLOUD_RUN_URL`.
 Google Chat signs JWTs with an audience of `{service_url}/chat` — including the path.
@@ -102,9 +145,46 @@ audience = f"{service_url}/chat"   # not just service_url
 
 ---
 
+### 7. Pub/Sub push subscriptions missing OIDC auth
+
+**Root cause:** Pub/Sub push subscriptions to Cloud Run require an OIDC service
+account token so Cloud Run's IAM check accepts the request. Subscriptions created
+without `--push-auth-service-account` send unauthenticated requests — every push
+returns 401, which Pub/Sub treats as a delivery failure and retries at ~1 req/sec.
+
+**Symptom:** Cloud Logging flooded with 401s at ~1/sec per subscription. The 8
+`/pubsub` subscriptions (one per agent × `/pubsub`) generated the flood while the
+2 Gmail subs (provisioned later, with OIDC) were healthy. The subscriptions appeared
+green in `gcloud pubsub subscriptions list` — no health indicator distinguishes
+"delivering 401" from "delivering 200".
+
+**Misleading detail:** The subscription list output shows no `serviceAccountEmail`
+field when OIDC is absent — it does not show an error. The only observable signal is
+the 401 rate in Cloud Logging.
+
+**Fix:** Re-configure each affected subscription:
+```powershell
+gcloud pubsub subscriptions modify-push-config <subscription-name> `
+    --push-auth-service-account=pubsub-push-sa@morphic-gaos-prod.iam.gserviceaccount.com `
+    --project=morphic-gaos-prod
+```
+
+Verify after applying:
+```powershell
+gcloud pubsub subscriptions describe <subscription-name> | Select-String "serviceAccountEmail"
+```
+
+**Prevention:** `scripts/provision_infra.py` (or Terraform) must set
+`--push-auth-service-account` on every push subscription at creation time. Any
+subscription without this field is misconfigured.
+
+**Fixed:** 2026-04-02 — all 8 `/pubsub` subscriptions re-configured with OIDC.
+
+---
+
 ## Silent Config Failures (No Error, Wrong Behavior)
 
-### 6. Pydantic silently drops unknown YAML fields
+### 8. Pydantic silently drops unknown YAML fields
 
 **Root cause:** Pydantic `BaseModel` ignores YAML keys that have no matching field
 declaration. The value is present in `settings.yaml` and correctly stored in Secret
@@ -135,7 +215,7 @@ entry — one Cloud Logging line reveals which path Cloud Run actually took.
 
 ---
 
-### 7. `dict.get("key", default)` does not fall back on empty string
+### 9. `dict.get("key", default)` does not fall back on empty string
 
 **Root cause:** `initial_state` initialized `project_id=""`. `.get("project_id", settings.GCP_PROJECT_ID)`
 returns `""` — the empty string IS the value. The default is only used when the key
@@ -157,7 +237,7 @@ project_id = state.get("project_id") or settings.GCP_PROJECT_ID
 
 ---
 
-### 8. `GOOGLE_APPLICATION_CREDENTIALS` env var silently overrides ADC
+### 10. `GOOGLE_APPLICATION_CREDENTIALS` env var silently overrides ADC
 
 **Root cause:** If this env var is set in `.env` or the shell (even to a nonexistent
 file path), `google-auth` skips `gcloud auth application-default login` credentials
@@ -172,7 +252,7 @@ key file auth.
 
 ---
 
-### 9. `publish()` silently drops messages when called with a third positional argument
+### 11. `publish()` silently drops messages when called with a third positional argument
 
 **Root cause:** `publish(topic, msg)` reads `project_id` internally from
 `settings.GCP_PROJECT_ID`. Five orchestrators were calling `publish(topic, msg, pid)`
@@ -192,7 +272,7 @@ call) was publishing successfully.
 
 ## Cloud Run Environment Traps
 
-### 10. `--timeout 60s` causes `CancelledError` on LLM calls
+### 12. `--timeout 60s` causes `CancelledError` on LLM calls
 
 **Root cause:** Gemini API + LangGraph graph traversal can exceed 60s under load or
 during cold start. When the Cloud Run request timeout fires, the async task is
@@ -209,7 +289,7 @@ gcloud run services update nexus-prime --timeout=300 --region=us-central1
 
 ---
 
-### 11. `gcloud run deploy --source` with a pinned traffic revision does not auto-route
+### 13. `gcloud run deploy --source` with a pinned traffic revision does not auto-route
 
 **Root cause:** If any traffic is pinned to a specific revision (`nexus-prime-00050=100`),
 a new deploy creates the revision but leaves traffic on the old pinned revision.
@@ -226,7 +306,7 @@ gcloud run services update-traffic nexus-prime --to-latest --region=us-central1
 
 ---
 
-### 12. `MemorySaver` (LangGraph in-process checkpoint) wiped on every cold start
+### 14. `MemorySaver` (LangGraph in-process checkpoint) wiped on every cold start
 
 **Root cause:** `MemorySaver` stores graph state in process RAM. Cloud Run scales to
 zero after ~15 minutes of inactivity and between request scaling events. Every cold
@@ -244,7 +324,7 @@ messages will silently lose context mid-conversation. See GAOS-Chat-Dev-Referenc
 
 ## Dependency / API Mismatches
 
-### 13. `google-generativeai` is EOL — model calls return 404
+### 15. `google-generativeai` is EOL — model calls return 404
 
 **Root cause:** The Gemini Python SDK split. `google-generativeai` (old package) routes
 to the `v1beta` endpoint, which has dropped support for several model versions
@@ -270,7 +350,7 @@ Full migration notes in `GAOS-Deploy-Spec.md §0.3`.
 
 ---
 
-### 14. AI Studio API keys bill to Google's shared project, not yours
+### 16. AI Studio API keys bill to Google's shared project, not yours
 
 **Root cause:** API keys created at `aistudio.google.com` are scoped to a Google-owned
 shared project — your GCP billing credits and quota allocations do not apply to them.
