@@ -1,6 +1,6 @@
 # Gmail Integration — Implementation Plan v3
 
-_Last updated: 2026-03-31_
+_Last updated: 2026-04-03 — all phases complete and deployed_
 
 ---
 
@@ -20,6 +20,10 @@ Gmail watch() → gmail-notifications Pub/Sub topic
             → publish EMAIL_RECEIVED to agent.nexus-prime.events
             → mark_as_read()
             → write new_history_id + watch_expiration to System_State Sheet
+    → route() dispatches EMAIL_RECEIVED to compose_reply LangGraph node
+            → FAST_MODEL composes reply (brand voice, thread context)
+            → send_email() via Gmail API
+            → update_row("Email Inbox", status="Replied")
 ```
 
 **Key invariant:** The webhook never touches an LLM. The Gmail Pub/Sub 10-second push timeout is structurally impossible to hit because `/gmail-webhook` only publishes one Pub/Sub message and returns. All processing is handled asynchronously by the existing Pub/Sub pipeline.
@@ -30,16 +34,17 @@ Gmail watch() → gmail-notifications Pub/Sub topic
 
 | File | Change |
 |------|--------|
-| `tools/gmail.py` | **New** — 6 public functions |
+| `tools/gmail.py` | **New** — 11 public/private functions (6 public) |
 | `models/__init__.py` | 2 new `MessageType` values |
 | `scripts/setup_workspace.py` | Add `System_State` tab to `TABS` + `HEADERS` |
-| `agents/nexus_prime/orchestrator.py` | `handle_gmail_webhook()`, `handle_gmail_renew_watch()`, new LangGraph node `process_gmail_notification` |
+| `agents/nexus_prime/orchestrator.py` | `handle_gmail_webhook()`, `handle_gmail_renew_watch()`, LangGraph nodes `process_gmail_notification` + `compose_reply` |
 | `main.py` | 2 new endpoints + docstring table update |
 | `scripts/provision_schedulers.py` | 1 new scheduler job |
 | `scripts/setup_gmail_oauth.py` | **New** — one-time interactive OAuth2 setup |
-| `tests/test_gmail.py` | **New** — 8 unit tests |
-| `tests/test_agents.py` | New `TestGmailWebhook` class (4 tests) |
-| `config/settings.yaml` | New `gmail:` section |
+| `scripts/renew_gmail_watch.py` | **New** — one-shot watch renewal helper |
+| `tests/test_gmail.py` | **New** — 11 unit tests |
+| `tests/test_agents.py` | New `TestGmailWebhook` class (4 tests) + `TestComposeReply` class (5 tests) |
+| `config/settings.yaml` | New `gmail:` section (6 keys) + `outbound:` section |
 
 ---
 
@@ -267,7 +272,7 @@ The script is **interactive** and **idempotent** — safe to re-run if a step fa
 
 ---
 
-## Phase 8 — `tests/test_gmail.py` (new — 8 unit tests)
+## Phase 8 — `tests/test_gmail.py` (11 unit tests)
 
 All mocked at the SDK boundary: `googleapiclient.discovery.build` and `tools.secrets.get_secret`.
 
@@ -276,16 +281,20 @@ All mocked at the SDK boundary: `googleapiclient.discovery.build` and `tools.sec
 | `test_fetch_new_messages_happy` | Mock `history.list` returns 2 messages; assert 2 parsed dicts with correct fields; `new_history_id` matches API response |
 | `test_fetch_new_messages_empty` | Mock returns no `messagesAdded`; assert `([], same_history_id)` |
 | `test_fetch_new_messages_api_error` | Mock raises `HttpError`; assert `GmailAPIError` raised |
+| `test_fetch_new_messages_404_skipped` | Mock raises `HttpError` 404 on individual message fetch; assert message skipped, others processed |
 | `test_get_thread_context_happy` | Mock `threads.get` returns 5 messages; assert only last 3 returned (default `max_messages`) |
 | `test_mark_as_read_happy` | Mock `messages.modify`; assert called with `removeLabelIds=["UNREAD"]` and correct `message_id` |
 | `test_send_email_happy` | Mock `messages.send`; assert RFC 2822 message constructed; `message_id` returned |
 | `test_send_email_with_thread_id` | Assert `threadId` passed in request body and `In-Reply-To` header set |
+| `test_send_email_with_from_addr` | Assert custom `from_addr` overrides the default sender |
 | `test_send_email_api_error` | Mock raises `HttpError`; assert `GmailAPIError` raised |
 | `test_get_gmail_service_secret_missing` | `get_secret` raises `SecretNotFoundError`; assert `GmailAuthError` raised |
 
 ---
 
-## Phase 9 — `tests/test_agents.py` — `TestGmailWebhook` class (4 tests)
+## Phase 9 — `tests/test_agents.py` — `TestGmailWebhook` + `TestComposeReply` classes
+
+### `TestGmailWebhook` (4 tests)
 
 | Test | What it verifies |
 |------|-----------------|
@@ -294,19 +303,40 @@ All mocked at the SDK boundary: `googleapiclient.discovery.build` and `tools.sec
 | `test_gmail_process_node_skips_unauthorized` | Mock `fetch_new_messages` returns 1 msg from unauthorized sender; assert `processed=0`, `skipped=1`, no `append_row` call |
 | `test_gmail_webhook_endpoint_wrong_agent` | `TestClient` POST `/gmail-webhook` with `AGENT_NAME=beacon`; assert 404 |
 
+### `TestComposeReply` (5 tests)
+
+| Test | What it verifies |
+|------|-----------------|
+| `test_compose_reply_happy` | Mock `_call_model` + `send_email` + `update_row`; assert reply sent, `Email Inbox` row updated to `Replied` |
+| `test_compose_reply_skips_on_model_failure` | Mock `_call_model` raises; assert no `send_email` call, state returned cleanly |
+| `test_compose_reply_skips_on_missing_message` | No `incoming_message` in state; assert no-op |
+| `test_compose_reply_skips_send_on_send_failure` | Mock `send_email` raises `GmailAPIError`; assert failure logged, state returned without crash |
+| `test_compose_reply_prefixes_re_only_once` | Subject already starts with `Re:`; assert `send_email` called with unchanged subject (no `Re: Re:` doubling) |
+
 ---
 
 ## Phase 10 — `config/settings.yaml`
 
-Add a new `gmail:` section:
+Add a new `gmail:` section and `outbound:` section:
 
 ```yaml
 gmail:
-  monitored_address: ''       # your Gmail address — populated after setup_gmail_oauth.py
-  label_id: ''                # e.g. Label_1234567890 — populated after setup_gmail_oauth.py
-  pubsub_topic: ''            # full topic path: projects/<pid>/topics/gmail-notifications
+  monitored_address: 'dhess@sl10repairtechs.com'    # Inbox watched by Gmail push
+  sender_address: 'aos@sl10repairtechs.com'         # Alias used as From on outbound emails
+  alert_address: 'dentonh18@yahoo.com'              # System error alerts — must NOT equal monitored_address
+  label_id: 'Label_6'                               # Gmail label ID (GAOS-Tasks)
+  pubsub_topic: 'projects/morphic-gaos-prod/topics/gmail-notifications'
   max_results: 50
+  trigger_keyword: 'GAOS'  # Only process emails whose subject contains this word (case-insensitive). Clear to disable.
+
+outbound:
+  max_emails_per_task: 3       # Hard cap per single task execution (Rule 26.2)
+  max_publishes_per_task: 10   # Hard cap on Pub/Sub publishes per task (Rule 26.2)
+  flood_window_minutes: 60     # Rolling window for flood detection (Rule 26.3)
+  flood_threshold: 10          # Max emails in window before abort (Rule 26.3)
 ```
+
+> ⚠️ **Warning — `sender_address` must never appear in `GMAIL_AUTHORIZED_SENDERS`.** See Rule 26.1 and the loop-incident warning in Phase 4 above.
 
 ---
 
@@ -323,19 +353,37 @@ Both fetched at runtime via `tools.secrets.get_secret()`. Neither stored in sour
 
 ## Verification Checklist
 
-1. `pytest tests/test_gmail.py -v` → 9 tests green
-2. `pytest tests/test_agents.py::TestGmailWebhook -v` → 4 tests green
+1. `pytest tests/test_gmail.py -v` → 11 tests green
+2. `pytest tests/test_agents.py::TestGmailWebhook tests/test_agents.py::TestComposeReply -v` → 9 tests green
 3. `pytest --tb=short` → full suite green (zero regressions)
 4. `ruff check --fix .; if ($LASTEXITCODE -eq 0) { ruff format . }`
 5. Manual: `python scripts/setup_gmail_oauth.py` → label ID confirmed, watch registered, expiration printed
 6. Manual: `python scripts/provision_schedulers.py` → `gaos-gmail-renew-watch` job visible in Cloud Scheduler console
-7. Manual E2E: send email with `GAOS-Tasks` label applied → Cloud Logging shows `GMAIL_NOTIFICATION` received + `EMAIL_RECEIVED` published → `Email Inbox` Sheet tab has new row
+7. Manual E2E: send email with subject containing `GAOS` → Cloud Logging shows `GMAIL_NOTIFICATION` received + `EMAIL_RECEIVED` published → `Email Inbox` Sheet tab has new row → reply sent from `aos@sl10repairtechs.com`
 
 ---
 
-## Out of Scope (Phase 4+)
+## Phase 11 — `compose_reply` LangGraph node (implemented)
 
-- LangGraph reply-composition node (wiring `EMAIL_RECEIVED` into a respond/draft workflow)
-- Gmail push notifications replacing Cloud Scheduler watch renewal (polling is fine for renewal)
+> **Note:** Originally listed as out-of-scope future work. Implemented and deployed.
+
+`route()` dispatches `EMAIL_RECEIVED` → `"compose_reply"`.
+
+Logic:
+1. Extract `incoming_message` from state; skip if absent.
+2. Load thread context from `msg.payload["thread_context"]`.
+3. Call `_call_model(prompt, model=FAST_MODEL)` — prompt includes brand voice, thread history, and owner context from the identity file.
+4. Prefix subject with `Re: ` (only once — guards against `Re: Re:` doubling).
+5. Call `send_email(project_id, to=from_addr, subject=subject, body=reply_text, thread_id=thread_id, in_reply_to=message_id)`.
+6. `update_row("Email Inbox", message_id, {"Status": "Replied"}, project_id)`.
+7. Accumulate `cost_usd` and `tokens_used` into state.
+
+On any `_call_model` or `GmailAPIError` exception: log with `_log_cloud`, return state without crashing.
+
+---
+
+## Out of Scope (future)
+
 - Per-thread Firestore shadow (Sheets `System_State` is sufficient for MVP)
 - Multi-account support
+- Gmail push notifications replacing Cloud Scheduler watch renewal (polling is fine for renewal)
