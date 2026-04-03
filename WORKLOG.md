@@ -5,6 +5,44 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-04-02T18:55-07:00 — Post-Deploy OIDC Fix + E2E Validation
+
+### What happened
+- Deployed revision `nexus-prime-00081-vvr` with all hardening commits from the earlier session.
+- Immediately observed ~20+/min `"The request was not authenticated"` WARNINGs hitting `/pubsub`. Root cause: all 8 `/pubsub` push subscriptions had no OIDC token configured — `pushConfig.oidcToken.serviceAccountEmail` was empty.
+- The two Gmail-related subscriptions (`gmail-notifications-push`, `nexus-prime-error-alerts-push`) already had OIDC set correctly. The `/pubsub` subscriber subscriptions were missing it.
+- Fixed all 8 `/pubsub` subscriptions with `gcloud pubsub subscriptions modify-push-config --push-auth-service-account=pubsub-push-sa@morphic-gaos-prod.iam.gserviceaccount.com`. Flood stopped immediately.
+- Also corrected stale push endpoint on `nexus-prime.sub.events` (was pointing at old URL `nexus-prime-7bu22bxlda-uc.a.run.app`).
+- Updated `alert_address` from `benny.hess918@gmail.com` to `dentonh18@yahoo.com` in `settings.yaml`, `settings.yaml.template`, and test fixtures (commit `940cbb2`).
+- Sent end-to-end test email from `denton.hess@gmail.com` → `dhess@sl10repairtechs.com`.
+
+### E2E test result
+- `01:48:01` — `/gmail-webhook` 200 OK (Gmail notification received)
+- `01:48:08` — `process_gmail: processed=1 skipped=0 new_history_id=306814` (email ingested)
+- `01:48:09` — `EMAIL_RECEIVED` dispatched → Gemini 2.5 Flash called
+- `01:48:17` — `compose_reply: reply sent to Denton Hess <denton.hess@gmail.com> (sent_id=19d5106dac886ac0, chars=103)` ✅
+- `01:48:13` — `process_gmail: processed=0 skipped=0` (sent reply triggered second Gmail notification; system saw `aos@` as sender, identity check passed cleanly, no reply loop) ✅
+- Reply confirmed received in `denton.hess@gmail.com` inbox ✅
+
+### Files changed
+- `config/settings.yaml` — `alert_address: dentonh18@yahoo.com`
+- `config/settings.yaml.template` — `alert_address` default updated
+- `tests/test_agents.py` — `_make_settings` default and 2 alert routing test assertions updated
+- _(OIDC and stale URL fixes were gcloud-only — no source files changed)_
+
+### Infra changes (gcloud only)
+- `nexus-prime.sub.events` push endpoint corrected to current Cloud Run URL
+- 8 `/pubsub` push subscriptions: OIDC auth added (`pubsub-push-sa@morphic-gaos-prod.iam.gserviceaccount.com`)
+
+### Lessons learned
+> ⚠️ **Pub/Sub push subscriptions created without `--push-auth-service-account` silently operate unauthenticated.** The subscription appears healthy in `gcloud pubsub subscriptions list` but every delivery returns 401/403 from Cloud Run. Always verify with `gcloud pubsub subscriptions describe <name> | Select-String "serviceAccountEmail"` after provisioning. The `/pubsub` subscriptions were missing OIDC while the Gmail-specific subscriptions had it — inconsistent provisioning left the gap invisible until logs were checked post-deploy.
+
+### What's next
+- E2E pipeline validated ✅ — system is production-ready for email handling
+- Monitor Sheets 429 quota hit observed at `01:15:53` (burst during concurrent tasks) — may need per-task Sheets rate limiting if frequency increases
+
+---
+
 ## 2026-04-02T21:30-07:00 — Second Email Loop + Hardening Session
 
 ### What happened
