@@ -78,6 +78,13 @@ class AgentWorkingMemory(TypedDict):
     observation_buffer: list[dict]  # Candidate learnings seen this session
     cost_usd: float                 # Running cost for this invocation
     iteration_count: int            # For evolution loops
+    step_count: int                 # LangGraph step counter
+    tokens_used: int                # Token consumption this invocation
+    incoming_message: A2AMessage | None  # Current message being handled
+    messages: list                  # LangGraph message log
+    _started_at: float              # Boot timestamp (set at boot, used for elapsed-time logging)
+    hard_stop_triggered: bool       # True if a hard stop constraint fired
+    evolution_triggered: bool       # True if Write-Test-Refine loop is active
 ```
 
 ### Rules
@@ -148,7 +155,7 @@ def query_episodic(agent_id: str, project_id: str,
 
 ### §4.1 Episodic Summarization — Planned, Not Yet Implemented
 
-> **Status: Deferred to Phase 4.** The system launched 2026-03-21; the `task_outcomes` BigQuery table has insufficient history (<7 days) to make pattern clustering meaningful. Multi-project scoping also requires design work before implementation.
+> **Status: Deferred — not yet implemented.** Phase 4 is complete (2026-04-03). Sweep 0 requires ≥ 30 days of task history (history started 2026-03-21; target re-evaluation ~2026-04-20) and a `bq_query_tool` wrapper in `tools/bigquery.py` that does not yet exist. Multi-project scoping also requires design work before implementation.
 
 **Planned design (Sweep 0):**
 
@@ -160,7 +167,7 @@ A nightly pre-sweep will run before the existing three sweeps in `nightly_knowle
 
 **Blocked by:** Sweep 0 must accept an explicit `project_id` at all BigQuery and Sheets call sites. Cross-project contamination is a hard failure mode — without scoping, pattern clusters from different clients could be mixed. A `bq_query_tool` wrapper in `tools/bigquery.py` is also required (currently only `insert_row()` is implemented).
 
-**Re-evaluate in Phase 4** when ≥ 30 days of task history is available and the multi-project scoping design is complete.
+**Re-evaluate once ≥ 30 days of task history is available** (target ~2026-04-20) and the multi-project scoping design is complete.
 
 ---
 
@@ -235,9 +242,9 @@ class MemoryEntry(BaseModel):
     content: str                 # The knowledge, written as a clear declarative statement
     evidence: list[str]          # task_ids that supported approval
     confidence: float            # Final confidence score at approval time
-    approved_by: str             # Owner email
-    approved_at: datetime
-    version: int                 # Starts at 1; increments on each approved update
+    approved_by: str = ""        # Owner email
+    approved_at: datetime | None = None  # Set at approval time; None for auto-promoted entries
+    version: int = 1             # Starts at 1; increments on each approved update
     supersedes: str | None       # memory_id of the entry this replaces (None for v1)
     active: bool                 # False = deprecated/superseded — not loaded at boot
     tags: list[str]              # Free-form tags for retrieval (e.g., ["vendor", "payment", "net30"])
@@ -678,16 +685,14 @@ class KnowledgeProposal(BaseModel):
     drive_file_path: str | None       # e.g., "Knowledge/workflows/ap_reconciliation.md"
     proposed_diff: str | None         # Unified diff format of the proposed change
 
-    evidence: list[str]          # task_ids supporting this knowledge
-    confidence: float
-    observation_count: int
-    rationale: str               # Plain-language explanation of why this update is valuable
-    approved_by: str | None      # Populated at approval time (email from Agent_Approvals col K)
+    evidence: list[str] = []     # task_ids supporting this knowledge
+    confidence: float = 0.0
+    observation_count: int = 0
 ```
 
 ### Approval Gate Column H for Knowledge Proposals
 
-Column H (`Proposed Code`) in `Agent_Approvals` carries the full `KnowledgeProposal` JSON for knowledge proposals (not Python code). The code injection gates in `syncSkillsToVertex` skip non-code proposals (identified by `message_type = KNOWLEDGE_PROPOSAL`).
+Column H (`Proposed Code`) in `Agent_Approvals` carries the full `KnowledgeProposal` JSON for knowledge proposals (not Python code). The code injection gates in `syncSkillsToVertex` skip non-code proposals (identified by `trigger_reason = "KNOWLEDGE_THRESHOLD"` on the `ApprovalProposal` row).
 
 ### What Nexus-Prime Does on Approval
 
@@ -695,11 +700,11 @@ Column H (`Proposed Code`) in `Agent_Approvals` carries the full `KnowledgePropo
 # nexus_prime/knowledge_handler.py
 
 async def handle_knowledge_approval(proposal: KnowledgeProposal,
+                                    approved_by: str,    # from Agent_Approvals col K
                                     project_id: str) -> None:
     if proposal.knowledge_type in ("fact", "pattern", "rule", "preference"):
         # Write to Vertex AI Memory Bank
         entry = MemoryEntry(
-            memory_id=str(uuid4()),
             project_id=project_id,
             agent_id=proposal.agent_id,
             knowledge_type=proposal.knowledge_type,
@@ -707,11 +712,10 @@ async def handle_knowledge_approval(proposal: KnowledgeProposal,
             content=proposal.proposed_content,
             evidence=proposal.evidence,
             confidence=proposal.confidence,
-            approved_by=proposal.approved_by,
+            approved_by=approved_by,
             approved_at=datetime.now(UTC),
             version=1 if not proposal.existing_memory_id else _next_version(proposal.existing_memory_id),
             supersedes=proposal.existing_memory_id,
-            active=True,
             tags=_extract_tags(proposal.proposed_content),
         )
         memory_id = write_approved_memory(entry, project_id)
@@ -723,7 +727,7 @@ async def handle_knowledge_approval(proposal: KnowledgeProposal,
             project_id=project_id,
             file_path=proposal.drive_file_path,
             diff=proposal.proposed_diff,
-            approved_by=proposal.approved_by,
+            approved_by=approved_by,
         )
         _update_pending_knowledge(proposal.knowledge_id, "Approved", None)
 
