@@ -1454,7 +1454,7 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 > *URLs in this section are from the original deployment. Your deployment URLs will be different — use your `gcloud run services list` output.*
 
 - [x] All Pub/Sub push subscriptions confirmed: 22 subscriptions exist with OIDC push auth; `pubsub-push-sa` has `roles/run.invoker` on all 7 services; Pub/Sub service agent granted `roles/iam.serviceAccountTokenCreator` — 2026-03-21. URLs use `*-975461050387.us-central1.run.app` (confirmed valid alias per `run.googleapis.com/urls` annotation — both URL formats work)
-- [ ] `VERTEX_AGENT_ENDPOINT` Script Property in Apps Script updated via Apps Script editor → Project Settings → Script Properties (set to your nexus-prime Cloud Run URL + `/sync`)
+- [x] `VERTEX_AGENT_ENDPOINT` Script Property in Apps Script updated via Apps Script editor → Project Settings → Script Properties — set to `https://nexus-prime-975461050387.us-central1.run.app/sync` — 2026-04-03
 - [x] `CLOUD_RUN_URL` environment variable on `nexus-prime` — **set automatically by CI/CD pipeline** (`Wire CLOUD_RUN_URL on nexus-prime` step in apply job reads TF output `nexus_prime_url` and updates the service in-place)
 - [x] `settings.yaml` `chat.owner_space` set to `spaces/jbpdpSAAAAE` — confirmed 2026-03-21 via `Select-String owner_space config/settings.yaml`
 
