@@ -5,6 +5,39 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-04-03T06:30-07:00 — Phase 4 E2E Validation + Infra Hardening
+
+### What was done
+
+- **URL audit across all scripts** — confirmed all 25 Pub/Sub push subscriptions and 9 Cloud Scheduler jobs already use stable `975461050387.us-central1.run.app` format. Normalised 4 scripts that still used the hash-based `7bu22bxlda` format: `_sync_e2e_test.py`, `gaos_doctor.py`, `setup_apps_script.py` (fallback), `bootstrap.py`.
+- **GitHub Actions upgraded to Node.js 24-compatible versions** (commit `5a9d14f`) — `actions/checkout` v4→v6, `google-github-actions/auth` v2→v3, `opentofu/setup-opentofu` v1.0.8→v2.0.0, `upload-artifact`/`download-artifact` v4→v7/v8. Eliminates Node.js 20 deprecation warnings before forced cutover 2026-06-02.
+- **`promote` node silent failures fixed** (commit `f5c463d`) — all 4 bare `except Exception: pass` blocks replaced with `_log_cloud` calls at every path (start, hash check, find_row failure, update_row failure, success). Logs revealed the actual failure: Sheets API 400 "protected cell".
+- **Sheets Status column protection patched** — `Agent_Approvals` col I had 5× duplicate "Status — owner only" protections, all locked to owner only. Added `nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com` to all 5 via `scripts/_patch_sheet_protection.py`, then deleted 12 duplicate protections (4 each across Status/Code/Hash columns from multiple `setupProtections` runs).
+- **`apps_script/setup_protection.gs` updated** — `patchStatusProtectionForSA()` added; `setupProtections()` now includes SA email on creation. Pushed via `setup_apps_script.py --push` (required ADC re-auth with `script.projects` scope).
+- **§4d Approval Gate `/sync` E2E: PASS** — `_sync_e2e_test.py` passed all 4 steps, final status=`Deployed` in sheet.
+- **§4d Vision blueprint E2E: PASS** — `_vision_e2e_test.py` completed, DWD working, Blueprint Doc created in Drive (tokens_used=2354, cost_usd=0.0).
+- **Stale plan race condition documented** — run `f5c463d` plan was generated before run `003663d2` (Grafana) applied, causing "Saved plan is stale" error on apply. Run `5a9d14f` (Actions upgrade, fresher plan) was approved instead and applied cleanly.
+- **`errors.log` cleared** — all 95 entries were pytest fixture noise from `04:59` test run (test-project BQ, localhost Ollama, /fake/path, dead-msg fixtures).
+
+### Files changed
+- `agents/nexus_prime/orchestrator.py` — promote node: bare excepts replaced with full logging
+- `apps_script/setup_protection.gs` — patchStatusProtectionForSA() added; setupProtections() includes SA
+- `scripts/_patch_sheet_protection.py` — new one-shot script to add SA to Sheets protections via API
+- `scripts/_sync_e2e_test.py`, `scripts/gaos_doctor.py`, `scripts/setup_apps_script.py`, `scripts/bootstrap.py` — hash URLs normalised to stable format
+- `.github/workflows/deploy.yml` — Actions upgraded to Node.js 24-compatible versions
+- `Docs/GAOS-Deploy-Spec.md` — §4d checklist: Approval Gate and Vision items checked off
+- `WORKLOG.md` — this entry
+
+### What's next
+- **`VERTEX_AGENT_ENDPOINT`** — Apps Script editor → Project Settings → Script Properties → Key: `VERTEX_AGENT_ENDPOINT`, Value: `https://nexus-prime-975461050387.us-central1.run.app/sync` (manual, one-time)
+- **7-day billing check** (~2026-04-10) — Cloud Billing dashboard confirms low operating expenses
+
+> ⚠️ **Warning — Sheets Status column protection blocks SA:** `setupProtections()` locks col I (Status) on `Agent_Approvals` to owner only. The nexus-prime SA cannot write `Deployed`/`Needs Revision` unless explicitly added as an editor. Run `_patch_sheet_protection.py` after any `setupProtections()` run, or ensure the SA email is in the protection from the start. Root cause of silent `promote` node failures for ~2 sessions.
+
+> ⚠️ **Warning — Duplicate protections from multiple setupProtections runs:** Running `setupProtections()` more than once creates duplicate protected ranges (5× in our case). Duplicates are silent but the SA-patched protection may not be the one that fires. Delete duplicates via `_patch_sheet_protection.py` or the Sheets API `deleteProtectedRange` batch request.
+
+---
+
 ## 2026-04-03T04:15-07:00 — Grafana TF Cleanup + Email E2E Verification
 
 ### What was done
