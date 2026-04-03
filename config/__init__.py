@@ -91,7 +91,9 @@ class MemoryConfig(BaseModel):
 class GmailConfig(BaseModel):
     monitored_address: str = ""  # Inbox watched by Gmail push
     sender_address: str = ""  # Authorised reply-from address
-    alert_address: str = ""  # Destination for system error alerts — must NOT equal monitored_address
+    alert_address: str = (
+        ""  # Destination for system error alerts — must NOT equal monitored_address
+    )
     label_id: str = ""  # Gmail label ID (e.g. Label_6)
     pubsub_topic: str = ""  # Full topic path: projects/<pid>/topics/...
     max_results: int = 50
@@ -101,9 +103,15 @@ class GmailConfig(BaseModel):
 
 
 class OutboundConfig(BaseModel):
-    max_emails_per_task: int = Field(default=3, gt=0)  # Hard cap per single task execution (Rule 26.2)
-    max_publishes_per_task: int = Field(default=10, gt=0)  # Hard cap on Pub/Sub publishes per task (Rule 26.2)
-    flood_window_minutes: int = Field(default=60, gt=0)  # Rolling window for flood detection (Rule 26.3)
+    max_emails_per_task: int = Field(
+        default=3, gt=0
+    )  # Hard cap per single task execution (Rule 26.2)
+    max_publishes_per_task: int = Field(
+        default=10, gt=0
+    )  # Hard cap on Pub/Sub publishes per task (Rule 26.2)
+    flood_window_minutes: int = Field(
+        default=60, gt=0
+    )  # Rolling window for flood detection (Rule 26.3)
     flood_threshold: int = Field(default=10, gt=0)  # Max emails in window before abort (Rule 26.3)
 
 

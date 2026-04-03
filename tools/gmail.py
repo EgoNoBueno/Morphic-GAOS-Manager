@@ -30,6 +30,13 @@ from tools.secrets import SecretNotFoundError, get_secret
 
 _gmail_log = logging.getLogger(__name__)
 
+# ── Per-process Gmail service cache ─────────────────────────────────────────
+# Avoids Secret Manager fetch + discovery.build() per call. The cached service
+# is reused as long as the project_id matches and the TTL has not expired.
+# Credential expiry is handled by google-auth's automatic refresh.
+_GMAIL_CACHE_TTL_SECONDS = 300.0
+_gmail_svc_cache: dict[str, Any] = {"service": None, "project_id": "", "ts": 0.0}
+
 # ── Error types ────────────────────────────────────────────────────────────
 
 
@@ -144,9 +151,10 @@ def get_gmail_service(project_id: str) -> Any:
     """
     Build and return an authenticated Gmail API service object.
 
-    Fetches OAuth2 credentials from Secret Manager on every call — no
-    global state. The returned service object is safe to use for one request
-    and should not be cached across requests.
+    Returns a cached service when the project_id matches and the cache is
+    fresh (within _GMAIL_CACHE_TTL_SECONDS). Otherwise fetches credentials
+    from Secret Manager and rebuilds the service. Credential expiry is
+    handled transparently by google-auth's automatic refresh.
 
     Args:
         project_id: GCP project that owns the GMAIL_OAUTH_CREDENTIALS secret.
@@ -158,13 +166,26 @@ def get_gmail_service(project_id: str) -> Any:
         GmailAuthError: Credentials missing, malformed, or OAuth scope
             insufficient.
     """
+    now = time.time()
+    if (
+        _gmail_svc_cache["service"] is not None
+        and _gmail_svc_cache["project_id"] == project_id
+        and now - _gmail_svc_cache["ts"] < _GMAIL_CACHE_TTL_SECONDS
+    ):
+        return _gmail_svc_cache["service"]
+
     from googleapiclient.discovery import build
 
     creds = _load_credentials(project_id)
     try:
-        return build("gmail", "v1", credentials=creds, cache_discovery=False)
+        svc = build("gmail", "v1", credentials=creds, cache_discovery=False)
     except Exception as exc:
         raise GmailAuthError(f"Failed to build Gmail service: {exc}") from exc
+
+    _gmail_svc_cache["service"] = svc
+    _gmail_svc_cache["project_id"] = project_id
+    _gmail_svc_cache["ts"] = now
+    return svc
 
 
 @tracked("gmail")

@@ -112,6 +112,25 @@ documents:
       - think() or iterate_plan() behavior changed
       - validate_output_coherence() integration changed
 
+  GAOS-Email-Pipeline-Spec.md:
+    purpose: >
+      Reverse-engineered email pipeline specification — complete lifecycle from
+      Gmail push notification to AI-composed reply and loop termination. Covers
+      every function, variable, gate, and side effect in the two-cycle Pub/Sub flow.
+    code_paths:
+      - agents/nexus_prime/orchestrator.py
+      - tools/gmail.py
+      - tools/pubsub.py
+      - main.py
+      - config/settings.yaml
+    triggers:
+      - Email pipeline logic changed (process_gmail_notification, compose_reply, handle_gmail_webhook)
+      - Gmail tool functions changed (fetch_new_messages, send_email, mark_as_read)
+      - Loop prevention gates changed (Rule 26.1, 26.2, 26.3)
+      - Outbound settings changed (max_emails_per_task, flood_threshold, etc.)
+      - Gmail settings changed (trigger_keyword, monitored_address, sender_address)
+      - New email-related MessageType or routing entry added
+
   GAOS-Memory-Spec.md:
     purpose: >
       Memory system design — domain memory, monologue frames, token budget,
@@ -394,6 +413,7 @@ inverse_index:
   "agents/nexus_prime/":
     - GAOS-Nexus-Prime-Spec.md
     - GAOS-Agent-Spec.md
+    - GAOS-Email-Pipeline-Spec.md       # email pipeline nodes
     - "Docs/agents/nexus-prime.md"
 
   "agents/steward/archivist/":
@@ -427,6 +447,10 @@ inverse_index:
 
   "tools/secrets.py":
     - GAOS-Security-Policy.md
+    - GAOS-Tools-Spec.md
+
+  "tools/gmail.py":
+    - GAOS-Email-Pipeline-Spec.md
     - GAOS-Tools-Spec.md
 
   "tools/vertex_search.py":

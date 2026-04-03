@@ -2601,10 +2601,11 @@ class TestEmailReply:
         state = self._make_state()
         with (
             patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
+            patch("agents.nexus_prime.orchestrator._check_email_flood", return_value=True),
             patch("tools.gmail.send_email", return_value="sent-id-xyz") as mock_send,
             patch(
-                "tools.google_sheets.find_row",
-                return_value={"message_id": "msg-001", "_row_index": 2},
+                "tools.google_sheets.get_all_records_with_row_numbers",
+                return_value=[(2, {"message_id": "msg-001", "status": "Pending"})],
             ),
             patch("tools.google_sheets.update_row") as mock_update,
             patch("agents.nexus_prime.orchestrator._log_cloud"),
@@ -2689,8 +2690,9 @@ class TestEmailReply:
         state = self._make_state(payload)
         with (
             patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
+            patch("agents.nexus_prime.orchestrator._check_email_flood", return_value=True),
             patch("tools.gmail.send_email", return_value="sent-id-2") as mock_send,
-            patch("tools.google_sheets.find_row", return_value=None),
+            patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
             compose_reply(state)
@@ -2807,6 +2809,7 @@ class TestDailyDigest:
             ),
             patch("tools.google_sheets.init_sheets_client"),
             patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
+            patch("agents.nexus_prime.orchestrator._check_email_flood", return_value=True),
             patch("tools.gmail.send_email", return_value="sent-001"),
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
@@ -2862,6 +2865,7 @@ class TestDailyDigest:
                 "agents.nexus_prime.orchestrator._call_model",
                 side_effect=RuntimeError("timeout"),
             ),
+            patch("agents.nexus_prime.orchestrator._check_email_flood", return_value=True),
             patch("tools.gmail.send_email", return_value="sent-002") as m,
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
@@ -2884,6 +2888,7 @@ class TestDailyDigest:
             ),
             patch("tools.google_sheets.init_sheets_client"),
             patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
+            patch("agents.nexus_prime.orchestrator._check_email_flood", return_value=True),
             patch("tools.gmail.send_email", return_value="sent-003"),
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
@@ -2963,6 +2968,7 @@ class TestDailyDigest:
                 "agents.nexus_prime.orchestrator._call_model",
                 return_value=self._mock_resp(),
             ),
+            patch("agents.nexus_prime.orchestrator._check_email_flood", return_value=True),
             patch("tools.gmail.send_email", return_value="sent-010"),
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
@@ -3007,6 +3013,7 @@ class TestDailyDigest:
                 "agents.nexus_prime.orchestrator._call_model",
                 side_effect=RuntimeError("timeout"),  # force raw_data fallback
             ),
+            patch("agents.nexus_prime.orchestrator._check_email_flood", return_value=True),
             patch("tools.gmail.send_email", side_effect=_capture_send),
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
@@ -3036,6 +3043,7 @@ class TestDailyDigest:
                 "agents.nexus_prime.orchestrator._call_model",
                 return_value=self._mock_resp(),
             ),
+            patch("agents.nexus_prime.orchestrator._check_email_flood", return_value=True),
             patch("tools.gmail.send_email", return_value="sent-012"),
             patch("agents.nexus_prime.orchestrator._log_cloud") as mock_log,
         ):
@@ -3544,6 +3552,7 @@ class TestCloudRunError:
             patch("tools.google_sheets.find_row", return_value=None),
             patch("tools.google_sheets.append_row"),
             patch("tools.bigquery.query_rows", return_value=spike_rows),
+            patch("agents.nexus_prime.orchestrator._check_email_flood", return_value=True),
             patch("tools.gmail.send_email", side_effect=_capture),
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
@@ -3566,6 +3575,7 @@ class TestCloudRunError:
                 "tools.bigquery.query_rows",
                 side_effect=RuntimeError("BQ unavailable"),
             ),
+            patch("agents.nexus_prime.orchestrator._check_email_flood", return_value=True),
             patch("tools.gmail.send_email", return_value="sent-err-004") as mock_send,
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):
@@ -3677,8 +3687,8 @@ class TestCheckEmailFlood:
 
         assert result is False
 
-    def test_fails_open_on_bq_error(self) -> None:
-        """BQ failure fails open (returns True) — flood guard is non-fatal."""
+    def test_fails_closed_on_bq_error(self) -> None:
+        """BQ failure fails closed (returns False) — blocks send to prevent loops."""
         from agents.nexus_prime.orchestrator import _check_email_flood
 
         with (
@@ -3687,7 +3697,7 @@ class TestCheckEmailFlood:
         ):
             result = _check_email_flood(self._PROJECT)
 
-        assert result is True
+        assert result is False
 
     def test_caller_param_is_nexus_prime(self) -> None:
         """Verifies the query is scoped to caller='nexus-prime' (not project-wide)."""

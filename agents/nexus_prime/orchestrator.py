@@ -14,6 +14,7 @@ Nexus spec:        Docs/GAOS-Nexus-Prime-Spec.md
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import time
 import uuid
@@ -109,6 +110,13 @@ _COMPACTION_THRESHOLD = 5
 # entry point and runs on every ainvoke call). sys.exit(1) fires only on the
 # first encounter for a given pid; subsequent requests short-circuit.
 _validated_pids: set[str] = set()
+
+# ── Boot Sheets cache ─────────────────────────────────────────────────────────
+# get_all_records("Agent_Approvals") and get_all_records("Project Registry")
+# are read on every ainvoke() via boot(). TTL cache avoids hammering the
+# Sheets API on every email and heartbeat cycle.
+_BOOT_CACHE_TTL_SECONDS = 300.0
+_boot_cache: dict[str, Any] = {"proposals": [], "registry": {}, "ts": 0.0}
 
 
 # ── Decision / format model selection ────────────────────────────────────────
@@ -245,6 +253,14 @@ def _format_heartbeat(state: NexusPrimeWorkingMemory) -> str:
     s = get_settings()
     model = s.models.LOCAL_MODEL
     parked = len(state.get("parked_proposals", []))
+    static_fallback = f"Nexus-Prime cycle complete. Parked={parked}."
+
+    # Short-circuit: skip Ollama call on Cloud Run where localhost:11434 is unreachable.
+    # os.environ["K_SERVICE"] is set by Cloud Run; its presence means we're in a
+    # container with no local Ollama. Avoids a guaranteed ConnectError + timeout.
+    if model.partition("/")[0] == "ollama" and os.environ.get("K_SERVICE"):
+        return static_fallback
+
     summary_prompt = (
         f"Summarize in one sentence: project={state.get('project_id')}, "
         f"task_id={state.get('task_id')}, parked_proposals={parked}, "
@@ -255,7 +271,7 @@ def _format_heartbeat(state: NexusPrimeWorkingMemory) -> str:
         resp = _call_model(summary_prompt, model=model)
         return resp.text.strip()
     except Exception:
-        return f"Nexus-Prime cycle complete. Parked={parked}."
+        return static_fallback
 
 
 def _write_to_pending_knowledge(
@@ -543,24 +559,36 @@ def boot(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             pass  # Non-fatal; topic may already exist in a different project
 
     # Load parked proposals (store IDs only, consistent with list[str])
-    try:
-        all_proposals = get_all_records("Agent_Approvals", pid)
-        state["parked_proposals"] = [
-            r["ID"]
-            for r in all_proposals
-            if r.get("Status") in ("Pending", "Needs Revision") and r.get("ID")
-        ]
-    except Exception:
-        pass
+    # TTL-cached to avoid Sheets reads on every ainvoke() cycle.
+    _now = time.time()
+    if _now - _boot_cache["ts"] < _BOOT_CACHE_TTL_SECONDS:
+        state["parked_proposals"] = list(_boot_cache["proposals"])
+        state["system_state_summary"] = dict(_boot_cache["registry"])
+    else:
+        try:
+            all_proposals = get_all_records("Agent_Approvals", pid)
+            proposals = [
+                r["ID"]
+                for r in all_proposals
+                if r.get("Status") in ("Pending", "Needs Revision") and r.get("ID")
+            ]
+            state["parked_proposals"] = proposals
+        except Exception:
+            proposals = []
+            state["parked_proposals"] = proposals
 
-    # Load Project Registry for system state summary
-    try:
-        registry = get_all_records("Project Registry", pid)
-        state["system_state_summary"] = {
-            r["project_id"]: r["status"] for r in registry if r.get("project_id")
-        }
-    except Exception:
-        pass
+        # Load Project Registry for system state summary
+        registry: dict[str, str] = {}
+        try:
+            registry_rows = get_all_records("Project Registry", pid)
+            registry = {r["project_id"]: r["status"] for r in registry_rows if r.get("project_id")}
+        except Exception:
+            pass
+        state["system_state_summary"] = registry
+
+        _boot_cache["proposals"] = proposals
+        _boot_cache["registry"] = registry
+        _boot_cache["ts"] = _now
 
     _log_cloud("nexus-prime", pid, "task", state.get("task_id", "boot"), "Boot complete")
     return state
@@ -3164,7 +3192,7 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     """
     from config import get_settings
     from tools.gmail import GmailAPIError, GmailAuthError, send_email
-    from tools.google_sheets import find_row, update_row
+    from tools.google_sheets import update_row
 
     project_id: str = state["project_id"]
     task_id: str = str(uuid.uuid4())
@@ -3311,14 +3339,15 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
     # Update Email Inbox row status to "Replied"
     try:
-        existing = find_row("Email Inbox", "message_id", message_id, project_id)
-        if existing:
-            update_row(
-                "Email Inbox",
-                "message_id",
-                {"status": "Replied"},
-                project_id,
-            )
+        from tools.google_sheets import get_all_records_with_row_numbers
+
+        inbox_rows = get_all_records_with_row_numbers("Email Inbox", project_id)
+        sheet_row_num = next(
+            (rn for rn, rec in inbox_rows if str(rec.get("message_id", "")) == message_id),
+            None,
+        )
+        if sheet_row_num is not None:
+            update_row("Email Inbox", sheet_row_num, {"status": "Replied"}, project_id)
     except Exception as exc:
         _log_cloud(
             "nexus-prime",
@@ -3384,8 +3413,8 @@ def _dispatch_task_from_email(
     """Detect actionable task intent in an email and publish TASK_HANDOFF.
 
     Runs after the reply is sent so the sender gets an immediate acknowledgment
-    regardless of whether a task is dispatched. Uses LOCAL_MODEL to classify
-    intent (cheap, local). If a known task_type is detected, publishes a
+    regardless of whether a task is dispatched. Uses FAST_MODEL to classify
+    intent. If a known task_type is detected, publishes a
     TASK_HANDOFF to the appropriate domain agent's Pub/Sub topic.
 
     Args:
@@ -4353,6 +4382,24 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
             continue
         received_at: str = message.get("received_at", utcnow_iso())
 
+        # Dedup gate — if this message_id already exists in Email Inbox, skip it.
+        # Gmail push notifications can re-deliver the same history window, and
+        # overlapping historyId ranges after service restarts cause duplicates.
+        try:
+            if find_row("Email Inbox", "message_id", message_id, project_id):
+                _log_cloud(
+                    "nexus-prime",
+                    project_id,
+                    "task",
+                    task_id,
+                    f"process_gmail: duplicate message_id={message_id} — skipping",
+                    "INFO",
+                )
+                skipped += 1
+                continue
+        except Exception:
+            pass  # Sheets read failure — proceed to avoid dropping a real email
+
         # Thread context for downstream LLM nodes
         try:
             thread_context = get_thread_context(project_id, thread_id)
@@ -4430,7 +4477,10 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
         processed += 1
 
     # ── Persist new history_id ────────────────────────────────────────────────
-    if new_history_id:
+    # Only advance the watermark when no messages were skipped (404). If
+    # skipped_ids is non-empty, those message IDs may become fetchable on a
+    # retry — advancing past them would lose them permanently.
+    if new_history_id and not skipped_ids:
         try:
             existing = find_row("System_State", "key", "gmail_last_history_id", project_id)
             if existing:
@@ -5053,16 +5103,17 @@ def _check_email_flood(project_id: str) -> bool:
         count = int(rows[0]["cnt"]) if rows else 0
         return count < threshold
     except Exception as exc:
-        # BQ query failure is non-fatal — fail open (allow the send) and log
+        # BQ query failure — fail closed (block the send) to prevent runaway loops.
+        # A BQ outage that silently allows unbounded sends violates Rule 26.3.
         _log_cloud(
             "nexus-prime",
             project_id,
             "task",
             "flood-guard",
-            f"_check_email_flood: BQ query failed (failing open) — {exc}",
-            "WARNING",
+            f"_check_email_flood: BQ query failed (failing closed — blocking send) — {exc}",
+            "ERROR",
         )
-        return True
+        return False
 
 
 async def handle_cloud_run_error(

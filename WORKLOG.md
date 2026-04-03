@@ -5,6 +5,55 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-04-02T21:25-07:00 — Email Pipeline Hardening + Spec Reverse-Engineering
+
+### What was done
+
+**7 code improvements implemented in `agents/nexus_prime/orchestrator.py`:**
+1. **boot() Sheets TTL caching** — `_boot_cache` with 300s TTL; proposals and registry cached module-level, zero Sheets calls on subsequent `ainvoke()` within the window.
+2. **Gmail service per-process caching** — `_gmail_svc_cache` in `tools/gmail.py` with 300s TTL. Credential refresh handled transparently by google-auth.
+3. **Heartbeat Ollama short-circuit** — `_format_heartbeat()` checks `os.environ.get("K_SERVICE")` + Ollama prefix; returns static fallback immediately on Cloud Run.
+4. **Flood guard fail-closed** — `_check_email_flood()` now returns `False` on BQ error (was fail-open).
+5. **compose_reply update_row bug fix** — Was passing literal string `"message_id"` to `update_row` which searched column A (timestamp). Now uses `get_all_records_with_row_numbers()` to find actual sheet row by message_id value.
+6. **EMAIL_RECEIVED dedup gate** — `find_row("Email Inbox", "message_id", ...)` check before append/publish in `process_gmail_notification`. Prevents duplicate replies on Pub/Sub redelivery.
+7. **history_id skip protection** — Only persists new watermark when `skipped_ids` is empty, preventing permanent message loss on transient 404s.
+
+**Spec document created and verified:**
+- Created `Docs/GAOS-Email-Pipeline-Spec.md` — 19-section reverse-engineered specification covering the complete email lifecycle from Gmail push to terminal LangGraph state.
+- Cross-referenced every phase against live code; applied 10 accuracy corrections after implementation changes.
+- §19 improvements section annotated with ✅ IMPLEMENTED / ⏸️ DEFERRED status markers.
+
+**Docstring fix:** `_dispatch_task_from_email` docstring said "Uses LOCAL_MODEL" — corrected to "Uses FAST_MODEL" to match actual code.
+
+**Routing table count:** Spec §9 said "18 entries" — corrected to 19 (APPROVAL_REQUEST was uncounted).
+
+### Test updates
+- 12 test modifications in `tests/test_agents.py`:
+  - `test_fails_open_on_bq_error` → renamed `test_fails_closed_on_bq_error`, assertion flipped
+  - compose_reply tests: `find_row`/`update_row` mocks → `get_all_records_with_row_numbers`
+  - 7 tests (DailyDigest, CloudRunError, EmailReply): added `_check_email_flood` mock
+- **727/727 tests passing**
+
+### Files changed
+- `agents/nexus_prime/orchestrator.py` — 7 improvements + docstring fix
+- `tools/gmail.py` — per-process service caching
+- `tests/test_agents.py` — 12 test updates
+- `Docs/GAOS-Email-Pipeline-Spec.md` — new spec + 10 accuracy corrections
+- `Docs/DOC-INDEX.yaml` — new entry for GAOS-Email-Pipeline-Spec.md
+- `WORKLOG.md` — this entry
+
+### Improvements assessed and deferred
+- **#5 (Two full cycles per email)** — boot caching cuts second-cycle overhead ~90%; Pub/Sub decoupling provides free retry semantics.
+- **#6 (Intent extraction model)** — gemini-2.5-flash is free-tier; heuristic pre-filter not justified at current volume.
+- **#10 (Single-worker bottleneck)** — infrastructure concern; fast-path webhook completes in <200ms.
+
+### What's next
+- Deploy updated revision to Cloud Run with the 7 improvements
+- Monitor for 429 Sheets errors (should drop with boot caching)
+- Verify Email Inbox rows now show "Replied" status (bug fix #5)
+
+---
+
 ## 2026-04-02T18:55-07:00 — Post-Deploy OIDC Fix + E2E Validation
 
 ### What happened
