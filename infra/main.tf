@@ -188,6 +188,14 @@ resource "google_secret_manager_secret_iam_member" "grafana_admin_pw" {
   member    = "serviceAccount:${google_service_account.grafana.email}"
 }
 
+# deployer-sa must be able to actAs grafana-sa to assign it to the Cloud Run
+# service. Same pattern as the per-agent actAs bindings in §2.2.
+resource "google_service_account_iam_member" "deployer_actAs_grafana" {
+  service_account_id = google_service_account.grafana.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:deployer-sa@${var.project_id}.iam.gserviceaccount.com"
+}
+
 resource "google_cloud_run_v2_service" "grafana" {
   name     = "grafana"
   location = local.region
