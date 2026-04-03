@@ -674,15 +674,33 @@ Add stale-URL detection to the observability loop. In `scripts/observability_loo
 
 ```python
 # ✅ Correct — verify subscriptions are pointed at current URL
-for sub_name, expected_suffix in _KNOWN_PUSH_SUBS.items():
+for sub_name, current_cloud_run_endpoint in _KNOWN_PUSH_SUBS.items():
     sub = subscriber.get_subscription(request={"subscription": sub_name})
     endpoint = sub.push_config.push_endpoint
-    if not endpoint.endswith(expected_suffix):
+    if endpoint != current_cloud_run_endpoint:
         _log_cloud("nexus-prime", project_id, "task", task_id,
                    f"Stale endpoint detected: {sub_name} → {endpoint}", "WARNING")
 ```
 
 **Why:** Cloud Run generates a new URL on every service creation (not just every deploy — the hash suffix changes only when the service is deleted and recreated). Subscriptions and schedulers do not update automatically. The stale-URL pattern has appeared twice in the WORKLOG already and will appear again without an automated check.
+
+---
+
+## 28. Explain Every Code Repair in Plain Language
+
+**Rule:** After completing any code fix, bug repair, or defensive hardening, provide a plain-language explanation of what was broken and what the fix does — written at a 10th-grade reading level. No jargon, no assumed context.
+
+**What the explanation must cover:**
+
+1. **What was wrong** — describe the broken behavior in concrete terms, not in terms of the code structure ("the bouncer was counting everyone's emails, not just ours" — not "the SQL query lacked a caller filter").
+2. **What could go wrong because of it** — the real-world consequence if the bug had stayed ("Ledger sending 9 invoices would freeze Nexus-Prime's outbound").
+3. **What the fix does** — the corrected behavior in one or two sentences.
+
+**Format:** Free prose, no code blocks required. Aim for 3–5 sentences total. Do not use analogies that require technical background to understand.
+
+**When to apply:** Every time code is changed to correct a defect, close a security gap, or prevent a failure mode — including defensive changes like adding validation, fail-closed guards, or type declarations. Does not apply to purely additive work (new features, new tests for new functionality, doc-only changes).
+
+**Why:** A fix that can't be explained in plain language usually means the root cause isn't fully understood. Forcing the explanation surfaces gaps in reasoning before the change is committed. It also creates a shared record that any contributor — human or AI — can reference without reading the diff.
 
 ---
 
