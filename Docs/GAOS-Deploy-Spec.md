@@ -307,7 +307,7 @@ gcloud projects add-iam-policy-binding $PROJECT \
   --condition=None
 # actAs: deployer-sa must be allowed to assign each agent SA to its Cloud Run
 # service. Bound per-SA (not project-level) per the principle of least privilege.
-for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
+for agent in nexus-prime ledger beacon pursuit foreman steward scout grafana; do
   gcloud iam service-accounts add-iam-policy-binding \
     ${agent}-sa@${PROJECT}.iam.gserviceaccount.com \
     --member="serviceAccount:deployer-sa@${PROJECT}.iam.gserviceaccount.com" \
