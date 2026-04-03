@@ -288,6 +288,23 @@ gcloud artifacts repositories add-iam-policy-binding cloud-run-source-deploy \
 gcloud storage buckets add-iam-policy-binding gs://morphic-gaos-tfstate \
   --member="serviceAccount:deployer-sa@${PROJECT}.iam.gserviceaccount.com" \
   --role="roles/storage.objectAdmin"
+# Project-level IAM admin: required when TF manages project-level IAM bindings
+# (e.g. roles/bigquery.dataEditor on agent SAs). Without this, apply returns 403
+# on every google_project_iam_member resource.
+gcloud projects add-iam-policy-binding $PROJECT \
+  --member="serviceAccount:deployer-sa@${PROJECT}.iam.gserviceaccount.com" \
+  --role="roles/resourcemanager.projectIamAdmin" \
+  --condition=None
+# Service account admin: required to create new SAs via TF (e.g. grafana-sa).
+gcloud projects add-iam-policy-binding $PROJECT \
+  --member="serviceAccount:deployer-sa@${PROJECT}.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountAdmin" \
+  --condition=None
+# Secret Manager admin: required to bind Secret Manager IAM for new SAs via TF.
+gcloud projects add-iam-policy-binding $PROJECT \
+  --member="serviceAccount:deployer-sa@${PROJECT}.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.admin" \
+  --condition=None
 # actAs: deployer-sa must be allowed to assign each agent SA to its Cloud Run
 # service. Bound per-SA (not project-level) per the principle of least privilege.
 for agent in nexus-prime ledger beacon pursuit foreman steward scout; do
@@ -302,6 +319,8 @@ done
 > ⚠️ **Warning — `roles/iam.serviceAccountUser` must be scoped per-SA, not project-wide.**
 > A project-level binding lets the deployer impersonate any SA in the project, including
 > those with elevated permissions. Always bind on the individual agent SA resource.
+
+> ⚠️ **Warning — Partial apply leaves orphaned GCP resources that cause 409 on retry.** If an apply fails mid-run (e.g. due to missing permissions), GCP creates successful resources but TF state doesn't record them. The next apply tries to create them again and gets `409 alreadyExists`. Fix: add an `import {}` block in `main.tf` to adopt the existing resource. The block is idempotent — safe to leave permanently. Example: `infra/main.tf` contains an import block for `google_service_account.grafana` added after the 2026-04-02 partial-apply incident.
 
 ### 2.3 Service Account Identity
 
@@ -1415,7 +1434,7 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 
 - [x] GCS state bucket created: `gs://morphic-gaos-tfstate` — created 2026-03-21, versioning enabled
 - [x] Artifact Registry repo created: `cloud-run-source-deploy` — already existed (306MB)
-- [x] `deployer-sa` service account created and all IAM bindings applied: `roles/run.admin` (project), `roles/artifactregistry.writer` (AR repo), `roles/storage.objectAdmin` (tfstate bucket), `roles/iam.serviceAccountUser` on all 7 agent SAs
+- [x] `deployer-sa` service account created and all IAM bindings applied: `roles/run.admin` (project), `roles/artifactregistry.writer` (AR repo), `roles/storage.objectAdmin` (tfstate bucket), `roles/iam.serviceAccountUser` on all 7 agent SAs, `roles/resourcemanager.projectIamAdmin` (project), `roles/iam.serviceAccountAdmin` (project), `roles/secretmanager.admin` (project) — last 3 added 2026-04-02 when TF began managing project IAM bindings and new SAs
 - [x] Workload Identity Federation pool `github-actions` + OIDC provider `github-oidc` created; `attribute.repository` condition locks to `EgoNoBueno/Morphic-GAOS-Manager` only; `roles/iam.workloadIdentityUser` binding applied to `deployer-sa`
 - [x] `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` GitHub Secrets set — verified via `gh secret list`
 - [x] `SETTINGS_YAML` GitHub Secret set — base64-encoded `config/settings.yaml` written before the Docker `build` step so containers have full config at runtime; added 2026-03-23 after confirming CI builds were missing settings.yaml (Drive folder IDs, model aliases, etc.)

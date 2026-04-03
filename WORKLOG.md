@@ -5,6 +5,36 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-04-02T22:30-07:00 — Deployment + Infra Fixes
+
+### What was done
+
+- **727/727 tests confirmed green** before initiating deploy.
+- **Approved workflow run `23933899303`** (commit `6104f67` — email pipeline hardening). All 7 Cloud Run services deployed successfully. Apply partially failed on new resources (`agent_bq_editor` IAM bindings + `grafana-sa` creation) due to missing `deployer-sa` permissions.
+- **Granted 3 new roles to `deployer-sa`:**
+  - `roles/resourcemanager.projectIamAdmin` — needed to write project-level IAM bindings (BQ dataEditor grants)
+  - `roles/iam.serviceAccountAdmin` — needed to create `grafana-sa`
+  - `roles/secretmanager.admin` — needed to bind secret IAM for Grafana
+- **Re-triggered deploy** (commit `a8c0144`). Apply failed again: `grafana-sa` was created during the first partial apply and existed in GCP but not in TF state → 409 `alreadyExists`.
+- **Fixed 409 with TF import block** (commit `64a5da3`) — added `import {}` block in `infra/main.tf` pointing at the existing SA resource. Import blocks are idempotent; once the resource is in state the block is a no-op.
+- **Third deploy run `23934930861`** — build ✅, plan ✅, apply pending approval.
+
+### Files changed
+- `infra/main.tf` — import block for `google_service_account.grafana`
+- `WORKLOG.md` — this entry
+
+### Lessons learned
+> ⚠️ **`deployer-sa` needs 3 additional roles when TF manages project-level IAM and new SAs.** Original setup only granted `roles/run.admin`, `roles/artifactregistry.writer`, `roles/storage.objectAdmin`, and per-SA `roles/iam.serviceAccountUser`. Adding project-level IAM bindings or creating new service accounts requires `roles/resourcemanager.projectIamAdmin` and `roles/iam.serviceAccountAdmin`. Binding secret IAM requires `roles/secretmanager.admin`. See §2.2 of GAOS-Deploy-Spec.md.
+
+> ⚠️ **Partial TF apply leaves orphaned resources that cause 409 on retry.** When an apply succeeds on some resources but fails on others, GCP creates the successful ones but TF state doesn't record them. The next apply tries to create them again → 409. Fix: add an `import {}` block in `main.tf` to adopt the existing resource into state. The import block is idempotent — safe to leave in permanently.
+
+### What's next
+- Approve apply run `23934930861` — should succeed cleanly now
+- Verify BQ dataEditor grants and Grafana SA are in state post-apply
+- Update deploy spec §2.2 with the 3 missing deployer-sa roles
+
+---
+
 ## 2026-04-02T21:25-07:00 — Email Pipeline Hardening + Spec Reverse-Engineering
 
 ### What was done
