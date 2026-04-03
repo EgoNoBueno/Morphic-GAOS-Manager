@@ -279,16 +279,18 @@ Pub/Sub publisher for A2A messaging. Messages must conform to the `A2AMessage` s
 from google.cloud import pubsub_v1
 from pydantic import BaseModel
 
-def publish(topic_name: str, message: A2AMessage,
-            project_id: str) -> str:
+def publish(topic_name: str, message: A2AMessage) -> str:
     """
     Serialize and publish one A2AMessage to the named topic.
 
-    `topic_name` is the dot-delimited short name without the full
-    resource path (e.g., "agent.nexus-prime.events"). The full topic
-    path is constructed as: projects/<GCP_PROJECT_ID>/topics/<topic_name>.
+    The GCP project is taken from ``settings.GCP_PROJECT_ID`` — it is fixed
+    infrastructure and does not vary per GAOS ``project_id``.
 
-    Note: Slash-delimited names ("agent/beacon/events") are accepted
+    ``topic_name`` is the dot-delimited short name without the full
+    resource path (e.g., ``"agent.nexus-prime.events"``). The full topic
+    path is constructed as: ``projects/<GCP_PROJECT_ID>/topics/<topic_name>``.
+
+    Note: Slash-delimited names (``"agent/beacon/events"``) are accepted
     for backward compatibility — slashes are replaced with dots
     internally — but all new call sites must use dot-delimited names.
 
@@ -301,10 +303,11 @@ def publish(topic_name: str, message: A2AMessage,
         PubSubPublishError:   Unrecoverable publish error.
     """
 
-def ensure_topic_exists(topic_name: str, project_id: str) -> None:
+def ensure_topic_exists(topic_name: str) -> None:
     """
     Idempotent topic creation. Creates the topic if it does not exist.
     Safe to call on every boot. Used in the agent boot sequence (step 5).
+    GCP project is taken from ``settings.GCP_PROJECT_ID``.
 
     Raises:
         PubSubAdminError: Cannot create topic (permissions or quota error).
@@ -888,8 +891,8 @@ def utcnow_date() -> str:
 Added in Phase 2 Chapter 8 (OpenClaw Paradigm). Formalises the agent OODA loop as a typed state machine.
 
 ```python
-class AgentState(str, Enum):
-    """Named states for the agent OODA loop (str mixin for JSON serialisation)."""
+class AgentState(StrEnum):
+    """Named states for the agent OODA loop (StrEnum for JSON serialisation)."""
     INIT        = "INIT"
     PLANNING    = "PLANNING"
     EXECUTION   = "EXECUTION"
@@ -910,8 +913,8 @@ def log_state_transition(
     agent_id: str,
     project_id: str,
     task_id: str,
-    from_state: AgentState,
-    to_state: AgentState,
+    from_state: AgentState | str,
+    to_state: AgentState | str,
     reason: str = "",
 ) -> None:
     """
@@ -921,8 +924,8 @@ def log_state_transition(
         agent_id:   Agent identifier (e.g. "nexus-prime").
         project_id: Project namespace.
         task_id:    Current task ID for correlation.
-        from_state: The state the agent is leaving.
-        to_state:   The state the agent is entering.
+        from_state: The state the agent is leaving (``AgentState`` or plain string).
+        to_state:   The state the agent is entering (``AgentState`` or plain string).
         reason:     Optional human-readable reason string.
     """
 ```
@@ -1087,6 +1090,34 @@ def send_skill_import_card(
 
     Raises:
         ChatConfigError, ChatDeliveryError.
+    """
+
+def send_infra_proposal_card(
+    space_name: str,
+    proposal_id: str,
+    change_lines: list[str],
+    irreversible_warning: str = "",
+) -> dict:
+    """
+    Post an infrastructure change proposal card for owner approval.
+
+    Designed for non-technical readers — uses plain language throughout.
+    Button clicks deliver ``actionMethodName: "infra_approve"`` or
+    ``"infra_reject"`` to ``POST /chat``.
+
+    Args:
+        space_name:           Chat space resource name.
+        proposal_id:          Manifest ``proposal_id`` (stored in Agent_Approvals).
+        change_lines:         Human-readable list of proposed changes (one per entry).
+        irreversible_warning: Non-empty string triggers a ⚠️ warning section.
+            Should concisely explain what cannot be undone automatically.
+
+    Returns:
+        The Chat API Message resource dict.
+
+    Raises:
+        ChatConfigError:   space_name or proposal_id is empty.
+        ChatDeliveryError: Chat API returned an error.
     """
 
 def parse_chat_event(body: dict) -> dict:
@@ -1935,8 +1966,11 @@ def get_gmail_service(project_id: str) -> Any:
     Build and return an authenticated Gmail API service object.
 
     Fetches OAuth2 credentials from Secret Manager (``GMAIL_OAUTH_CREDENTIALS``
-    secret) on every call — no global state. The returned service object is safe
-    to use for one request and should not be cached across requests.
+    secret) on the first call per process. The service is then cached for
+    300 seconds (keyed by ``project_id``) in a module-level dict and reused
+    for subsequent requests, avoiding per-call Secret Manager round-trips.
+    The cache resets on Cloud Run cold start. Credential expiry is handled
+    automatically by google-auth token refresh.
 
     Args:
         project_id: GCP project that owns the GMAIL_OAUTH_CREDENTIALS secret.
