@@ -156,14 +156,6 @@ resource "google_project_iam_member" "agent_bq_editor" {
 # Separate service account for Grafana. Granted BigQuery read-only access so
 # the dashboard can query aos_logs.* tables. No agent credentials are shared.
 
-# Import block: grafana-sa was created by a partial apply run (first attempt
-# failed on IAM permissions) and now exists in GCP but not in TF state.
-# This import block is idempotent — once the resource is in state it is a no-op.
-import {
-  id = "projects/morphic-gaos-prod/serviceAccounts/grafana-sa@morphic-gaos-prod.iam.gserviceaccount.com"
-  to = google_service_account.grafana
-}
-
 resource "google_service_account" "grafana" {
   account_id   = "grafana-sa"
   display_name = "Grafana CEO Dashboard"
@@ -194,13 +186,6 @@ resource "google_service_account_iam_member" "deployer_actAs_grafana" {
   service_account_id = google_service_account.grafana.name
   role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:deployer-sa@${var.project_id}.iam.gserviceaccount.com"
-}
-
-# Import block: grafana Cloud Run service was created by a partial apply and
-# exists in GCP but not in TF state. Idempotent once in state.
-import {
-  id = "projects/morphic-gaos-prod/locations/us-central1/services/grafana"
-  to = google_cloud_run_v2_service.grafana
 }
 
 resource "google_cloud_run_v2_service" "grafana" {
