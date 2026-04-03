@@ -197,7 +197,7 @@ def _get_local_id_token(audience: str, impersonate_sa: str) -> str:
         ],
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=30,
         shell=(sys.platform == "win32"),
     )
     if result.returncode != 0:
@@ -215,7 +215,7 @@ def check_health_endpoints() -> None:
         url = f"{base_url}/health"
         try:
             token = _get_local_id_token(base_url, invoker_sa)
-            resp = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+            resp = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
             check(f"{agent} /health", resp.status_code == 200, f"HTTP {resp.status_code}")
         except Exception as exc:
             check(f"{agent} /health", False, str(exc)[:80])
