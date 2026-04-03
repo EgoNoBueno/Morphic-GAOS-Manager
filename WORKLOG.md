@@ -5,6 +5,64 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-04-02T21:30-07:00 — Second Email Loop + Hardening Session
+
+### What happened
+- Second email loop occurred: `aos@sl10repairtechs.com` alert email → Gmail watch → `/gmail-webhook` → Sheets API quota exhausted (429) → ERROR log → log-sink → `handle_cloud_run_error` → `find_row("System_State")` → Sheets 429 again → exception caught by bare `except` → `last_sent_str = ""` → cooldown check passed → sent another alert → repeat.
+- Generated ~500+ emails (user deleted manually twice) before manual Pub/Sub seek intervention.
+- Root cause: the cooldown check in `handle_cloud_run_error` **failed open** — a Sheets 429 during the cooldown read wiped the timestamp, treating every error as a first alert.
+- Separate structural risk confirmed: alert emails were routing to `monitored_address` (the watched inbox), making the loop *architecturally possible* even with the cooldown working correctly.
+
+### What was fixed
+
+**`handle_cloud_run_error` fail-closed (commit `758320a`):**
+- Changed `except` block in cooldown check from `last_sent_str = ""` to `return {"sent": False, "suppressed": True, "reason": "cooldown_check_failed"}`.
+- Any failure while reading the cooldown state now suppresses the alert rather than sending it.
+
+**`_check_email_flood` caller scoping (commit `e35207b`):**
+- BQ flood guard was counting ALL project-wide `send_email` events. Added `AND caller = @caller` filter so only nexus-prime's emails count against its quota.
+- Schema column is `caller` (not `agent_id`) — sourced from `api_call_log` DDL in `scripts/create_staging_tables.py`.
+
+**`OutboundConfig` field validation (commit `3b1fdea`):**
+- Added `Field(gt=0)` to all four outbound config fields. Zero or negative values now raise a `ValidationError` at startup.
+
+**`emails_sent_this_task` TypedDict declaration (commit `aa972a5`):**
+- Added field to `NexusPrimeWorkingMemory`. Removed two `type: ignore[typeddict-item]` suppressions.
+
+**Rule 28 added to copilot-instructions.md (commit `086f8cb`):**
+- New rule: every code repair must be followed by a plain-language explanation at 10th-grade reading level.
+
+**`alert_address` routing fix (commit `bc959ca`):**
+- Added `gmail.alert_address` to `GmailConfig`, `settings.yaml`, and `settings.yaml.template`.
+- `handle_cloud_run_error` now sends to `alert_address` (benny.hess918@gmail.com) with fallback to `monitored_address` for old deployments.
+- Eliminates the structural condition that made the alert→loop cycle possible.
+
+### Files changed
+- `agents/nexus_prime/orchestrator.py` — fail-closed cooldown, caller-scoped flood guard, alert_address routing, emails_sent_this_task TypedDict field
+- `config/__init__.py` — `alert_address` on `GmailConfig`, `Field(gt=0)` on `OutboundConfig`
+- `config/settings.yaml` — `alert_address: benny.hess918@gmail.com` added
+- `config/settings.yaml.template` — `gmail:` block added with `alert_address`
+- `tests/test_agents.py` — `TestCheckEmailFlood` (5 tests), 2 alert_address routing tests, `test_sheets_cooldown_failure_suppresses_alert`
+- `.github/copilot-instructions.md` — Rule 27.3 spec example corrected; Rule 28 added
+
+### Tests
+- 727/727 passing (up from 719)
+
+### Infra
+- Pub/Sub subscriptions seeked twice during active loop (`gmail-notifications-push`, `nexus-prime-error-alerts-push`)
+- `nexus-prime.sub.events` stale URL verified: still points at `nexus-prime-7bu22bxlda-uc.a.run.app` — confirmed this is the current live URL, no fix needed
+
+### Lessons learned
+> ⚠️ **Fail-closed on any guard that reads a rate-limited dependency.** During a Sheets quota storm, the cooldown check itself fails — if that failure clears the timestamp (fail-open), the guard amplifies the incident instead of containing it.
+
+> ⚠️ **Alert emails must go to a non-watched inbox.** Routing system alerts to the Gmail-watched inbox makes a loop structurally possible regardless of other guards. Use a separate `alert_address`.
+
+### What's next
+- Deploy latest commits to Cloud Run (`nexus-prime`)
+- WORKLOG captured — session complete
+
+---
+
 ## 2026-04-02T14:45-07:00 — Email Loop Incident + Rule 26
 
 ### What happened
