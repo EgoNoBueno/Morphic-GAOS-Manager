@@ -460,6 +460,7 @@ inverse_index:
   "apps_script/":
     - GAOS-Chat-Dev-Reference.md
     - GAOS-Skill-Compliance-Spec.md
+    - GAOS-Deploy-Spec.md   # §4.4–4.6 cover Apps Script setup and protection; setup_protection.gs changes require §4.5 update
 
   "infra/":
     - GAOS-Deploy-Spec.md

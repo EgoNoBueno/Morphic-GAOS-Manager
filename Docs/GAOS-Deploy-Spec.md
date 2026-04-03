@@ -629,6 +629,10 @@ The function locks:
 - Column M (code_sha256) on `Agent_Approvals` → owner only
 - Entire `Authorized Approvers` tab → owner only
 
+> ⚠️ **Warning — run `setupProtections()` exactly once.** The function creates new protection objects on every call — running it twice creates duplicate rules (15 duplicate protections were found on 2026-04-03 after multiple runs: 5 each for Status, Code, and Hash columns). If you accidentally ran it more than once, use the Sheets API or the Google Sheets UI (Data → Protect sheets and ranges) to delete the duplicates, keeping one of each.
+>
+> ⚠️ **Warning — nexus-prime SA must be an editor on the Status (col I) protection.** Without explicit SA access to col I, the `promote` node's `update_row("Agent_Approvals", ..., {"Status": "Deployed"})` call fails with `400: You are trying to edit a protected cell`. As of 2026-04-03, `setup_protection.gs` adds the SA (`nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com`) via `p1.addEditor(SA_EMAIL)` in `setupProtections()`. **If you ran an older version that did not include the SA**, run `patchStatusProtectionForSA()` (also in `setup_protection.gs`) from the Apps Script editor — it adds the SA to all existing Status protections without recreating them. Alternatively, run `python scripts/_patch_sheet_protection.py` which does the same via the Sheets API.
+
 ### 4.6 Install the `onEdit` Trigger
 
 Install manually in the Apps Script editor (see §4.4 Step 3):
@@ -643,6 +647,8 @@ Triggers → Add Trigger → Function: `onChangeApproval` | Event type: **On edi
 > Similarly, `Session.getActiveUser().getEmail()` may return an empty string for installable triggers in some Google Workspace configurations. Fall back to `Session.getEffectiveUser().getEmail()` — use: `Session.getActiveUser().getEmail() || Session.getEffectiveUser().getEmail()`.
 >
 > **Automation:** Re-upload all `.gs` files after any local edit using `python scripts/setup_apps_script.py --push` — no copy-paste into the Apps Script editor required.
+>
+> ⚠️ **Warning — `--push` requires `script.projects` in ADC scopes.** The Apps Script push internally calls `projects.updateContent` which requires the `https://www.googleapis.com/auth/script.projects` scope. If ADC was last refreshed without the full scope list (e.g., a basic `gcloud auth application-default login`), `--push` fails with a 403. Fix: re-run the ADC login from §6.2 using `--client-id-file=oauth-client.json --scopes="...script.projects..."` (full scope list is in §6.2). Discovered 2026-04-03.
 
 ### 4.7 Deploy the Webhook as a Web App
 
@@ -1339,13 +1345,13 @@ Actual URLs for the original `morphic-gaos-prod` deployment (reference only — 
 
 | Service | URL |
 |---------|-----|
-| nexus-prime | `https://nexus-prime-7bu22bxlda-uc.a.run.app` |
-| ledger | `https://ledger-7bu22bxlda-uc.a.run.app` |
-| beacon | `https://beacon-7bu22bxlda-uc.a.run.app` |
-| pursuit | `https://pursuit-7bu22bxlda-uc.a.run.app` |
-| foreman | `https://foreman-7bu22bxlda-uc.a.run.app` |
-| steward | `https://steward-7bu22bxlda-uc.a.run.app` |
-| scout | `https://scout-7bu22bxlda-uc.a.run.app` |
+| nexus-prime | `https://nexus-prime-975461050387.us-central1.run.app` |
+| ledger | `https://ledger-975461050387.us-central1.run.app` |
+| beacon | `https://beacon-975461050387.us-central1.run.app` |
+| pursuit | `https://pursuit-975461050387.us-central1.run.app` |
+| foreman | `https://foreman-975461050387.us-central1.run.app` |
+| steward | `https://steward-975461050387.us-central1.run.app` |
+| scout | `https://scout-975461050387.us-central1.run.app` |
 
 **Now create Pub/Sub subscriptions (§5.2)** — they require Cloud Run URLs and must be created after this step.
 
@@ -1355,7 +1361,7 @@ Set this Script Property in the Apps Script editor (Project Settings → Script 
 - Key: `VERTEX_AGENT_ENDPOINT`
 - Value: your nexus-prime Cloud Run URL + `/sync` (from the `gcloud run services list` output above)
 
-This was set in §4.4 Step 1 if that section was followed. If not already set, add it now using your actual URL.
+For `morphic-gaos-prod` this was set to `https://nexus-prime-975461050387.us-central1.run.app/sync` on 2026-04-03 (confirmed in §19 4c checklist). For a new deployment, substitute your own URL.
 
 **Verification (Windows PowerShell):**
 ```powershell
@@ -1472,7 +1478,7 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 
 ### 4e — Cost + Security Verification
 
-- [ ] Cloud Billing dashboard confirms low operating expenses after first 7-day period at normal load
+- [ ] Cloud Billing dashboard confirms low operating expenses after first 7-day period at normal load *(pending — check expected ~2026-04-10)*
 - [x] Budget alert configured at $10/month threshold in GCP Billing console — `SL10 Cloud Dev Budget` at $10/month with 50%/90%/100% thresholds; confirmed 2026-03-21 via `gcloud billing budgets list`
 - [x] Cloud Logging retention set to 7 days for `projects/morphic-gaos-prod/logs/` — `_Default` bucket: 7 days; confirmed 2026-03-21 via `gcloud logging buckets describe _Default`
 - [x] All 7 Cloud Run services confirm `--no-allow-unauthenticated` — no `allUsers` IAM binding on any service; verified 2026-03-21 via `gcloud run services get-iam-policy` on all 7
@@ -2066,7 +2072,7 @@ Phase 3 is complete — and Phase 4 (production validation) may begin — when *
 - [x] WIF (Workload Identity Federation) replaces long-lived `GCP_SA_KEY` in CI/CD; `id-token: write` permission set; `attribute.repository` condition scopes access to this repo only ✅ (2026-03-20)
 - [x] All 408 unit tests passing — zero regressions from all Phase 3 additions ✅ (2026-03-20)
 - [x] **[Requires GCP]** One-time OpenTofu bootstrap: `morphic-gaos-tfstate` GCS bucket created, `cloud-run-source-deploy` Artifact Registry repo created, `deployer-sa` created with required IAM bindings, WIF pool + OIDC provider created, `WIF_PROVIDER` and `WIF_SERVICE_ACCOUNT` GitHub Secrets set → first `tofu plan` + `tofu apply` deploys all 7 Cloud Run services ✅ (2026-03-21 — all confirmed in §19 4a)
-- [ ] **[Requires Cloud Run]** Approval Gate Chat-path validated end-to-end: Chat card button tap → `APPROVAL_RESULT` published to Pub/Sub → Nexus-Prime resumes the parked task → `Agent_Approvals` row updated + audit row written to Logs tab (see §14 unchecked item)
+- ❌ **[ABANDONED — see §14]** Approval Gate Chat-path validated end-to-end: Chat card button tap → `APPROVAL_RESULT` published to Pub/Sub → Nexus-Prime resumes the parked task → `Agent_Approvals` row updated + audit row written to Logs tab. Blocked by Google Chat delivery failure (2026-03-30 post-mortem in `GAOS-Nexus-Prime-Spec.md §3.2`). The `/sync`-path Approval Gate E2E was validated instead — PASS 2026-04-03 (see §19 §4d).
 
 ---
 

@@ -673,6 +673,8 @@ def promote(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     return state
 ```
 
+> ⚠️ **Warning — promote node: bare `except: pass` silently swallows all errors.** Prior to 2026-04-03, every exception path in `promote` (find_row failure, hash-check update, _trigger_sync_to_vertex failure, and update_row failure) was wrapped in bare `except Exception: pass`. The node returned 200 and appeared to succeed while doing nothing. This was the root cause of every Approval Gate E2E failure before the fix: the `/sync` endpoint returned HTTP 200, the hash check passed, but `update_row("Agent_Approvals", ..., {"Status": "Deployed"})` threw `400: You are trying to edit a protected cell` — and the bare `except` ate it silently. The fix (2026-04-03) replaced all four bare excepts with `_log_cloud` calls so every failure path is visible in Cloud Logging. **Rule 19 applies here with no exceptions:** never use bare `except: pass` in any node that writes to an external surface (Sheets, BQ, Pub/Sub). Always catch, log, and either re-raise or set an error flag in state.
+
 #### `init_project`
 
 Called when a `NEW_PROJECT` message is received (or when `boot` detects a `Pending` row in `Project Registry`). Provisions all infrastructure for the new project namespace.
@@ -747,7 +749,7 @@ def notify_agents(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     return state
 ```
 
-#### `conflict_resolve`
+> **Note (Rule 19):** The `except Exception: pass` blocks above are intentional for fanout — a single failed publish to one domain agent should not abort the broadcast to the remaining 5. However, per Rule 19 they should at minimum log the failure: `except Exception as exc: _log_cloud("nexus-prime", state["project_id"], "task", state.get("task_id",""), f"notify_agents: publish to {agent} failed: {exc}", "WARNING")`. This is a known tech-debt item.
 
 Called when two orchestrators have published messages with contradictory state about the same entity (same `project_id` + same entity key, different values). Uses `DEEP_MODEL` to arbitrate and publishes a `BROADCAST` resolution.
 
@@ -811,7 +813,7 @@ def park_or_broadcast(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory
     return state
 ```
 
-#### `record`
+> **Note (Rule 19):** The `except Exception: pass` above should log the failure per Rule 19. A silent failure here means the proposal status is never updated and the task stays parked forever with no observable error. Tech-debt item: replace with `except Exception as exc: _log_cloud("nexus-prime", state["project_id"], "task", state.get("task_id",""), f"park_or_broadcast: update_row failed: {exc}", "WARNING")`.
 
 Final node. All paths terminate here. Writes to BigQuery `task_outcomes`, appends to `Error Logs` if hard stop was triggered, and publishes `STATUS_UPDATE` to `agent.nexus-prime.events`. Uses `LOCAL_MODEL` for formatting the summary text (cost optimization).
 
