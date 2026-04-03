@@ -116,7 +116,7 @@ google_search:
 gmail:
   monitored_address: "aos@yourdomain.com"         # Inbox watched by Gmail push notification
   sender_address: "aos@yourdomain.com"             # From address on outbound replies
-  alert_address: "benny.hess918@gmail.com"         # System error alerts land here — NOT the watched inbox
+  alert_address: "dentonh18@yahoo.com"             # System error alerts land here — NOT the watched inbox
   label_id: ""                                     # Gmail label ID filter (leave empty to process all)
   pubsub_topic: ""                                 # Full Pub/Sub topic path (set by renew_gmail_watch.py)
   max_results: 50

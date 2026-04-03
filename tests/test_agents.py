@@ -3409,7 +3409,7 @@ class TestStewardExecuteDriveMoves:
 # ── Cloud Run error alerting ───────────────────────────────────────────────────
 
 
-def _make_settings(alert_address: str = "benny.hess918@gmail.com"):  # noqa: ANN201
+def _make_settings(alert_address: str = "dentonh18@yahoo.com"):  # noqa: ANN201
     """Return a real Settings object with gmail.alert_address overridden."""
     from config import get_settings
 
@@ -3610,13 +3610,13 @@ class TestCloudRunError:
             patch("agents.nexus_prime.orchestrator._log_cloud"),
             patch(
                 "config.get_settings",
-                return_value=_make_settings(alert_address="benny.hess918@gmail.com"),
+                return_value=_make_settings(alert_address="dentonh18@yahoo.com"),
             ),
         ):
             result = asyncio.run(handle_cloud_run_error(self._PROJECT, self._entry()))
 
         assert result["sent"] is True
-        assert mock_send.call_args.kwargs["to"] == "benny.hess918@gmail.com"
+        assert mock_send.call_args.kwargs["to"] == "dentonh18@yahoo.com"
 
     def test_alert_falls_back_to_monitored_when_no_alert_address(self) -> None:
         """Fallback: no alert_address configured → uses monitored_address (old deployments)."""
