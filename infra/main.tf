@@ -196,6 +196,13 @@ resource "google_service_account_iam_member" "deployer_actAs_grafana" {
   member             = "serviceAccount:deployer-sa@${var.project_id}.iam.gserviceaccount.com"
 }
 
+# Import block: grafana Cloud Run service was created by a partial apply and
+# exists in GCP but not in TF state. Idempotent once in state.
+import {
+  id = "projects/morphic-gaos-prod/locations/us-central1/services/grafana"
+  to = google_cloud_run_v2_service.grafana
+}
+
 resource "google_cloud_run_v2_service" "grafana" {
   name     = "grafana"
   location = local.region
