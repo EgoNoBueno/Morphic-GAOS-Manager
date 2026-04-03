@@ -95,6 +95,9 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
     # General-purpose task outcome (set by action nodes, read by record)
     outcome: dict
 
+    # Rule 26.2 — per-task outbound email counter (incremented by compose_reply)
+    emails_sent_this_task: int
+
 
 # ── Constraint compaction threshold ──────────────────────────────────────────
 
@@ -3248,7 +3251,7 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     sender_address: str = settings.gmail.sender_address or None  # type: ignore[assignment]
 
     # ── Rule 26.2 — per-task email cap ────────────────────────────────────────
-    emails_sent: int = state.get("emails_sent_this_task", 0)  # type: ignore[typeddict-item]
+    emails_sent: int = state.get("emails_sent_this_task", 0)
     if emails_sent >= settings.outbound.max_emails_per_task:
         _log_cloud(
             "nexus-prime",
@@ -3285,7 +3288,7 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             in_reply_to=message_id_header or None,
             from_addr=sender_address,
         )
-        state["emails_sent_this_task"] = emails_sent + 1  # type: ignore[typeddict-item]
+        state["emails_sent_this_task"] = emails_sent + 1
     except (GmailAuthError, GmailAPIError) as exc:
         _log_cloud(
             "nexus-prime",
@@ -3832,7 +3835,7 @@ async def handle_infra_plan(
       1. Resolve nexus-prime Cloud Run URL and SA email.
       2. Build the diff manifest via ``build_manifest()``.
       3. If no changes: send a plain-text "nothing to do" message and return.
-      4. Write an ApprovalProposal row to Agent_Approvals (status=INFRA_PENDING).
+      4. Write an Appr_Approvals (status=INFRA_PENDING).
       5. Send the infra proposal Chat card to the owner's space.
 
     Args:
