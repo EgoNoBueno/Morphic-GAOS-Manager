@@ -100,10 +100,10 @@ class GmailConfig(BaseModel):
 
 
 class OutboundConfig(BaseModel):
-    max_emails_per_task: int = 3  # Hard cap per single task execution (Rule 26.2)
-    max_publishes_per_task: int = 10  # Hard cap on Pub/Sub publishes per task (Rule 26.2)
-    flood_window_minutes: int = 60  # Rolling window for flood detection (Rule 26.3)
-    flood_threshold: int = 10  # Max emails in window before abort (Rule 26.3)
+    max_emails_per_task: int = Field(default=3, gt=0)  # Hard cap per single task execution (Rule 26.2)
+    max_publishes_per_task: int = Field(default=10, gt=0)  # Hard cap on Pub/Sub publishes per task (Rule 26.2)
+    flood_window_minutes: int = Field(default=60, gt=0)  # Rolling window for flood detection (Rule 26.3)
+    flood_threshold: int = Field(default=10, gt=0)  # Max emails in window before abort (Rule 26.3)
 
 
 class Settings(BaseModel):
