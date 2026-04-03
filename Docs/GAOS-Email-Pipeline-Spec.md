@@ -92,7 +92,7 @@ Each cycle is a complete `NexusPrimeAgent.run()` invocation through the LangGrap
 │  ┌─────────────────────────────────────────────────────────┐            │
 │  │  LangGraph StateGraph                                    │            │
 │  │                                                          │            │
-│  │  boot ──► monitor ──► route() ──► process_gmail ──► record ──► END   │
+│  │  boot ──► monitor ──[route()]──► process_gmail ──► record ──► END   │
 │  │                                                          │            │
 │  │  (publishes EMAIL_RECEIVED to Pub/Sub)                   │            │
 │  └──────────────────────────────────────────────────────────┘            │
@@ -102,7 +102,7 @@ Each cycle is a complete `NexusPrimeAgent.run()` invocation through the LangGrap
 │  ┌─────────────────────────────────────────────────────────┐            │
 │  │  LangGraph StateGraph (second cycle)                     │            │
 │  │                                                          │            │
-│  │  boot ──► monitor ──► route() ──► compose_reply ──► record ──► END   │
+│  │  boot ──► monitor ──[route()]──► compose_reply ──► record ──► END   │
 │  │                                                          │            │
 │  │  • LLM call (gemini-2.5-flash)                           │            │
 │  │  • Rule 26.2 per-task cap                                │            │
@@ -149,7 +149,7 @@ https://nexus-prime-975461050387.us-central1.run.app/gmail-webhook
 
 ## 4. Phase 2 — `handle_gmail_webhook()` — Fast-Path Publisher
 
-**Source:** `agents/nexus_prime/orchestrator.py` lines 4484–4510
+**Source:** `agents/nexus_prime/orchestrator.py` lines 4577–4603
 
 **Purpose:** Converts the `historyId` into a structured `A2AMessage` and publishes it to Pub/Sub for async processing.
 
@@ -181,7 +181,7 @@ publish("agent.nexus-prime.events", notification)
 
 ## 5. Phase 3 — `/pubsub` Endpoint → `agent.run()`
 
-**Source:** `main.py` lines 414–458
+**Source:** `main.py` lines 418–458
 
 **Trigger:** Pub/Sub subscription `nexus-prime.sub.events` pushes the message to `/pubsub`.
 
@@ -195,6 +195,8 @@ publish("agent.nexus-prime.events", notification)
 | 4 | `result = await agent.run(envelope)` | Enters LangGraph execution |
 | 5 | Return `Response(status_code=204)` | ACK — tells Pub/Sub not to redeliver |
 
+**On exception:** `agent.run()` exceptions are caught, logged, and re-raised as HTTP 500. Pub/Sub sees a 5xx response and **retries** the message according to the subscription's retry policy. This is the correct behavior — a processing failure should trigger redelivery. HTTP 204 (ACK) is returned only when `agent.run()` completes without raising.
+
 **Agent initialization (first call only):**
 - Imports `agents.nexus_prime.orchestrator`
 - Instantiates `NexusPrimeAgent`
@@ -204,7 +206,7 @@ publish("agent.nexus-prime.events", notification)
 
 ## 6. Phase 4 — `NexusPrimeAgent.run()` — State Initialization
 
-**Source:** `agents/nexus_prime/orchestrator.py` lines 3660–3800
+**Source:** `agents/nexus_prime/orchestrator.py` lines 3760–3820 (`NexusPrimeAgent.run()`)
 
 Creates a **fresh** `NexusPrimeWorkingMemory` TypedDict with ~30+ fields:
 
@@ -249,7 +251,7 @@ final_state = await self._graph.ainvoke(
 
 ## 7. Phase 5 — `boot()` Node
 
-**Source:** `agents/nexus_prime/orchestrator.py` lines 472–568
+**Source:** `agents/nexus_prime/orchestrator.py` lines 488–596
 
 **Edge:** Entry point of LangGraph. Runs on **every** `ainvoke()` call.
 
@@ -275,7 +277,7 @@ final_state = await self._graph.ainvoke(
 
 ## 8. Phase 6 — `monitor()` Node
 
-**Source:** `agents/nexus_prime/orchestrator.py` lines 569–612
+**Source:** `agents/nexus_prime/orchestrator.py` lines 597–638
 
 **Edge:** `boot → monitor` (unconditional)
 
@@ -298,9 +300,9 @@ final_state = await self._graph.ainvoke(
 
 ## 9. Phase 7 — `route()` — Conditional Edge
 
-**Source:** `agents/nexus_prime/orchestrator.py` lines 613–660
+**Source:** `agents/nexus_prime/orchestrator.py` lines 639–682
 
-**Edge:** `monitor → route()` (conditional — returns node name string)
+**Edge:** `route()` is the routing function in `graph.add_conditional_edges("monitor", route, {...})`. It is **not** a registered graph node — it is a pure function that returns a node name string and is called by the LangGraph framework as the conditional edge selector from `monitor`.
 
 `route()` is a **pure function** — no I/O, no network calls, no side effects. It reads `state["incoming_message"]` and returns a node name from a routing table.
 
@@ -311,7 +313,7 @@ final_state = await self._graph.ainvoke(
 | `GMAIL_NOTIFICATION` | `"process_gmail"` | `process_gmail_notification()` |
 | `EMAIL_RECEIVED` | `"compose_reply"` | `compose_reply()` |
 
-**Full routing table (19 entries):**
+**Routing table (19 entries in the dict — `APPROVAL_RESULT` is handled inline before the table and is not a routing_table entry):**
 
 | MessageType | Node |
 |-------------|------|
@@ -342,7 +344,7 @@ final_state = await self._graph.ainvoke(
 
 ## 10. Phase 8 — `process_gmail_notification()` Node
 
-**Source:** `agents/nexus_prime/orchestrator.py` lines 4149–4483
+**Source:** `agents/nexus_prime/orchestrator.py` lines 4221–4576
 
 **Registered as:** `_process_gmail_node` in `build_nexus_prime_graph()`
 
@@ -499,7 +501,7 @@ return {
 
 ## 11. Phase 9 — `record()` Node — First Pass
 
-**Source:** `agents/nexus_prime/orchestrator.py` lines 1148–1280
+**Source:** `agents/nexus_prime/orchestrator.py` lines 1219–1380
 
 **Edge:** `process_gmail → record` (unconditional)
 
@@ -532,7 +534,7 @@ The `EMAIL_RECEIVED` message published in Phase 8 arrives at `/pubsub` via `nexu
 
 ## 13. Phase 11 — `compose_reply()` Node
 
-**Source:** `agents/nexus_prime/orchestrator.py` lines 3148–3340
+**Source:** `agents/nexus_prime/orchestrator.py` lines 3219–3446
 
 The LLM-powered email reply composer. This is the only node in the email pipeline that calls Gemini.
 
@@ -627,7 +629,7 @@ if emails_sent >= settings.outbound.max_emails_per_task:  # threshold: 3
 
 ### 13.6 Rule 26.3 — Time-Window Flood Guard
 
-`_check_email_flood(project_id)` (`orchestrator.py` L5014–5067):
+`_check_email_flood(project_id)` (`orchestrator.py` L5107–5161):
 
 ```sql
 SELECT COUNT(*) AS cnt
@@ -677,7 +679,7 @@ if sheet_row_num is not None:
 
 ### 13.9 Intent Extraction Dispatch
 
-`_dispatch_task_from_email()` (`orchestrator.py` L3378–3460):
+`_dispatch_task_from_email()` (`orchestrator.py` L3447–3580):
 
 1. Calls `_call_model(prompt, model=FAST_MODEL)` — **second Gemini call per email**
 2. Prompt asks LLM to return JSON: `{"is_task": bool, "task_type": str|null, "task_context": dict}`
@@ -728,7 +730,7 @@ After `compose_reply` sends the reply from `aos@sl10repairtechs.com`:
 
 ## 16. Error Path — `/log-sink` → `handle_cloud_run_error()`
 
-**Source:** `main.py` L1253–1340, `orchestrator.py` L5070–5320
+**Source:** `main.py` L1253–1340, `orchestrator.py` L5162–5410
 
 **Trigger:** Cloud Logging log sink routes ERROR+ entries from the `nexus-prime` service to `nexus-prime-error-alerts` Pub/Sub topic → pushes to `/log-sink`.
 
@@ -908,5 +910,5 @@ Every Gmail, Sheets, Pub/Sub, BigQuery, and Gemini API call is instrumented via 
 
 ---
 
-_Last updated: 2026-04-02_
-_Source: Reverse-engineered from live codebase — commit range through `dfdbb9e`_
+_Last updated: 2026-04-03_
+_Source: Reverse-engineered from live codebase — line numbers verified against current `master`_
