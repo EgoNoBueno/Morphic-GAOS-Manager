@@ -927,6 +927,14 @@ def _log_cloud(
 
 # ── Dashboard heartbeat helper ────────────────────────────────────────────────
 
+# Per-agent BQ write tracking for event-driven status_snapshots.
+# _last_bq_heartbeat: monotonic timestamp of the last BQ write per agent.
+# _last_bq_status:    status string that was written in that last write.
+# Together these implement the rule: write to BQ only when status changes OR
+# the keepalive interval has elapsed (liveness proof for gaos_doctor).
+_last_bq_heartbeat: dict[str, float] = {}
+_last_bq_status: dict[str, str] = {}
+
 
 def _write_heartbeat(
     agent_id: str,
@@ -938,10 +946,23 @@ def _write_heartbeat(
     tab: str,
 ) -> None:
     """
-    Write a status row to the agent's designated Sheet tab and BigQuery
-    ``aos_logs.status_snapshots``. Must be called at the end of every work
-    cycle (within 60 seconds). Silently swallows all errors so a transient
-    API failure does not crash the agent loop.
+    Write a status row to the agent's designated Sheet tab and — when the
+    status has changed or the keepalive interval has elapsed — to BigQuery
+    ``aos_logs.status_snapshots``.
+
+    The Sheets write fires on every invocation for real-time dashboard
+    currency. The BQ write is event-driven to minimise API call volume:
+
+    * **Status change** — written immediately regardless of elapsed time.
+    * **Keepalive** — written when ``settings.agents.heartbeat_bq_keepalive_seconds``
+      (default 600 s) has elapsed since the last BQ write, even if status
+      is unchanged. This satisfies ``gaos_doctor``'s 60-minute liveness
+      threshold with 6× headroom.
+    * **Duplicate suppression** — if status is unchanged AND the keepalive
+      interval has not elapsed, no BQ write is issued.
+
+    Silently swallows all errors so a transient API failure does not crash
+    the agent loop.
     """
     row = {
         "timestamp": utcnow_iso(),
@@ -958,9 +979,22 @@ def _write_heartbeat(
         append_row(tab, row, project_id)
     except Exception:
         pass
-    try:
-        from tools.bigquery import insert_row as _bq_insert
 
-        _bq_insert("aos_logs.status_snapshots", row, project_id)
-    except Exception:
-        pass
+    # BQ write: fire on status change OR keepalive interval elapsed.
+    from config import get_settings
+
+    keepalive = get_settings().agents.heartbeat_bq_keepalive_seconds
+    now = time.monotonic()
+    status_changed = status != _last_bq_status.get(agent_id)
+    keepalive_due = now - _last_bq_heartbeat.get(agent_id, 0.0) >= keepalive
+    if status_changed or keepalive_due:
+        try:
+            from tools.bigquery import insert_row as _bq_insert
+
+            _bq_insert("aos_logs.status_snapshots", row, project_id)
+            # Advance tracking state only after a confirmed successful write.
+            # If _bq_insert raises, the next invocation will retry.
+            _last_bq_heartbeat[agent_id] = now
+            _last_bq_status[agent_id] = status
+        except Exception:
+            pass

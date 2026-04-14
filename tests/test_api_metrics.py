@@ -64,20 +64,38 @@ def load_test_settings(tmp_path):
     config._reset_for_testing()
 
 
+@pytest.fixture(autouse=True)
+def _clear_metric_buffer():
+    """Clear the telemetry buffer before and after each test.
+
+    Prevents rows accumulated in one test from leaking into the next when
+    _write_metric is running live (i.e. _suppress_telemetry_writes is not
+    active).
+    """
+    import tools
+
+    with tools._buffer_lock:
+        tools._metric_buffer.clear()
+    yield
+    with tools._buffer_lock:
+        tools._metric_buffer.clear()
+
+
 # ── record_api_call context manager ──────────────────────────────────────────
 
 
 class TestRecordApiCallContextManager:
     def test_happy_path_writes_success_row(self):
         """Clean exit from record_api_call writes a success row to BQ."""
-        from tools import record_api_call
+        from tools import flush_metric_buffer, record_api_call
 
-        with patch("tools.bigquery.insert_row") as mock_insert:
+        with patch("tools.bigquery.insert_rows") as mock_batch:
             with record_api_call("gmail", "send_email", "agent-x", "proj-1"):
                 pass
+            flush_metric_buffer()
 
-        mock_insert.assert_called_once()
-        row = mock_insert.call_args[0][1]
+        mock_batch.assert_called_once()
+        row = mock_batch.call_args[0][1][0]  # first row of the batch
         assert row["api_name"] == "gmail"
         assert row["operation"] == "send_email"
         assert row["caller"] == "agent-x"
@@ -88,50 +106,53 @@ class TestRecordApiCallContextManager:
 
     def test_exception_writes_failure_row_and_reraises(self):
         """Exception inside context manager → success=False row, exception re-raised."""
-        from tools import record_api_call
+        from tools import flush_metric_buffer, record_api_call
 
-        with patch("tools.bigquery.insert_row") as mock_insert:
+        with patch("tools.bigquery.insert_rows") as mock_batch:
             with pytest.raises(ValueError, match="boom"):
                 with record_api_call("bigquery", "insert_row", "agent-x", "proj-1"):
                     raise ValueError("boom")
+            flush_metric_buffer()
 
-        mock_insert.assert_called_once()
-        row = mock_insert.call_args[0][1]
+        mock_batch.assert_called_once()
+        row = mock_batch.call_args[0][1][0]
         assert row["success"] is False
         assert row["error_code"] == "ValueError"
 
     def test_latency_is_captured(self):
         """latency_ms reflects actual call duration."""
-        from tools import record_api_call
+        from tools import flush_metric_buffer, record_api_call
 
-        with patch("tools.bigquery.insert_row") as mock_insert:
+        with patch("tools.bigquery.insert_rows") as mock_batch:
             with record_api_call("pubsub", "publish", "agent-x", "proj-1"):
                 time.sleep(0.015)
+            flush_metric_buffer()
 
-        row = mock_insert.call_args[0][1]
+        row = mock_batch.call_args[0][1][0]
         assert row["latency_ms"] >= 10
 
     def test_tokens_used_and_model_flow_through_ctx(self):
         """Caller can set tokens_used and model in the yielded ctx dict."""
-        from tools import record_api_call
+        from tools import flush_metric_buffer, record_api_call
 
-        with patch("tools.bigquery.insert_row") as mock_insert:
+        with patch("tools.bigquery.insert_rows") as mock_batch:
             with record_api_call("gemini", "_call_model", "nexus-prime", "proj-1") as ctx:
                 ctx["tokens_used"] = 1234
                 ctx["model"] = "gemini-2.5-flash"
+            flush_metric_buffer()
 
-        row = mock_insert.call_args[0][1]
+        row = mock_batch.call_args[0][1][0]
         assert row["tokens_used"] == 1234
         assert row["model"] == "gemini-2.5-flash"
 
     def test_bq_write_failure_is_swallowed(self):
-        """A BQ error during metric write must not propagate to the caller."""
-        from tools import record_api_call
+        """A BQ error during metric flush must not propagate to the caller."""
+        from tools import flush_metric_buffer, record_api_call
 
-        with patch("tools.bigquery.insert_row", side_effect=RuntimeError("bq down")):
-            # Must not raise — _write_metric is best-effort.
+        with patch("tools.bigquery.insert_rows", side_effect=RuntimeError("bq down")):
             with record_api_call("secrets", "get_secret", "agent-x", "proj-1"):
                 pass
+            flush_metric_buffer()  # Must not raise — flush is best-effort.
 
 
 # ── Recursion guard ───────────────────────────────────────────────────────────
@@ -139,22 +160,27 @@ class TestRecordApiCallContextManager:
 
 class TestRecursionGuard:
     def test_record_api_call_inside_write_metric_does_not_recurse(self):
-        """insert_row is @tracked; the recursion guard prevents infinite BQ writes."""
-        from tools import record_api_call
+        """insert_rows is @tracked; the recursion guard prevents a second buffer append on flush."""
+        import tools as tools_module
+        from tools import flush_metric_buffer, record_api_call
 
-        insert_call_count = 0
+        batch_call_count = 0
 
-        def fake_insert(table, row):
-            nonlocal insert_call_count
-            insert_call_count += 1
+        def fake_insert_rows(table, rows, project_id="", row_ids=None):
+            nonlocal batch_call_count
+            batch_call_count += 1
 
-        with patch("tools.bigquery.insert_row", side_effect=fake_insert):
+        with patch("tools.bigquery.insert_rows", side_effect=fake_insert_rows):
             with record_api_call("bigquery", "insert_row", "agent-x", "proj-1"):
                 pass
+            flush_metric_buffer()
 
-        # record_api_call triggers _write_metric → insert_row once.
-        # The @tracked decorator on insert_row must be suppressed by the guard.
-        assert insert_call_count == 1
+        # flush_metric_buffer() calls insert_rows once.
+        # The @tracked wrapper on insert_rows sees in_metrics_write=True and skips
+        # enqueuing a second row, preventing infinite recursion.
+        assert batch_call_count == 1
+        with tools_module._buffer_lock:
+            assert len(tools_module._metric_buffer) == 0
 
 
 # ── @tracked decorator ────────────────────────────────────────────────────────
@@ -163,18 +189,19 @@ class TestRecursionGuard:
 class TestTrackedDecorator:
     def test_tracked_wraps_function_and_writes_row(self):
         """@tracked instruments the decorated function with correct api_name + project_id."""
-        from tools import tracked
+        from tools import flush_metric_buffer, tracked
 
         @tracked("gmail")
         def send_email(to: str, project_id: str) -> str:
             return "ok"
 
-        with patch("tools.bigquery.insert_row") as mock_insert:
+        with patch("tools.bigquery.insert_rows") as mock_batch:
             result = send_email("test@example.com", project_id="my-project")
+            flush_metric_buffer()
 
         assert result == "ok"
-        mock_insert.assert_called_once()
-        row = mock_insert.call_args[0][1]
+        mock_batch.assert_called_once()
+        row = mock_batch.call_args[0][1][0]
         assert row["api_name"] == "gmail"
         assert row["operation"] == "send_email"
         assert row["project_id"] == "my-project"
@@ -212,8 +239,9 @@ class TestTrackedDecorator:
         def search(query: str, project_id: str, top_k: int = 5) -> list:
             return [query] * top_k
 
-        with patch("tools.bigquery.insert_row"):
-            result = search("loyalty", project_id="p", top_k=3)
+        # No BQ patch needed — buffering means no immediate BQ call; _clear_metric_buffer
+        # fixture drains any accumulated rows after the test.
+        result = search("loyalty", project_id="p", top_k=3)
 
         assert result == ["loyalty", "loyalty", "loyalty"]
 

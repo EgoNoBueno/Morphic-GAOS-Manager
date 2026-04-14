@@ -129,3 +129,6 @@ outbound:
   max_publishes_per_task: 10   # Hard cap on Pub/Sub publishes per task
   flood_window_minutes: 60     # Rolling window for flood detection
   flood_threshold: 10          # Max emails in window before abort
+# Agent runtime tuning
+agents:
+  heartbeat_bq_keepalive_seconds: 600  # BQ cost reduction — write status_snapshots on status change or every 10 min (liveness keepalive)

@@ -5,6 +5,67 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-04-13T00:00-07:00 — BigQuery Cost Reduction (Options 1+2+3 + event-driven heartbeat)
+
+### What was done
+
+Analysis of 22,247 daily BQ API calls found two root causes: (1) `_write_heartbeat()` wrote a `status_snapshots` row to BQ on every Pub/Sub message (~50% of total), and (2) the `@tracked` decorator fired an individual `insert_row` per tool call for telemetry (~25% of total). Implemented four changes to reduce daily BQ calls by ~85–90%.
+
+**Event-driven BQ heartbeat (replaces simple time throttle)**
+`_write_heartbeat()` now uses event-driven logic: BQ write fires immediately on status change (IDLE→EXECUTING etc.) and on boot. Between status changes, a keepalive write fires at most once per `settings.agents.heartbeat_bq_keepalive_seconds` (600 s default) to satisfy `gaos_doctor`'s 60-minute liveness threshold. Two module-level dicts track state per agent: `_last_bq_heartbeat` (monotonic timestamp) and `_last_bq_status` (last written status string). The Sheets write still fires every invocation. Expected result: ~1,100 BQ writes/day from `status_snapshots` vs ~10,080 previously.
+
+**Telemetry buffer flush (previously merged)**
+`@tracked` now accumulates rows in memory and flushes as a batch every 5 min or 500 rows.
+
+**Option 3: interval setting removed**
+`heartbeat_bq_interval_seconds` replaced by `heartbeat_bq_keepalive_seconds` (600 s). The keepalive is the fallback — event-driven writes handle the frequent case.
+
+**Code quality fix — `flush_metric_buffer` atomicity**
+Buffer was cleared before the BigQuery write completed. On a transient BQ failure, the buffered rows were silently dropped — they were gone from the buffer but never written. Fixed with a copy-then-write-then-clear pattern: take a snapshot of the buffer (without clearing), call `insert_rows`, then remove exactly those rows from the front of the buffer inside the `try` block. On any exception, re-insert the snapshot rows at the front so the next flush retries them in order.
+
+**Code quality fix — heartbeat tracking state advanced before write**
+`_last_bq_heartbeat[agent_id]` and `_last_bq_status[agent_id]` were both set before `_bq_insert` was called. A failed BQ write would still advance the tracking state, suppressing the next write attempt for the full 600-second keepalive window. Fixed by moving both assignments inside the `try` block, after `_bq_insert` returns. A failed write leaves state unchanged so the next `_write_heartbeat` invocation will retry immediately.
+
+### Files changed
+- `agents/__init__.py` — `_write_heartbeat`: `_last_bq_heartbeat` + `_last_bq_status` module dicts; event-driven BQ write on status change + keepalive; tracking state advanced only after confirmed `_bq_insert`
+- `tools/__init__.py` — `_write_metric`: buffers rows; `flush_metric_buffer()` public function; copy-then-write-then-clear pattern; re-insert on exception
+- `config/__init__.py` — `AgentsConfig` with `heartbeat_bq_keepalive_seconds: int = 600`; added `agents: AgentsConfig` to `Settings`
+- `config/settings.yaml` — `agents: heartbeat_bq_keepalive_seconds: 600`
+- `config/settings.yaml.template` — synced same `agents:` block
+- `tests/test_api_metrics.py` — updated 8 tests for buffered telemetry; added `_clear_metric_buffer` autouse fixture
+
+### Tests
+566 passed (excluding `test_agents.py` — pre-existing Ollama/Secret Manager timeout, unrelated)
+
+### What's next
+- Deploy to Cloud Run and verify BQ call volume drops to ~3,000–4,000/day in GCP API metrics
+- Consider adding `flush_metric_buffer()` call to Cloud Run startup/shutdown hooks to avoid data loss on cold start/drain
+
+---
+
+## 2026-04-13T00:00-07:00 — API Metrics Snapshot (Last 24 Hours)
+
+| API | Requests | Errors (%) | Latency p50 (ms) | Latency p95 (ms) |
+|-----|----------|------------|-----------------|-----------------|
+| BigQuery API | 22,247 | 0% | 54 | 1,096 |
+| Google Sheets API | 6,186 | 0% | 100 | 304 |
+| Cloud Pub/Sub API | 5,600 | 0% | 38 | 63 |
+| Cloud Logging API | 4,277 | 0% | 91 | 129 |
+| IAM Service Account Credentials API | 1,153 | 0% | 49 | 64 |
+| Google Drive API | 1,152 | 0% | 259 | 512 |
+| Secret Manager API | 16 | 0% | 81 | 314 |
+| Gmail API | 7 | **100%** | 98 | 127 |
+| Google Chat API | 3 | 0% | 786 | 1,022 |
+| Privileged Access Manager API | 2 | 0% | 196 | 255 |
+
+**Notable flags:**
+- **Gmail API: 100% error rate** on 7 requests — requires investigation. Likely an expired OAuth token or watch renewal failure.
+- **BigQuery p95 at 1,096 ms** — long tail worth monitoring; median is healthy at 54 ms.
+- **Google Chat p50 at 786 ms** — high but low volume (3 requests).
+- All other APIs: 0% errors, latencies within normal range.
+
+---
+
 ## 2026-04-03T06:30-07:00 — Phase 4 E2E Validation + Infra Hardening
 
 ### What was done

@@ -19,6 +19,21 @@ from typing import Any
 
 _logger = logging.getLogger(__name__)
 
+# ── Telemetry buffer ─────────────────────────────────────────────────────────
+# Instead of one BigQuery API call per tracked tool invocation, rows are
+# accumulated here and flushed as a single insert_rows batch call when the
+# buffer fills or the flush interval elapses.  This reduces api_call_log BQ
+# write volume by ~94% (288 batch flushes/day vs ~5,000 individual writes).
+
+_metric_buffer: list[dict] = []
+_buffer_lock = threading.Lock()
+_last_flush_time: float = (
+    time.monotonic()
+)  # initialised at import so first flush waits the full interval
+
+_FLUSH_INTERVAL_SECONDS: int = 300  # flush at most once every 5 minutes
+_MAX_BUFFER_ROWS: int = 500  # force-flush before buffer reaches this size
+
 # ── Recursion guard ──────────────────────────────────────────────────────────
 # record_api_call writes to BQ via insert_row. insert_row is itself
 # instrumented. The thread-local flag prevents infinite recursion.
@@ -136,6 +151,42 @@ def _extract_error_code(exc: Exception) -> str:
     return type(exc).__name__
 
 
+def flush_metric_buffer() -> None:
+    """Flush buffered telemetry rows to BigQuery in a single batch call.
+
+    Drains the in-memory metric buffer and writes all pending rows to
+    ``aos_logs.api_call_log`` via a single ``insert_rows`` batch call.
+    No-op if the buffer is empty. On BQ failure, rows are returned to the
+    buffer so they are retried on the next flush — no telemetry is dropped.
+
+    Called opportunistically from ``_write_metric`` when the flush interval
+    elapses or the buffer reaches ``_MAX_BUFFER_ROWS``. Also callable directly
+    from tests or at process shutdown.
+    """
+    global _last_flush_time
+    with _buffer_lock:
+        if not _metric_buffer:
+            return
+        rows_to_flush = _metric_buffer.copy()
+
+    _tls.in_metrics_write = True
+    try:
+        from tools.bigquery import insert_rows
+
+        insert_rows("aos_logs.api_call_log", rows_to_flush)
+        # Only clear the buffer and advance the timestamp after a successful write.
+        with _buffer_lock:
+            del _metric_buffer[: len(rows_to_flush)]
+            _last_flush_time = time.monotonic()
+    except Exception as exc:
+        _logger.warning("API metrics batch flush failed (non-fatal): %s", exc)
+        # Return rows to the front of the buffer so they are retried next flush.
+        with _buffer_lock:
+            _metric_buffer[:0] = rows_to_flush
+    finally:
+        _tls.in_metrics_write = False
+
+
 def _write_metric(
     api_name: str,
     operation: str,
@@ -148,31 +199,50 @@ def _write_metric(
     tokens_used: int | None,
     model: str | None,
 ) -> None:
-    """Best-effort write of one telemetry row to BigQuery."""
-    _tls.in_metrics_write = True
-    try:
-        from tools.bigquery import insert_row
+    """Best-effort buffered write of one telemetry row to BigQuery.
 
-        insert_row(
-            "aos_logs.api_call_log",
-            {
-                "ts": datetime.now(UTC).isoformat(),
-                "api_name": api_name,
-                "operation": operation,
-                "caller": caller,
-                "project_id": project_id,
-                "success": success,
-                "latency_ms": latency_ms,
-                "error_code": error_code,
-                "attempts": attempts,
-                "tokens_used": tokens_used,
-                "model": model,
-            },
+    Appends the row to an in-memory buffer and flushes to BigQuery as a batch
+    when the buffer reaches ``_MAX_BUFFER_ROWS`` or ``_FLUSH_INTERVAL_SECONDS``
+    have elapsed since the last flush. The flush uses ``insert_rows`` (one API
+    call for N rows) instead of per-row ``insert_row`` calls, cutting BigQuery
+    API usage by ~94%.
+
+    The recursion guard (``_tls.in_metrics_write``) prevents the flush's own
+    ``insert_rows`` call from triggering a second metric enqueue.
+
+    Args:
+        api_name:    Short API identifier (e.g. "gmail", "bigquery").
+        operation:   Specific operation name (e.g. "send_email").
+        caller:      Agent ID making the call.
+        project_id:  GCP project scope.
+        success:     Whether the call succeeded.
+        latency_ms:  Observed latency in milliseconds.
+        error_code:  HTTP status code or exception class name on failure.
+        attempts:    Number of attempts including retries.
+        tokens_used: LLM token count (if applicable).
+        model:       LLM model alias (if applicable).
+    """
+    row = {
+        "ts": datetime.now(UTC).isoformat(),
+        "api_name": api_name,
+        "operation": operation,
+        "caller": caller,
+        "project_id": project_id,
+        "success": success,
+        "latency_ms": latency_ms,
+        "error_code": error_code,
+        "attempts": attempts,
+        "tokens_used": tokens_used,
+        "model": model,
+    }
+    with _buffer_lock:
+        _metric_buffer.append(row)
+        should_flush = (
+            len(_metric_buffer) >= _MAX_BUFFER_ROWS
+            or time.monotonic() - _last_flush_time >= _FLUSH_INTERVAL_SECONDS
         )
-    except Exception as exc:
-        _logger.warning("API metrics write failed (non-fatal): %s", exc)
-    finally:
-        _tls.in_metrics_write = False
+    if should_flush:
+        flush_metric_buffer()
 
 
 # ── Decorator ─────────────────────────────────────────────────────────────────

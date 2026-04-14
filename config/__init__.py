@@ -115,6 +115,12 @@ class OutboundConfig(BaseModel):
     flood_threshold: int = Field(default=10, gt=0)  # Max emails in window before abort (Rule 26.3)
 
 
+class AgentsConfig(BaseModel):
+    heartbeat_bq_keepalive_seconds: int = Field(
+        default=600, gt=0
+    )  # BQ status_snapshots keepalive interval — write even if status unchanged after this many seconds
+
+
 class Settings(BaseModel):
     gcp: GCPConfig
     sheet: SheetConfig
@@ -130,6 +136,7 @@ class Settings(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     gmail: GmailConfig = Field(default_factory=GmailConfig)
     outbound: OutboundConfig = Field(default_factory=OutboundConfig)
+    agents: AgentsConfig = Field(default_factory=AgentsConfig)
 
     @property
     def GCP_PROJECT_ID(self) -> str:
