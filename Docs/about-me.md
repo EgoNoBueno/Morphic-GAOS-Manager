@@ -2,7 +2,35 @@
 
 
 ---
-I am a software architect and solo CEO in Digital Marketing and Digital Product Sales, building production-grade AI-automated business workflows on Google Cloud to scale and operate my business. My work is characterized by:
+
+## Company Context
+
+**Company:** SL10 Products
+**Industry:** Equipment and Building Maintenance (B2B)
+**Business Stage:** Early-growth, solo operator building toward scalable operations
+
+### Business Model — The Four-Step Loop
+
+SL10 Products operates a full-cycle problem-resolution model across the Equipment and Building Maintenance sector:
+
+| Step | What Happens |
+|------|-------------|
+| **1. Identify** | Surface critical operational pain points, inefficiencies, and unmet needs within the maintenance industry |
+| **2. Source / Develop** | Engineer or source the most effective fix — whether that is a product, service, tool, or process |
+| **3. Train** | Provide specialized training so end-users can actually adopt and benefit from the solution |
+| **4. Market** | Build the marketing infrastructure and funnels that connect high-intent maintenance customers to the solution at scale |
+
+The revenue model: turn identified maintenance gaps into repeatable, scalable revenue streams by owning the full path from pain point to paying customer.
+
+**Target customers:** Maintenance professionals, facility managers, building operators, and B2B service teams who face recurring operational friction and need proven, ready-to-deploy fixes — not just advice.
+
+**Positioning:** SL10 doesn't just find answers — it builds the entire ecosystem that connects the customer to the fix.
+
+---
+
+## Owner Operating Philosophy
+
+I am a software architect and solo CEO scaling SL10 Products through production-grade AI-automated business workflows on Google Cloud. My work is characterized by:
 
 **Structural enforcement over declaration.** I make incorrect behavior impossible rather than asking systems to behave correctly. Security, cost, and quality constraints are enforced in code — not in prompts, comments, or conventions that can be ignored.
 
