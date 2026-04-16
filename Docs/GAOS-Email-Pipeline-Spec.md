@@ -429,7 +429,7 @@ if from_addr not in authorized_senders:
 #### Gate 3: Subject Keyword Gate
 
 ```python
-_trigger_kw = settings.gmail.trigger_keyword.strip().lower()  # "gaos"
+_trigger_kw = settings.gmail.trigger_keyword.strip().lower()  # "kenny"
 if _trigger_kw and _trigger_kw not in subject.lower():
     # → skip, log INFO (uses _redact_sender() for privacy)
     skipped += 1
@@ -791,7 +791,7 @@ Every Gmail, Sheets, Pub/Sub, BigQuery, and Gemini API call is instrumented via 
 | `gmail.label_id` | `Label_6` | Gmail label for organization |
 | `gmail.pubsub_topic` | `projects/morphic-gaos-prod/topics/gmail-notifications` | Gmail push target |
 | `gmail.max_results` | `50` | Max messages per history fetch |
-| `gmail.trigger_keyword` | `GAOS` | Subject must contain this word (case-insensitive) |
+| `gmail.trigger_keyword` | `Kenny` | Subject must contain this word (case-insensitive) |
 | `outbound.max_emails_per_task` | `3` | Rule 26.2 — hard cap per task execution |
 | `outbound.max_publishes_per_task` | `10` | Rule 26.2 — hard cap on Pub/Sub publishes |
 | `outbound.flood_window_minutes` | `60` | Rule 26.3 — rolling window |

@@ -4633,6 +4633,22 @@ async def handle_gmail_renew_watch(project_id: str) -> dict[str, Any]:
     label_id: str = settings.gmail.label_id
     pubsub_topic: str = settings.gmail.pubsub_topic
 
+    if not pubsub_topic:
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            "handle_gmail_renew_watch: settings.gmail.pubsub_topic is empty — "
+            "set it in config/settings.yaml and redeploy.",
+            "ERROR",
+        )
+        raise ValueError(
+            "settings.gmail.pubsub_topic is not configured. "
+            "Set it in config/settings.yaml (e.g. projects/<project>/topics/gmail-notifications) "
+            "and redeploy."
+        )
+
     try:
         expiration_ms_str, initial_history_id = setup_watch(project_id, pubsub_topic, label_id)
         expiration_ms = int(expiration_ms_str)

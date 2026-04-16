@@ -142,8 +142,9 @@ def _extract_error_code(exc: Exception) -> str:
             if isinstance(val, int):
                 return str(val)
     # httpx
-    if hasattr(exc, "response") and hasattr(exc.response, "status_code"):
-        return str(exc.response.status_code)
+    _response = getattr(exc, "response", None)
+    if _response is not None and hasattr(_response, "status_code"):
+        return str(_response.status_code)
     # Timeout variants
     type_name = type(exc).__name__.lower()
     if "timeout" in type_name:

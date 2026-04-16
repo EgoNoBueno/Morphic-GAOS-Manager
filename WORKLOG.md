@@ -5,6 +5,67 @@ Active work session. Updated in real time — refresh or keep open in VS Code.
 
 ---
 
+## 2026-04-16T00:00-07:00 — Voice Input Spec Created
+
+### What was done
+- Created `Docs/GAOS-Voice-Input-Spec.md` — full specification covering all three
+  voice input options: zero-code Gmail path, Google Chat diagnosis gate (before
+  building anything new), and the `/speak` HMAC endpoint build plan.
+- Indexed the new spec in `Docs/DOC-INDEX.yaml` — added primary entry plus inverse
+  index entries for `main.py` and `tools/webhook_sender.py`.
+
+### Files changed
+- `Docs/GAOS-Voice-Input-Spec.md` — new spec (12 sections, full implementation checklist)
+- `Docs/DOC-INDEX.yaml` — added `GAOS-Voice-Input-Spec.md` entry and inverse index entries
+
+### What the spec covers
+- **§1** Zero-code path: Gmail voice dictation → monitored inbox → GAOS (works today)
+- **§2** Google Chat diagnosis gate — must check Chat config before building `/speak`
+- **§3** Three-option comparison table (Option A=Gmail, B=/speak, C=restore Chat)
+- **§4** `/speak` endpoint build plan with full Python code for handler + HMAC verifier
+- **§5** HMAC auth design and `VOICE_HMAC_SECRET` provisioning steps
+- **§6** iOS Shortcut action sequence + 3 options for HMAC signing on iOS
+- **§7** Android Tasker action sequence + JavaScriptlet for HMAC computation
+- **§8** Response delivery: sync vs. queued strategy, email fallback for heavy requests
+- **§9** Secrets and config: one new secret (`VOICE_HMAC_SECRET`), no new settings.yaml keys
+- **§10** Security constraints: fail-closed, constant-time compare, no bypass flag
+- **§11** PowerShell smoke test with HMAC computation and Invoke-WebRequest
+- **§12** Future TTS path (iOS Speak Text, Android Say action, GCS signed URL upgrade)
+
+### What's next
+- Diagnose Google Chat mobile delivery failure (§2 checklist) before deciding to build `/speak`
+- If Chat is definitively broken: provision `VOICE_HMAC_SECRET` and implement the `/speak` endpoint (§4)
+- iOS Shortcut: HMAC signing via Scriptable.app is the recommended path (Option 3 in §6)
+
+---
+
+## 2026-04-16T00:00-07:00 — SL10 Products Business Identity Integration
+
+### What was done
+- Added Company Context section to `Docs/about-me.md`: company name (SL10 Products), industry (Equipment and Building Maintenance), four-step business model (Identify → Source/Develop → Train → Market), target customer profile, and revenue model summary.
+- Updated `Docs/brand-voice.md`: removed generic "Digital Marketing sub-niche" placeholders; grounded all three voice pillars and the vocabulary table in B2B maintenance industry context; added SL10-specific industry phrases; updated the AI agent instructions block.
+- Replaced `[Company]` placeholder with `SL10 Products` in all six Tier 2 agent identity files: beacon, foreman, ledger, pursuit, scout, steward.
+
+### Files changed
+- `Docs/about-me.md` — added Company Context section (company name, industry, four-step model, target customer)
+- `Docs/brand-voice.md` — full update: header note, voice pillars, vocabulary table, industry phrases, agent instructions
+- `Docs/agents/beacon.md` — `[Company]` → `SL10 Products`
+- `Docs/agents/foreman.md` — `[Company]` → `SL10 Products`
+- `Docs/agents/ledger.md` — `[Company]` → `SL10 Products`
+- `Docs/agents/pursuit.md` — `[Company]` → `SL10 Products`
+- `Docs/agents/scout.md` — `[Company]` → `SL10 Products`
+- `Docs/agents/steward.md` — `[Company]` → `SL10 Products`
+
+### Business model captured (three-description synthesis)
+SL10 Products is a full-cycle problem-resolution company in the Equipment and Building Maintenance sector. Revenue model: identify industry inefficiencies → source or develop the solution → train the users → build the marketing funnel to connect customers to the fix at scale.
+
+### What's next
+- All agents will now reference SL10 Products by name and communicate with a maintenance-industry-calibrated voice
+- `Docs/GAOS-Persona-Spec.md` references the Context Trio (`about-me.md`, `brand-voice.md`, `working-preferences.md`) which is now fully grounded in SL10 business context — no spec changes required
+- Consider updating `GAOS-Email-Pipeline-Spec.md` email templates to use SL10 Products industry language in outbound communications
+
+---
+
 ## 2026-04-13T00:00-07:00 — BigQuery Cost Reduction (Options 1+2+3 + event-driven heartbeat)
 
 ### What was done
