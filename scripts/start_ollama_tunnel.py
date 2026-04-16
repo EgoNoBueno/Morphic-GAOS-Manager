@@ -19,7 +19,7 @@ The script:
   6. Blocks, streaming tunnel output
   7. On any crash or unexpected exit, waits --retry-delay seconds and restarts from step 1
 
-With --subdomain (default: gaos-ollama), the URL is always https://gaos-ollama.loca.lt.
+With --subdomain (default: morphic-gaos-ollama), the URL is always https://morphic-gaos-ollama.loca.lt.
 Secret Manager is only written when the URL differs from the stored value, so restarts
 don't create new secret versions.
 
@@ -52,6 +52,66 @@ _PID_FILE = os.path.join(
 )
 
 log = logging.getLogger("ollama-tunnel")
+
+
+def _stop_watchdog() -> int:
+    """Stop a running tunnel watchdog process and all its node.exe children.
+
+    Reads the PID from the lock file, kills the watchdog (which triggers its
+    atexit handler to clean up children), then force-kills any remaining
+    localtunnel node.exe processes and removes the lock file.
+
+    Returns:
+        0 on success or if no watchdog was running.
+        1 if the PID file was found but the kill failed.
+    """
+    if not os.path.exists(_PID_FILE):
+        log.info("No PID file found — watchdog is not running (or already stopped).")
+        _kill_orphaned_localtunnel_nodes()
+        return 0
+
+    try:
+        with open(_PID_FILE) as f:
+            pid = int(f.read().strip())
+    except (ValueError, OSError) as exc:
+        log.warning("Could not read PID file: %s — cleaning up anyway.", exc)
+        _kill_orphaned_localtunnel_nodes()
+        try:
+            os.unlink(_PID_FILE)
+        except OSError:
+            pass
+        return 0
+
+    log.info("Stopping watchdog PID %d …", pid)
+    kill_failed = False
+    try:
+        result = subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(pid)],
+            capture_output=True,
+            creationflags=0x08000000,
+        )
+        if result.returncode != 0:
+            log.warning("taskkill exited %d for PID %d.", result.returncode, pid)
+            kill_failed = True
+    except Exception as exc:
+        log.warning("taskkill failed for PID %d: %s", pid, exc)
+        kill_failed = True
+
+    # Give the process tree a moment to die, then kill any surviving localtunnel nodes
+    time.sleep(1.0)
+    _kill_orphaned_localtunnel_nodes()
+
+    try:
+        os.unlink(_PID_FILE)
+    except OSError:
+        pass
+
+    if kill_failed:
+        log.info("Watchdog cleanup finished but taskkill reported failure.")
+        return 1
+
+    log.info("Watchdog stopped.")
+    return 0
 
 
 def _acquire_pid_lock() -> bool:
@@ -129,6 +189,95 @@ def _ensure_node_on_path() -> None:
         log.info("Added Node.js dirs to PATH: %s", ", ".join(additions))
 
 
+def _kill_orphaned_localtunnel_nodes() -> None:
+    """Kill any node.exe processes running localtunnel that the current user owns.
+
+    Called on startup before spawning a new tunnel so that stale node workers
+    left by a previously crashed watchdog cannot hold the loca.lt subdomain.
+    After killing, sleeps 3 seconds to allow loca.lt's server-side connection
+    to clear before the new tunnel attempts to claim the same subdomain.
+    """
+    killed: list[int] = []
+
+    def _get_localtunnel_pids() -> list[int]:
+        """Return PIDs of node.exe processes with 'localtunnel' in their command line.
+
+        Tries PowerShell Get-CimInstance first (works on all Windows 10/11 builds).
+        Falls back to the deprecated wmic command if PowerShell is unavailable.
+        """
+        # Primary: PowerShell CIM (replaces deprecated wmic on Windows 11)
+        try:
+            ps_result = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Get-CimInstance Win32_Process -Filter \"name='node.exe'\" "
+                    "| Where-Object { $_.CommandLine -like '*localtunnel*' } "
+                    "| Select-Object -ExpandProperty ProcessId",
+                ],
+                capture_output=True,
+                text=True,
+                creationflags=0x08000000,
+                timeout=10,
+            )
+            pids = [
+                int(line.strip())
+                for line in ps_result.stdout.splitlines()
+                if line.strip().isdigit()
+            ]
+            if pids or ps_result.returncode == 0:
+                return pids
+        except Exception:
+            pass
+
+        # Fallback: deprecated wmic (still works on Win 10 / early Win 11)
+        try:
+            wmic_result = subprocess.run(
+                [
+                    "wmic",
+                    "process",
+                    "where",
+                    "(name='node.exe' and commandline like '%localtunnel%')",
+                    "get",
+                    "ProcessId",
+                    "/VALUE",
+                ],
+                capture_output=True,
+                text=True,
+                creationflags=0x08000000,
+                timeout=10,
+            )
+            return [
+                int(line.split("=", 1)[1].strip())
+                for line in wmic_result.stdout.splitlines()
+                if line.startswith("ProcessId=")
+            ]
+        except Exception:
+            return []
+
+    try:
+        for pid_val in _get_localtunnel_pids():
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid_val)],
+                    capture_output=True,
+                    creationflags=0x08000000,
+                )
+                killed.append(pid_val)
+            except (ValueError, OSError):
+                pass
+    except Exception as exc:
+        log.debug("orphan-kill scan failed (non-fatal): %s", exc)
+        return
+
+    if killed:
+        log.info("Killed %d orphaned localtunnel node.exe process(es): %s", len(killed), killed)
+        log.info("Waiting 3 s for loca.lt server-side connection to clear…")
+        time.sleep(3.0)
+
+
 def _kill_tree(pid: int) -> None:
     """Kill a process and all its descendants using taskkill /F /T (Windows).
 
@@ -159,8 +308,6 @@ def _configure_logging(log_file: str | None = None) -> None:
     ch.setFormatter(fmt)
     root.addHandler(ch)
     if log_file:
-        import os
-
         os.makedirs(os.path.dirname(os.path.abspath(log_file)), exist_ok=True)
         fh = logging.FileHandler(log_file, encoding="utf-8")
         fh.setFormatter(fmt)
@@ -290,6 +437,7 @@ def _run_tunnel_once(
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        creationflags=0x08000000,  # CREATE_NO_WINDOW — suppresses console flash when headless
     )
 
     tunnel_url: str | None = None
@@ -317,8 +465,9 @@ def _run_tunnel_once(
     if subdomain_mismatch:
         log.warning(
             "Requested subdomain was not granted by loca.lt — got %r instead of %r. "
-            "This probably means another process already claimed the subdomain. "
-            "Skipping Secret Manager update to avoid publishing an unstable random URL.",
+            "Another process has claimed the preferred subdomain. "
+            "Will publish this random URL to Secret Manager if Ollama responds. "
+            "Stop and restart this script to attempt subdomain reclaim.",
             tunnel_url,
             f"https://{requested_subdomain}.loca.lt",
         )
@@ -331,11 +480,18 @@ def _run_tunnel_once(
             " Skipping Secret Manager update to avoid publishing a dead endpoint."
         )
 
-    if ok and not no_secret and not subdomain_mismatch:
+    if ok and not no_secret:
         current = _current_secret_url(project)
         if current == tunnel_url:
             log.info("OLLAMA_HOST already set to %r — skipping Secret Manager update.", tunnel_url)
         else:
+            if subdomain_mismatch:
+                log.warning(
+                    "Publishing random URL %r to Secret Manager — Cloud Run will use this URL "
+                    "until the preferred subdomain is reclaimed. Kill and restart this script "
+                    "to attempt subdomain reclaim.",
+                    tunnel_url,
+                )
             _update_secret(tunnel_url, project)
 
     log.info(
@@ -399,9 +555,9 @@ def main() -> int:
     p.add_argument("--project", default="morphic-gaos-prod", help="GCP project id")
     p.add_argument(
         "--subdomain",
-        default="gaos-ollama",
+        default="morphic-gaos-ollama",
         metavar="NAME",
-        help="Request a fixed localtunnel subdomain (default: gaos-ollama → https://gaos-ollama.loca.lt). "
+        help="Request a fixed localtunnel subdomain (default: morphic-gaos-ollama → https://morphic-gaos-ollama.loca.lt). "
         "A stable subdomain means Secret Manager is only updated when the URL actually changes.",
     )
 
@@ -445,13 +601,23 @@ def main() -> int:
         metavar="PATH",
         help="Write logs to this file (in addition to stderr). Useful when running headless via pythonw.exe.",
     )
+    p.add_argument(
+        "--stop",
+        action="store_true",
+        help="Stop a running watchdog: kills the watchdog process, all child node.exe workers, "
+        "and removes the PID lock file. Safe to run from any terminal.",
+    )
     args = p.parse_args()
     _configure_logging(args.log_file)
+
+    if args.stop:
+        return _stop_watchdog()
 
     if not _acquire_pid_lock():
         return 1
     log.info("PID lock acquired (%d) — single instance confirmed.", os.getpid())
 
+    _kill_orphaned_localtunnel_nodes()
     _ensure_node_on_path()
     npx_path = shutil.which("npx")
     if not npx_path:
@@ -476,6 +642,10 @@ def main() -> int:
         while True:
             attempt += 1
             log.info("--- Tunnel attempt %d ---", attempt)
+            if attempt > 1:
+                # Kill any orphaned localtunnel nodes from the previous crashed attempt
+                # before trying to reclaim the preferred subdomain.
+                _kill_orphaned_localtunnel_nodes()
             try:
                 _run_tunnel_once(cmd, args.no_secret, args.project, args.health_interval)
             except FileNotFoundError:

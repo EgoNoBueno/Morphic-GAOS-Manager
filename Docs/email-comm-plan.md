@@ -158,10 +158,10 @@ Wired into the existing `route()` dispatch: when `route()` receives `MessageType
 Logic sequence:
 1. Read `gmail_last_history_id` from `System_State` Sheet (`find_row("System_State", "key", "gmail_last_history_id", project_id)`). Fallback to `payload["history_id"]` on first run (seed).
 2. Call `fetch_new_messages(project_id, last_history_id)` → `(messages, new_history_id)`
-3. **Sender auth gate:** for each message, check `from_addr` against `GMAIL_AUTHORIZED_SENDERS` secret (comma-separated email list fetched from Secret Manager). Skip + log `WARNING` if not authorized.
-4. **Loop prevention:** skip + log `WARNING` if `from_addr` is in `_own_addresses` (built from `settings.gmail.monitored_address`, `settings.gmail.sender_address`, and the OAuth profile address). This check runs **before** the sender auth gate — see Rule 26.1.
+3. **Loop prevention (Rule 26.1 — must run first):** skip + log `WARNING` if `from_addr` is in `_own_addresses` (built from `settings.gmail.monitored_address`, `settings.gmail.sender_address`, and the OAuth profile address).
+4. **Sender auth gate:** for each message, check `from_addr` against `GMAIL_AUTHORIZED_SENDERS` secret (comma-separated email list fetched from Secret Manager). Skip + log `WARNING` if not authorized.
 
-> ⚠️ **Warning — Outbound alias in GMAIL_AUTHORIZED_SENDERS causes infinite reply loop:** The `GMAIL_AUTHORIZED_SENDERS` secret must never contain `settings.gmail.sender_address` (`aos@...`) or any address the system sends from. If it does, the code-layer `_own_addresses` check is the only guard, and a single code regression reopens the loop. The 2026-04-02 incident generated ~89,000 Pub/Sub faults and 18 unwanted emails from this exact misconfiguration. Correct secret value: only real human inboxes (`dhess@sl10repairtechs.com`, `denton.hess@gmail.com`). See Rule 26 in `AI-Autocoding-Rules.md`.
+> ⚠️ **Warning — Outbound alias in GMAIL_AUTHORIZED_SENDERS causes infinite reply loop:** The `GMAIL_AUTHORIZED_SENDERS` secret must never contain `settings.gmail.sender_address` (`aos@...`) or any address the system sends from. If it does, the code-layer `_own_addresses` check (step 3) is the only guard, and a single code regression reopens the loop. The 2026-04-02 incident generated ~89,000 Pub/Sub faults and 18 unwanted emails from this exact misconfiguration. Correct secret value: only real human inboxes (`dhess@sl10repairtechs.com`, `denton.hess@gmail.com`). See Rule 26 in `AI-Autocoding-Rules.md`.
 5. For each valid message:
    - Call `get_thread_context(project_id, thread_id)` → store in state for LLM node use
    - `append_row("Email Inbox", {Timestamp, From, Subject, Preview(200chars), Message ID, Thread ID, Status="Pending"}, project_id)`
@@ -327,7 +327,7 @@ gmail:
   label_id: 'Label_6'                               # Gmail label ID (GAOS-Tasks)
   pubsub_topic: 'projects/morphic-gaos-prod/topics/gmail-notifications'
   max_results: 50
-  trigger_keyword: 'GAOS'  # Only process emails whose subject contains this word (case-insensitive). Clear to disable.
+  trigger_keyword: 'Kenny'  # Only process emails whose subject contains this word (case-insensitive). Clear to disable.
 
 outbound:
   max_emails_per_task: 3       # Hard cap per single task execution (Rule 26.2)
@@ -359,7 +359,7 @@ Both fetched at runtime via `tools.secrets.get_secret()`. Neither stored in sour
 4. `ruff check --fix .; if ($LASTEXITCODE -eq 0) { ruff format . }`
 5. Manual: `python scripts/setup_gmail_oauth.py` → label ID confirmed, watch registered, expiration printed
 6. Manual: `python scripts/provision_schedulers.py` → `gaos-gmail-renew-watch` job visible in Cloud Scheduler console
-7. Manual E2E: send email with subject containing `GAOS` → Cloud Logging shows `GMAIL_NOTIFICATION` received + `EMAIL_RECEIVED` published → `Email Inbox` Sheet tab has new row → reply sent from `aos@sl10repairtechs.com`
+7. Manual E2E: send email with subject containing the configured `trigger_keyword` (currently `Kenny`) → Cloud Logging shows `GMAIL_NOTIFICATION` received + `EMAIL_RECEIVED` published → `Email Inbox` Sheet tab has new row → reply sent from `aos@sl10repairtechs.com`
 
 ---
 
