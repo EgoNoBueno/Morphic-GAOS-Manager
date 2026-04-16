@@ -319,6 +319,38 @@ documents:
       - Major new capability added or removed
       - Test count changes significantly (>10%)
 
+  GAOS-n8n-Integration-Spec.md:
+    purpose: >
+      Architecture decision and deployment guide for n8n as GAOS's SaaS connector
+      layer. Covers the three workflow classes (standalone, Pub/Sub bridge, GAOS native),
+      system architecture diagram, Cloud Run deployment plan, IAM setup, pilot selection
+      criteria, and governance conventions.
+    code_paths:
+      - Docs/Automation-Wish-List.md
+    triggers:
+      - Workflow classification (Class 1/2/3) definition changed
+      - n8n deployment config changed (Cloud Run, Cloud SQL, IAM)
+      - New Class 2 flow wired to a GAOS Pub/Sub topic
+      - Pilot workflow selected or completed
+      - n8n SA permissions changed
+      - A2AMessage envelope format for n8n flows changed
+
+  GAOS-Voice-Input-Spec.md:
+    purpose: >
+      Architecture and build plan for voice input to Nexus-Prime — covers the
+      zero-code Gmail path, Google Chat diagnosis gate, the /speak HMAC endpoint
+      design, iOS Shortcut and Android Tasker client setup, VOICE_HMAC_SECRET
+      provisioning, and the implementation checklist.
+    code_paths:
+      - main.py
+      - tools/google_chat.py
+    triggers:
+      - /speak endpoint added to main.py
+      - VOICE_HMAC_SECRET provisioned or rotated
+      - Google Chat mobile delivery issue resolved or confirmed permanent
+      - iOS Shortcut or Android Tasker client setup changes
+      - Response delivery strategy changed (sync vs. queued)
+
   working-preferences.md:
     purpose: >
       Developer working preferences — editor setup, debug flows,
@@ -453,9 +485,19 @@ inverse_index:
     - GAOS-Email-Pipeline-Spec.md
     - GAOS-Tools-Spec.md
 
-  "tools/vertex_search.py":
-    - GAOS-Skill-Compliance-Spec.md
+  "main.py":
+    - GAOS-Chat-Dev-Reference.md
+    - GAOS-Email-Pipeline-Spec.md
+    - GAOS-Voice-Input-Spec.md        # /speak endpoint
+    - GAOS-Agent-Spec.md
+    - GAOS-Manager-Spec.md
+    - GAOS-Deploy-Spec.md
+
+  "tools/webhook_sender.py":
     - GAOS-Tools-Spec.md
+    - GAOS-Voice-Input-Spec.md        # same HMAC pattern
+
+
 
   "apps_script/":
     - GAOS-Chat-Dev-Reference.md
@@ -478,11 +520,6 @@ inverse_index:
 
   "scripts/gaos_doctor.py":
     - GAOS-Doctor.md
-
-  "main.py":
-    - GAOS-Agent-Spec.md
-    - GAOS-Manager-Spec.md
-    - GAOS-Deploy-Spec.md
 
   "config/settings.yaml":
     - GAOS-Manager-Spec.md

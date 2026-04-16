@@ -36,6 +36,7 @@ desktop.ini
 
 # Credentials & keys — NEVER in the image
 oauth-client.json
+oauth_creds_output.json
 client_secrets.json
 config/keys/
 *.tfvars
@@ -45,6 +46,7 @@ config/keys/
 *.p12
 *.pfx
 
+# Private task agents — kept out of build context (matches .gcloudignore)
 agents/*/tasks/
 
 .pytest_cache/
@@ -61,10 +63,20 @@ SKILLS_LOG.md
 test_quality.txt
 test_results_fresh.txt
 
-# Docs & logs not needed at runtime
+# Docs, tests, scripts, infra — not needed at runtime
+Docs/
+tests/
+scripts/
+infra/
+dashboard/
+apps_script/
+.github/
 WORKLOG.md
 SCRATCH.md
 BUILD_NOTES.md
+CONTRIBUTING.md
+LICENSE.md
+README.md
 logs/
 
 .git/
