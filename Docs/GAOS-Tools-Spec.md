@@ -812,10 +812,14 @@ def _call_model(
 ### Ollama Call Details
 
 - **Host:** fetched from Secret Manager as `OLLAMA_HOST` at call-time; defaults to `http://localhost:11434` if the secret fetch fails (intentional local-dev fallback)
-- **Timeout:** `LOCAL_MODEL_TIMEOUT_SECONDS` from `settings.yaml` (default: 30 seconds)
+- **Tunnel:** `OLLAMA_HOST` points to a **Cloudflare Tunnel** URL (`https://<tunnel-id>.cfargotunnel.com`) — a permanent, stable URL that never changes. Set up once via `scripts/setup_cloudflare_tunnel.py`. No loca.lt, no watchdog process, no Secret Manager drift.
+- **Timeout:** `LOCAL_MODEL_TIMEOUT_SECONDS` from `settings.yaml` (default: 90 seconds)
 - **On failure:** on `httpx.TimeoutException`, `httpx.ConnectError`, or `httpx.HTTPStatusError`, the function emits a `logger.error` (exception type, host URL, model name, failure count) then **raises `RuntimeError`** — the Gemini fallback is permanently disabled. No Gemini tokens are spent. The failure counter (`get_ollama_fallback_count()`) still increments so operations can detect repeated failures.
 
 > ⚠️ **Fallback is disabled:** The Gemini fallback that existed in early development (auto-routing to `LOCAL_MODEL_FALLBACK` on Ollama timeout) was permanently removed. All Ollama failures now surface as `RuntimeError` so the caller decides how to handle them. Callers that handle the error gracefully (e.g. `chat_respond` returns a user-facing apology string) must catch `Exception` and respond appropriately — they must NOT re-call `_call_model()` with a Gemini alias as a substitute.
+
+> ⚠️ **Tunnel architecture — loca.lt replaced by Cloudflare Tunnel:** The original loca.lt tunnel was unreliable (subdomain theft, HTML challenge page, requires a running watchdog process). Cloudflare Tunnel provides a UUID-based permanent URL, runs as a Windows service (no terminal needed), and never requires a Secret Manager update after initial setup. To set up or migrate: `python scripts/setup_cloudflare_tunnel.py --project morphic-gaos-prod`. See `scripts/start_ollama_tunnel.py` (kept as fallback) and the deprecated `scripts/register_ollama_tunnel_task.ps1`.
+
 - **Streaming:** always disabled (`stream=False`) — agents process complete responses, not token streams
 
 ### `web_access` Parameter

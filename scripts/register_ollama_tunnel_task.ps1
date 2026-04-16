@@ -1,7 +1,15 @@
 <#
 .SYNOPSIS
-    Register a Windows Task Scheduler task that starts the Ollama localtunnel
-    watchdog at user login — no terminal window, auto-restart on failure.
+    DEPRECATED — superseded by Cloudflare Tunnel (scripts\setup_cloudflare_tunnel.py).
+
+    This script registered a loca.lt localtunnel watchdog. loca.lt has been replaced
+    by Cloudflare Tunnel, which provides a permanent URL, no subdomain theft, no HTML
+    challenge page, and a native Windows service (no Task Scheduler needed).
+
+    To migrate:
+        python scripts\setup_cloudflare_tunnel.py --project morphic-gaos-prod
+
+    This script is kept for reference and rollback only.
 
 .DESCRIPTION
     Creates (or updates) a scheduled task named "GAOS-OllamaTunnel" that:
@@ -9,9 +17,6 @@
       - Runs start_ollama_tunnel.py via the repo venv Python, hidden (no console)
       - Is set to restart up to 3 times on failure, 1 minute apart
       - Logs stdout+stderr to logs\ollama-tunnel.log in the repo root
-
-    Must be run once from an elevated PowerShell (Run as Administrator) OR
-    from a normal user session — both work; task is registered for current user.
 
 .PARAMETER Port
     Local Ollama port. Default: 11434
@@ -23,11 +28,8 @@
     Seconds the Python watchdog waits between tunnel restarts. Default: 10
 
 .EXAMPLE
-    # Register with defaults
+    # Register with defaults (only if NOT using Cloudflare Tunnel)
     powershell -ExecutionPolicy Bypass -File scripts\register_ollama_tunnel_task.ps1
-
-    # Register with custom port
-    powershell -ExecutionPolicy Bypass -File scripts\register_ollama_tunnel_task.ps1 -Port 8000
 
     # Unregister
     Unregister-ScheduledTask -TaskName "GAOS-OllamaTunnel" -Confirm:$false
@@ -37,7 +39,7 @@ param(
     [int]    $Port           = 11434,
     [string] $Project        = "morphic-gaos-prod",
     [int]    $RetryDelaySec  = 10,
-    [string] $Subdomain      = "gaos-ollama"   # fixed URL: https://gaos-ollama.loca.lt
+    [string] $Subdomain      = "morphic-gaos-ollama"
 )
 
 Set-StrictMode -Version Latest
