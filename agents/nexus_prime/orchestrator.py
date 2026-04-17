@@ -4543,10 +4543,12 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
         processed += 1
 
     # ── Persist new history_id ────────────────────────────────────────────────
-    # Only advance the watermark when no messages were skipped (404). If
-    # skipped_ids is non-empty, those message IDs may become fetchable on a
-    # retry — advancing past them would lose them permanently.
-    if new_history_id and not skipped_ids:
+    # Always advance the watermark, even when skipped_ids is non-empty.
+    # Messages that 404 after 3 retries are deleted/archived and will never
+    # become fetchable — keeping the watermark behind them causes an infinite
+    # replay loop where every process_gmail task re-fetches the same 404 messages
+    # and hammers the Sheets read quota. They are already logged above.
+    if new_history_id:
         try:
             existing = find_row("System_State", "key", "gmail_last_history_id", project_id)
             if existing:
