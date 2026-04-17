@@ -1154,6 +1154,49 @@ def handle_skill_request(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMem
 
 ---
 
+#### `process_gmail`
+
+*(Gmail integration)* Registered as `_process_gmail_node`. Triggered on `GMAIL_NOTIFICATION` messages pushed from Gmail's Cloud Pub/Sub watch. This is the most complex node in the email pipeline.
+
+**What it does:** Reads the Gmail history delta since `gmail_last_history_id` (from the `System_State` sheet), applies four filtering gates per message (own-address exclusion → sender authorization → subject keyword → dedup), logs valid emails to the `Email Inbox` sheet, publishes `EMAIL_RECEIVED` to `agent.nexus-prime.events` for downstream reply composition, and marks messages read.
+
+**Watermark behavior (hardened 2026-04-16):** After processing the delta, the node **always** advances `gmail_last_history_id` to the new value — even when `skipped_ids` is non-empty. Messages that 404 after 3 retries are permanently gone; holding the watermark back causes an infinite replay loop on every subsequent notification.
+
+> ⚠️ **Warning — Infinite replay from stale watermark:** The original guard `if new_history_id and not skipped_ids:` refused to advance the watermark when any message 404'd during fetch. This caused every subsequent push notification to replay ~100+ old messages, generating a Sheets read storm (~300+ req/min), triggering 429s, and causing downstream idempotency guards to fail open. Fixed 2026-04-16: watermark is advanced unconditionally when `new_history_id` exists. See `GAOS-Email-Pipeline-Spec.md §10.7`.
+
+**Tools called:** `find_row`, `update_row`/`append_row` (System_State), `get_secret` (GMAIL_AUTHORIZED_SENDERS), `fetch_new_messages`, `append_row` (Email Inbox), `publish_message`, `mark_as_read`.
+
+**No LLM call.** Gate-and-ingest node.
+
+**Full pipeline detail:** `GAOS-Email-Pipeline-Spec.md §10`.
+
+---
+
+#### `compose_reply`
+
+*(Gmail integration)* Triggered on `EMAIL_RECEIVED` messages. The only node in the email pipeline that calls the LLM. Drafts and sends a reply via `send_email()`.
+
+**Execution sequence:**
+
+1. **§13.1 — Extract payload:** `from_addr`, `subject`, `body`, `thread_id`, `message_id`, `thread_context`.
+2. **§13.1a — Idempotency guard (added 2026-04-16):** `find_row("Email Inbox", "message_id", ...)` — if `status == "Replied"`, bail immediately. **Fail-closed:** any Sheets exception (e.g. 429) also bails; Pub/Sub redelivers after the quota window recovers.
+3. **§13.2–13.4 — LLM draft:** Context trio loaded (`about-me.md`, `brand-voice.md`, `working-preferences.md`), prompt built, `_call_model(FAST_MODEL)` called.
+4. **§13.5 — Rule 26.2 per-task email cap:** Aborts if `emails_sent_this_task >= settings.outbound.max_emails_per_task` (default 3).
+5. **§13.6 — Rule 26.3 time-window flood guard:** `_check_email_flood()` queries BQ for sends in the last 60 min. **Fail-closed:** BQ failure blocks the send.
+6. **§13.7 — Pre-send status lock (added 2026-04-16):** Writes `status = "Replied"` to the `Email Inbox` row **before** calling `send_email`. This is the optimistic concurrency lock — concurrent tasks that reach §13.1a after this write will read `"Replied"` and abort. **Fail-closed:** any Sheets exception bails; `send_email` is not called.
+7. **§13.8 — Send email:** `send_email()` via `tools/gmail.py`.
+8. **§13.9 — Intent extraction dispatch:** Second Gemini call to classify intent and optionally publish `TASK_HANDOFF` to a domain agent.
+
+> ⚠️ **Warning — Pre-send lock must precede send:** The original implementation wrote `"Replied"` *after* `send_email` succeeded, leaving all concurrent tasks able to pass the idempotency check simultaneously (all reading `"Pending"`). Fixed 2026-04-16: the status write happens before the send call. See `GAOS-Email-Pipeline-Spec.md §13.7`.
+
+> ⚠️ **Warning — Both guards must fail closed:** The original `except: pass` on the idempotency check and `except: log warning` on the pre-send lock meant 429s were invisible — all concurrent tasks proceeded and sent. Both handlers now `return state` on any exception. See `GAOS-Email-Pipeline-Spec.md §13.1a` and `§13.7`.
+
+**Tools called:** `find_row`, `get_all_records_with_row_numbers`, `update_row` (Email Inbox), `_call_model` (×2 — reply + intent), `send_email`, optionally `publish_message` (TASK_HANDOFF).
+
+**Full pipeline detail:** `GAOS-Email-Pipeline-Spec.md §13`.
+
+---
+
 ### 3.3 Graph Assembly
 
 ```python
