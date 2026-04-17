@@ -244,7 +244,7 @@ Any import not on the allowlist is an automatic **Gate 1 failure** until the all
 - [ ] Identity file (`Docs/agents/<name>.md`) exists and contains all 8 required sections (`GAOS-Agent-Spec.md §3.1`)
 - [ ] Universal Don'ts present in identity file (never self-approve; never write to another domain's tabs; never call `DEEP_MODEL` for routine tasks)
 - [ ] LangGraph graph declared with at minimum all 7 required nodes: `plan`, `dispatch`, `collect`, `report`, `park`, `resume`, `escalate`
-- [ ] Pub/Sub outbound topic named per convention: `<project_id>/agent/<name>/events`
+- [ ] Pub/Sub outbound topic named per convention: `agent/<name>/events` (GCP physical name after `/` → `.` replacement: `agent.<name>.events` — see `tools/pubsub.py` `_topic_path()`)
 - [ ] Subscriptions to Nexus-Prime broadcast and required cross-domain topics
 - [ ] All published messages use `A2AMessage` schema (including `project_id`)
 - [ ] Dashboard heartbeat writes at end of every work cycle with all required fields
@@ -344,8 +344,7 @@ All five steps must exit with code `0` before Gate 5 is cleared.
 Before deploying to Cloud Run, verify the boot sequence locally:
 
 ```powershell
-# Start with STARTUP_ONLY=true to exercise steps 1-6 without entering the event loop
-$env:STARTUP_ONLY = "true"
+# Run the full boot sequence locally; press Ctrl+C after the IDLE heartbeat appears in the Sheet
 python -c "from agents.<name>.orchestrator import <AgentClass>; agent = <AgentClass>(); agent.boot()"
 ```
 
@@ -396,7 +395,7 @@ Once all required gates are cleared, submit the integration as a **Priority-3 pr
 
 After the proposal is approved and the skill is merged, the following must be completed before the skill is considered fully integrated:
 
-1. **Update `GAOS-Agent-Spec.md §8`** — add the new agent's completion checklist entry to the Implementation Checklist in `GAOS-Manager-Spec.md §17` with status `In Progress`.
+1. **Add tracking entry to `GAOS-Manager-Spec.md §17`** — add the new agent's row to the Implementation Checklist with status `In Progress`; use `GAOS-Agent-Spec.md §8` as the completion checklist.
 2. **Write unit tests** — satisfy `GAOS-Agent-Spec.md §9.1` (U1–U5) for all agent skills; `GAOS-Agent-Spec.md §9.3` if the skill is code-producing.
 3. **Add integration tests** — for Tier 2 orchestrators, satisfy `GAOS-Agent-Spec.md §9.2` (I1–I6).
 4. **Update `GAOS-Deploy-Spec.md`** — add any new secrets, Pub/Sub topics, or Sheet tabs that must be provisioned.
@@ -425,3 +424,7 @@ After the proposal is approved and the skill is merged, the following must be co
 | Nexus-Prime construction requirements | `GAOS-Nexus-Prime-Spec.md` |
 | Agent behavioral identity + `think` node spec | `GAOS-Persona-Spec.md` |
 | Deployer and end-user onboarding | `GAOS-Onboarding-Spec.md` |
+
+---
+
+_Last reviewed: 2026-04-16_
