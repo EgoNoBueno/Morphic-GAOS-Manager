@@ -3270,8 +3270,19 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
                     "INFO",
                 )
                 return state
-        except Exception:
-            pass  # Sheet read failure — proceed to avoid dropping a real reply
+        except Exception as exc:
+            # Fail closed — if the Sheet is unavailable (e.g. 429 under load), bail and
+            # let Pub/Sub redeliver after the quota window recovers. Sending through a
+            # failed guard is exactly what produces 14-reply storms.
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"compose_reply: idempotency check failed ({exc}) — skipping to avoid duplicate send",
+                "WARNING",
+            )
+            return state
 
     if not from_addr:
         _log_cloud(
@@ -3384,14 +3395,17 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
             if sheet_row_num is not None:
                 update_row("Email Inbox", sheet_row_num, {"status": "Replied"}, project_id)
         except Exception as exc:
+            # Fail closed — can't set the optimistic lock, so don't send.
+            # Pub/Sub will redeliver; the next attempt will find the quota recovered.
             _log_cloud(
                 "nexus-prime",
                 project_id,
                 "task",
                 task_id,
-                f"compose_reply: pre-send status update failed — {exc}",
+                f"compose_reply: pre-send lock write failed ({exc}) — skipping to avoid duplicate send",
                 "WARNING",
             )
+            return state
 
     try:
         sent_id = send_email(
