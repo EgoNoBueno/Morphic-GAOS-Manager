@@ -3,6 +3,38 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-04-16T17:58 — Duplicate Reply Storm — Root Cause Fixed and Verified
+
+### What was done
+Diagnosed and fixed a three-failure chain that caused up to 48 duplicate replies to a single test email.
+
+### Root cause chain
+1. **Watermark stuck on 404-skipped messages** — `process_gmail` refused to advance `gmail_last_history_id` when any messages were in `skipped_ids` (messages 404ing because they were in Sent, not Inbox). This created an infinite replay loop: every new Gmail notification caused the same ~100 old outbound messages to be re-fetched, hammering Sheets with read requests.
+2. **Sheets 429 storm** — 100+ concurrent reads/minute blew through the per-minute Sheets read quota, causing all Sheet API calls to fail.
+3. **Guards fail open** — the idempotency check (`except: pass → proceed`) and pre-send lock write (log warning → proceed) both ignored Sheets failures and sent anyway. Every one of 14–48 concurrent tasks sailed past both guards.
+
+### Fixes applied (commits c09b4e3, 898b9d2, 8b2d960)
+- **c09b4e3** — `compose_reply`: added `find_row` idempotency guard at top (bail if already "Replied"); moved `update_row` to BEFORE `send_email` (optimistic lock).
+- **898b9d2** — `process_gmail`: always advance history_id watermark, even when `skipped_ids` is non-empty. 404 after 3 retries = message is permanently gone.
+- **8b2d960** — `compose_reply`: both guard `except` blocks now fail **closed** — return early on any Sheets exception rather than proceeding. Pub/Sub redeliver will retry after quota recovers.
+
+### Emergency action taken
+Purged `nexus-prime.sub.events` queue via `gcloud pubsub subscriptions seek --time=<ISO8601>` to drain the backlog and stop the storm mid-session.
+
+### Files changed
+- `agents/nexus_prime/orchestrator.py`
+
+### Verification
+Post-fix test email received exactly 1 reply. 90-second monitoring window showed no delayed duplicates.
+
+### Lessons captured
+- `/memories/repo/gotchas.md` — 3 new bullets added
+- WORKLOG entry (this entry)
+
+### What's next
+- Add warning callouts to `GAOS-Email-Pipeline-Spec.md` at the `process_gmail` and `compose_reply` sections
+- Consider moving to a proper distributed lock (BigQuery or Firestore) if Sheets 429s recur under higher email volume
+
 ---
 
 ## 2026-04-16T00:00-07:00 — Voice Input Spec Created

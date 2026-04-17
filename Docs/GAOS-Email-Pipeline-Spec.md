@@ -1,6 +1,6 @@
 # GAOS Email Pipeline — Reverse-Engineered Specification
 
-> **Status:** Reverse-engineered from source on 2026-04-02. Covers the complete lifecycle from Gmail push notification to terminal LangGraph state, with every function, variable, gate, and side effect documented from live code.
+> **Status:** Reverse-engineered from source on 2026-04-02. Updated 2026-04-16 to reflect duplicate-reply hardening (idempotency guard, pre-send status lock, fail-closed exception handling, watermark always-advance). Covers the complete lifecycle from Gmail push notification to terminal LangGraph state, with every function, variable, gate, and side effect documented from live code.
 >
 > **Purpose:** Canonical reference for the email processing pipeline. Use this document to compare against existing specs (`GAOS-Nexus-Prime-Spec.md`, `GAOS-Tools-Spec.md`, `GAOS-Manager-Spec.md`) and identify discrepancies.
 
@@ -475,12 +475,14 @@ The payload contains all extracted fields from the Gmail message plus the thread
 
 ### 10.7 Persist New History ID
 
-If `new_history_id` exists **and `skipped_ids` is empty** (implemented 2026-04-02):
+If `new_history_id` exists (fixed 2026-04-16):
 - `find_row("System_State", "key", "gmail_last_history_id", project_id)` — check if row exists
 - If exists: `update_row(...)` with new value
 - If not: `append_row(...)` to create it
 
-If `skipped_ids` is non-empty, the watermark is **not** advanced. Those message IDs may become fetchable on a retry — advancing past them would lose them permanently. The next Gmail notification will re-fetch from the old `history_id`, allowing the 404'd messages a second chance.
+The watermark is **always advanced**, even when `skipped_ids` is non-empty. Messages that return 404 after 3 retries are permanently deleted or archived — they will never become fetchable. Holding the watermark back causes an infinite replay loop where every subsequent Gmail notification re-fetches the same dead messages, hammers the Sheets read quota, and cascades into duplicate sends.
+
+> ⚠️ **Warning — Infinite replay from stale watermark:** The original guard `if new_history_id and not skipped_ids` was changed on 2026-04-16 after a production incident. A single reply from `aos@sl10repairtechs.com` produced a sent message that 404'd on re-fetch. With 0 `skipped_ids` allowed to advance the watermark, every subsequent notification replayed ~100 outbound messages, generating ~300+ Sheets reads/min (all 429-ing) and causing `compose_reply`'s idempotency guards to fail open, producing 48 duplicate replies.
 
 ### 10.8 Final Log and Return
 
@@ -551,6 +553,22 @@ thread_context = payload["thread_context"]           # list of last 3 messages
 ```
 
 If `from_addr` is empty → log WARNING, skip (return state unchanged).
+
+### 13.1a Idempotency Guard (added 2026-04-16)
+
+Before any LLM call or send, `compose_reply` checks whether this `message_id` has already been replied to:
+
+```python
+if message_id:
+    existing = find_row("Email Inbox", "message_id", message_id, project_id)
+    if existing and existing.get("status") == "Replied":
+        # bail — duplicate task
+        return state
+```
+
+**Fail-closed:** If the Sheets read raises any exception (e.g. 429), the task bails and returns early — it does **not** proceed to the LLM call or send. Pub/Sub will redeliver after the quota window recovers.
+
+> ⚠️ **Warning — Must fail closed, not open:** The original implementation used `except: pass` (fail open). Under a Sheets 429 storm, every concurrent `compose_reply` task bypassed this guard and sent a reply. The guard is only effective if it treats ANY Sheets failure as a reason to abort, not proceed. See the 2026-04-16 incident.
 
 ### 13.2 Load Context Trio
 
@@ -645,7 +663,28 @@ WHERE project_id = @project_id
 - If `count >= 10` (threshold) → returns `False` → send blocked, log ERROR
 - **On BQ query failure: fails CLOSED** (blocks the send) — logged as ERROR (hardened 2026-04-02, previously failed open)
 
-### 13.7 Send Email
+### 13.7 Pre-Send Status Lock (added 2026-04-16)
+
+Before calling `send_email`, the row in "Email Inbox" is marked `"Replied"` as an optimistic concurrency lock:
+
+```python
+if message_id:
+    inbox_rows = get_all_records_with_row_numbers("Email Inbox", project_id)
+    sheet_row_num = next(
+        (rn for rn, rec in inbox_rows if str(rec.get("message_id", "")) == message_id),
+        None,
+    )
+    if sheet_row_num is not None:
+        update_row("Email Inbox", sheet_row_num, {"status": "Replied"}, project_id)
+```
+
+**Fail-closed:** If this write raises any exception (e.g. 429), the task bails and returns early — `send_email` is **not** called. Pub/Sub will redeliver.
+
+This write is the optimistic lock that makes the §13.1a idempotency check effective under concurrent load. A concurrent task that reaches §13.1a after this write will read `"Replied"` and bail.
+
+> ⚠️ **Warning — Lock must run BEFORE send, not after:** The original implementation updated the status AFTER `send_email` succeeded, leaving a window where all concurrent tasks could pass the idempotency check simultaneously (all would read `"Pending"`), call the LLM, and send. Moving the write to before the send closes this window. The lock is still not atomic (Sheets is not a database), but shrinks the race from ~10 seconds to milliseconds.
+
+### 13.8 Send Email
 
 `send_email()` (`tools/gmail.py`):
 
@@ -662,20 +701,6 @@ Decorated with `@tracked("gmail")` → telemetry to BQ.
 **After send:**
 - `state["emails_sent_this_task"] = emails_sent + 1`
 - Log: `"compose_reply: reply sent to {from_addr} (sent_id={sent_id}, chars={len(reply_text)})"`
-
-### 13.8 Update Email Inbox Status
-
-```python
-inbox_rows = get_all_records_with_row_numbers("Email Inbox", project_id)
-sheet_row_num = next(
-    (rn for rn, rec in inbox_rows if str(rec.get("message_id", "")) == message_id),
-    None,
-)
-if sheet_row_num is not None:
-    update_row("Email Inbox", sheet_row_num, {"status": "Replied"}, project_id)
-```
-
-> **Bug fix (2026-04-02):** Previously called `update_row("Email Inbox", "message_id", ...)` which searched column A (timestamp) for the literal string `"message_id"` — never matched, silently no-oped. Now uses `get_all_records_with_row_numbers` to find the actual sheet row number by `message_id` column value, then passes the integer to `update_row`.
 
 ### 13.9 Intent Extraction Dispatch
 
