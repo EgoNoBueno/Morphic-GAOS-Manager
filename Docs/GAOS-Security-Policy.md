@@ -222,7 +222,7 @@ Hard stops are not catchable errors — they are permanent halts on the triggeri
 
 ### 5.2 Data Residency
 
-All operational data is stored in `us-central1` (Cloud Run, Pub/Sub) and `us-east1` (BigQuery) within the `morphic-gaos-prod` GCP project. No data is stored in third-party systems outside the GCP project boundary except:
+All operational data is stored in `us-central1` (Cloud Run, Pub/Sub) and the `US` multi-region (BigQuery `aos_logs` dataset) within the `morphic-gaos-prod` GCP project. No data is stored in third-party systems outside the GCP project boundary except:
 
 - LLM inference payloads sent to Vertex AI Gemini models (governed by GCP Data Processing Addendum — Google does not use this data to train models)
 - Ollama — inference on local hardware only, no external transmission
@@ -288,6 +288,7 @@ All 7 Cloud Run services run with `--no-allow-unauthenticated`. No service is re
 | Path | Caller | Auth |
 |------|--------|------|
 | `/pubsub` | Pub/Sub push subscription | OIDC token — `pubsub-push-sa` |
+| `/gmail-webhook` | Gmail push watch (Pub/Sub → Gmail→GAOS) | OIDC token — `pubsub-push-sa` (Nexus-Prime only) |
 | `/sync` | Apps Script / manual E2E | OIDC token — `nexus-prime-sa` |
 | `/chat` | Google Chat | Google-signed JWT |
 | `/health` | Cloud Run liveness probe | OIDC token |
@@ -399,6 +400,6 @@ Policy changes require a Priority-2 Approval Gate proposal and a matching update
 
 ---
 
-_Last reviewed: 2026-03-23_
+_Last reviewed: 2026-04-16_
 _Owner: EgoNoBueno_
-_Next scheduled review: 2026-06-23_
+_Next scheduled review: 2026-07-16_
