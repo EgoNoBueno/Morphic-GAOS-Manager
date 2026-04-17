@@ -3235,7 +3235,7 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     """
     from config import get_settings
     from tools.gmail import GmailAPIError, GmailAuthError, send_email
-    from tools.google_sheets import update_row
+    from tools.google_sheets import find_row, update_row
 
     project_id: str = state["project_id"]
     task_id: str = str(uuid.uuid4())
@@ -3252,6 +3252,26 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     message_id: str = payload.get("message_id", "")
     message_id_header: str = payload.get("message_id_header", "")
     thread_context: list = payload.get("thread_context", [])
+
+    # Idempotency guard — bail if a concurrent task already sent a reply for this message_id.
+    # Pub/Sub at-least-once delivery can produce multiple concurrent EMAIL_RECEIVED tasks
+    # for the same Gmail message. Checking here (before any LLM call or send) prevents
+    # duplicate replies even when process_gmail's dedup check loses the race.
+    if message_id:
+        try:
+            existing = find_row("Email Inbox", "message_id", message_id, project_id)
+            if existing and existing.get("status") == "Replied":
+                _log_cloud(
+                    "nexus-prime",
+                    project_id,
+                    "task",
+                    task_id,
+                    f"compose_reply: message_id={message_id} already Replied — skipping (duplicate task)",
+                    "INFO",
+                )
+                return state
+        except Exception:
+            pass  # Sheet read failure — proceed to avoid dropping a real reply
 
     if not from_addr:
         _log_cloud(
@@ -3349,6 +3369,30 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         )
         return state
 
+    # Mark as "Replied" in Email Inbox BEFORE sending — minimises the race window
+    # where a concurrent task reads "Pending" and also sends. A task that reads
+    # "Replied" here will have bailed above; this write is the optimistic lock.
+    if message_id:
+        try:
+            from tools.google_sheets import get_all_records_with_row_numbers
+
+            inbox_rows = get_all_records_with_row_numbers("Email Inbox", project_id)
+            sheet_row_num = next(
+                (rn for rn, rec in inbox_rows if str(rec.get("message_id", "")) == message_id),
+                None,
+            )
+            if sheet_row_num is not None:
+                update_row("Email Inbox", sheet_row_num, {"status": "Replied"}, project_id)
+        except Exception as exc:
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"compose_reply: pre-send status update failed — {exc}",
+                "WARNING",
+            )
+
     try:
         sent_id = send_email(
             project_id=project_id,
@@ -3379,27 +3423,6 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         f"compose_reply: reply sent to {from_addr} (sent_id={sent_id}, chars={len(reply_text)})",
         "INFO",
     )
-
-    # Update Email Inbox row status to "Replied"
-    try:
-        from tools.google_sheets import get_all_records_with_row_numbers
-
-        inbox_rows = get_all_records_with_row_numbers("Email Inbox", project_id)
-        sheet_row_num = next(
-            (rn for rn, rec in inbox_rows if str(rec.get("message_id", "")) == message_id),
-            None,
-        )
-        if sheet_row_num is not None:
-            update_row("Email Inbox", sheet_row_num, {"status": "Replied"}, project_id)
-    except Exception as exc:
-        _log_cloud(
-            "nexus-prime",
-            project_id,
-            "task",
-            task_id,
-            f"compose_reply: Email Inbox status update failed — {exc}",
-            "WARNING",
-        )
 
     # ── Intent extraction: dispatch actionable tasks to domain agents ─────
     _dispatch_task_from_email(
