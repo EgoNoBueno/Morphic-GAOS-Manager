@@ -117,6 +117,8 @@ documents:
       Reverse-engineered email pipeline specification — complete lifecycle from
       Gmail push notification to AI-composed reply and loop termination. Covers
       every function, variable, gate, and side effect in the two-cycle Pub/Sub flow.
+      Updated 2026-04-16: duplicate-reply hardening (idempotency guard §13.1a,
+      pre-send status lock §13.7, fail-closed exception handling, watermark always-advance §10.7).
     code_paths:
       - agents/nexus_prime/orchestrator.py
       - tools/gmail.py
@@ -130,6 +132,10 @@ documents:
       - Outbound settings changed (max_emails_per_task, flood_threshold, etc.)
       - Gmail settings changed (trigger_keyword, monitored_address, sender_address)
       - New email-related MessageType or routing entry added
+      - history_id watermark logic changed (§10.7)
+      - compose_reply idempotency guard changed (§13.1a)
+      - compose_reply pre-send lock logic changed (§13.7)
+      - Exception handling in compose_reply gates changed (fail-open vs fail-closed)
 
   GAOS-Memory-Spec.md:
     purpose: >
