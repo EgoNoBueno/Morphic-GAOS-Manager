@@ -93,9 +93,11 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
 
 ### 3.1 Node Inventory
 
-Nexus-Prime's `StateGraph` has 22 nodes. Added since original design: `market_watchdog`, `roi_optimizer` (Phase 3 reactive routing), `handle_infra_provision` (Phase 4 InfraProvisioner), `handle_approval_request` (Phase 4 — routes inbound `APPROVAL_REQUEST` messages from domain agents to a Chat card notification), `chat_respond` (conversational DM reply node — routes here from `think()` when `msg_type == CHAT_MESSAGE`), `process_gmail` (Gmail notification handler — triggers push-to-ingest flow), `compose_reply` (email composition node — called on `EMAIL_RECEIVED` to draft and send a reply via `gmail_reply()`).
+Nexus-Prime's `StateGraph` has 22 nodes. Added since original design: `market_watchdog`, `roi_optimizer` (Phase 3 reactive routing), `handle_infra_provision` (Phase 4 InfraProvisioner), `handle_approval_request` (Phase 4 — routes inbound `APPROVAL_REQUEST` messages from domain agents to a Chat card notification), `chat_respond` (conversational DM reply node — routes here from `think()` when `msg_type == CHAT_MESSAGE`), `process_gmail` (Gmail notification handler — triggers push-to-ingest flow), `compose_reply` (email composition node — called on `EMAIL_RECEIVED` to draft and send a reply via `send_email()`).
 
 > **Note:** `route` is a **pure routing function**, not a registered graph node. It is used as the routing function in `graph.add_conditional_edges("monitor", route, {...})`. Do not add it to `add_node()`.
+
+> **Note — diagram is simplified:** The ASCII diagram below shows the original core nodes only. It does not show the 8 nodes added since initial design (`chat_respond`, `market_watchdog`, `roi_optimizer`, `handle_infra_provision`, `handle_approval_request`, `process_gmail`, `compose_reply`, `handle_skill_request`). All 22 nodes branch from `monitor` via `route` and terminate at `record → END`. See §3.3 for the authoritative graph assembly.
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -1508,6 +1510,7 @@ Nexus-Prime exposes these HTTP endpoints as a Cloud Run service:
 | Path | Method | Handler | Description |
 |------|--------|---------|-------------|
 | `/pubsub` | POST | `handle_pubsub_push` | Receives all Pub/Sub push messages |
+| `/gmail-webhook` | POST | `handle_gmail_webhook` | Receives Gmail push notifications from Cloud Pub/Sub watch; decodes the history notification and publishes `GMAIL_NOTIFICATION` to `agent.nexus-prime.events` — see `GAOS-Email-Pipeline-Spec.md §4` |
 | `/ttl-sweep` | POST | `handle_ttl_sweep` | Called by Cloud Scheduler hourly |
 | `/archive` | POST | `handle_archive` | Called by Cloud Scheduler nightly (2AM) |
 | `/sync` | POST | `handle_sync` | Called by Apps Script `syncSkillsToVertex` after approval |
@@ -1600,6 +1603,7 @@ Phase 4 is complete when every item below is checked (from `GAOS-Manager-Spec.md
 
 - [x] Nexus-Prime publishes at least one message to a domain orchestrator via A2A protocol
 - [x] Full approval loop completes end-to-end (escalation → proposal → human approval → code deploy)
+- [x] **Email pipeline E2E verified (2026-04-16):** inbound email → `process_gmail` → `EMAIL_RECEIVED` publish → `compose_reply` → exactly 1 reply sent, no duplicates. Deployed revision: `nexus-prime-00099-lpx`. Three-bug chain (stale watermark + Sheets 429 storm + fail-open guards) fixed and confirmed resolved.
 - [ ] Self-evolution loop completes at least once successfully
 - [x] All hard stops verified by unit tests
 - [ ] Ollama fallback verified: LOCAL_MODEL timeout → FAST_MODEL
