@@ -161,10 +161,8 @@ gcloud auth application-default login `
 irm https://astral.sh/uv/install.ps1 | iex
 
 # Bootstrap Python environment
-uv venv
-uv pip install google-cloud-secret-manager google-cloud-pubsub gspread pydantic `
-               "google-adk>=1.0.0" langgraph google-cloud-bigquery google-cloud-logging `
-               google-cloud-aiplatform "google-genai>=1.0.0"
+uv venv            # create .venv/
+uv sync            # install all dependencies from pyproject.toml
 ```
 
 ---
@@ -488,7 +486,7 @@ models:
   DEEP_MODEL: "{deep_model}"
 
 memory_bank:
-  region: "us-central1"    # Change to us-west1 if corpora were created there
+  region: "us-west1"        # us-central1/east restricted for new projects; corpora must be in us-west1
   corpora: {{}}              # Populated by scripts/_create_corpora.py
 
 pubsub:
@@ -549,15 +547,6 @@ memory:
 
     Path("config/settings.yaml").write_text(settings_content)
     ok("config/settings.yaml written")
-
-> **Why two sheet fields?** `sheet.workbook_id` is the **template spreadsheet** — Nexus-Prime clones
-> it when provisioning each new project (`_clone_project_sheet()`). `projects.<id>.sheet_id` is the
-> **runtime workbook** that `tools/google_sheets.py` uses for every read/write operation. In a
-> single-project deployment both fields hold the same spreadsheet ID; in multi-project setups the
-> template remains pristine while each project's `sheet_id` points to its own clone.
->
-> **Sync rule:** If you ever rotate or replace the spreadsheet, update **both** fields together.
-> `setup_workspace.py` always prints both lines side-by-side to reinforce this.
 
     mark_done(state, "settings_yaml_written")
     save_state(state)
@@ -704,6 +693,15 @@ if __name__ == "__main__":
     main()
 ```
 
+> **Why two sheet fields?** `sheet.workbook_id` is the **template spreadsheet** — Nexus-Prime clones
+> it when provisioning each new project (`_clone_project_sheet()`). `projects.<id>.sheet_id` is the
+> **runtime workbook** that `tools/google_sheets.py` uses for every read/write operation. In a
+> single-project deployment both fields hold the same spreadsheet ID; in multi-project setups the
+> template remains pristine while each project's `sheet_id` points to its own clone.
+>
+> **Sync rule:** If you ever rotate or replace the spreadsheet, update **both** fields together.
+> `setup_workspace.py` always prints both lines side-by-side to reinforce this.
+
 ---
 
 ## 4. Operator Readiness Checklist
@@ -837,22 +835,24 @@ API keys and service account credentials are not set-and-forget. Set a recurring
 
 Secret Manager supports multiple active versions. Use this sequence for zero-downtime rotation:
 
-```bash
-PROJECT=morphic-gaos-prod
+```powershell
+$PROJECT = "morphic-gaos-prod"
 
-# 1. Add new version (old version stays active)
-echo -n "<new-api-key>" | gcloud secrets versions add GEMINI_API_KEY \
-  --data-file=- --project=$PROJECT
+# 1. Add new version — write to temp file to keep secret out of shell history (Rule 3)
+$tmpFile = [System.IO.Path]::GetTempFileName()
+Set-Content -Path $tmpFile -Value "<new-api-key>" -NoNewline
+gcloud secrets versions add GEMINI_API_KEY --data-file=$tmpFile --project=$PROJECT
+Remove-Item $tmpFile
 
 # 2. Verify new version works (run smoke test)
 python scripts/smoke_test_4.py   # verify Gemini API key works
 
 # 3. Disable old version (does not delete — keeps it for audit)
-OLD_VERSION=$(gcloud secrets versions list GEMINI_API_KEY \
-  --project=$PROJECT --format="value(name)" | tail -1)
+$OLD_VERSION = (gcloud secrets versions list GEMINI_API_KEY `
+    --project=$PROJECT --format="value(name)") | Select-Object -Last 1
 gcloud secrets versions disable $OLD_VERSION --secret=GEMINI_API_KEY --project=$PROJECT
 
-# 4. Destroy old version after 7-day audit hold
+# 4. Destroy old version after 7-day audit hold (uncomment when ready)
 # gcloud secrets versions destroy $OLD_VERSION --secret=GEMINI_API_KEY --project=$PROJECT
 ```
 
