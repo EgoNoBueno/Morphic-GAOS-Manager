@@ -245,8 +245,12 @@ poll or simply accept that heavier requests reply via email.
 
 ## 5. Authentication
 
-The `/speak` endpoint uses **HMAC-SHA256 request signing** — the same scheme as
-`tools/webhook_sender.py`.
+The `/speak` endpoint uses **HMAC-SHA256 request signing** — the same cryptographic scheme as
+`tools/webhook_sender.py`, with one wire-format difference: `/speak` sends the digest as a **hex
+string in the `X-GAOS-Signature` header** (`sha256=<hex>`), while `webhook_sender.py` sends a
+**base64-encoded digest as a URL query parameter** (`?signature=<base64>`). Both are HMAC-SHA256;
+the different format is intentional — the `/speak` header approach is the industry-standard
+pattern (GitHub, Stripe) and easier to handle in mobile Shortcut/Tasker HTTP actions.
 
 ### How it works
 
@@ -266,19 +270,25 @@ authentication where the client cannot hold a service account credential.
 ### VOICE_HMAC_SECRET provisioning
 
 ```powershell
-# Generate a 256-bit secret (32 bytes hex = 64 chars)
-$SECRET = -join ((1..32) | ForEach-Object { [byte][System.Security.Cryptography.RandomNumberGenerator]::GetInt32(256) } |
-    ForEach-Object { $_.ToString("x2") })
+# Generate a 256-bit secret (32 bytes → 64-char hex string)
+$SECRET = -join ((1..32) | ForEach-Object {
+    [System.Security.Cryptography.RandomNumberGenerator]::GetInt32(256).ToString("x2")
+})
 
-# Store in Secret Manager
-echo $SECRET | gcloud secrets create VOICE_HMAC_SECRET `
+# Write to a temp file — never pass secrets via echo/pipeline (they land in shell history)
+$tmpFile = [System.IO.Path]::GetTempFileName()
+Set-Content -Path $tmpFile -Value $SECRET -NoNewline
+
+# Create secret with initial version
+gcloud secrets create VOICE_HMAC_SECRET `
     --project=morphic-gaos-prod `
-    --data-file=-
+    --data-file=$tmpFile
+Remove-Item $tmpFile  # delete immediately after upload
 
-# Grant Cloud Run SA access
+# Grant Cloud Run SA access (nexus-prime only — /speak is Nexus-Prime-only)
 gcloud secrets add-iam-policy-binding VOICE_HMAC_SECRET `
     --project=morphic-gaos-prod `
-    --member="serviceAccount:<cloud-run-sa>@morphic-gaos-prod.iam.gserviceaccount.com" `
+    --member="serviceAccount:nexus-prime-sa@morphic-gaos-prod.iam.gserviceaccount.com" `
     --role="roles/secretmanager.secretAccessor"
 ```
 
@@ -343,7 +353,7 @@ Tasker can compute HMAC natively via the **JavaScriptlet** action using Android'
 
 | Step | Action | Configuration |
 |------|--------|--------------|
-| 1 | **Say To Me** (input prompt) or **Google Assistant** voice trigger | Returns spoken text as `%SIRI_TEXT` variable (via AutoVoice plugin) |
+| 1 | **Say To Me** (input prompt) or **Google Assistant** voice trigger | Returns spoken text via AutoVoice plugin — result stored in `%avcommnofilter` (or the variable name set in your AutoVoice profile) |
 | 2 | **JavaScriptlet** | Compute HMAC-SHA256 of `JSON.stringify({text: ..., project_id: ...})` using stored secret — see script below |
 | 3 | **HTTP Request** | URL: `https://<CLOUD_RUN_URL>/speak`, Method: POST, Headers: `X-GAOS-Signature: sha256=%hmac_hex`, Body: JSON from step 2 |
 | 4 | **Variable Set** `%reply` | From HTTP response body → `.reply` field |
