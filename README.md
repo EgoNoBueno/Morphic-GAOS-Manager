@@ -111,8 +111,8 @@ Three patterns from the [OpenClaw Paradigm](https://github.com/chunhualiao/openc
 | Tier | Model | Used for |
 |------|-------|---------|
 | `LOCAL_MODEL` | Ollama / llama3 (free, local) | Formatting, summarizing, routine logging |
-| `FAST_MODEL` | Gemini 2.5 Flash (AI Studio free tier) | Moderate reasoning, routing, lookups |
-| `DEEP_MODEL` | Gemini 2.5 Pro (AI Studio free tier) | Approval gate proposals, conflict arbitration, code evolution |
+| `FAST_MODEL` | Gemini 2.5 Flash (GCP, billed per token) | Moderate reasoning, routing, lookups |
+| `DEEP_MODEL` | Gemini 2.5 Pro (GCP, billed per token) | Approval gate proposals, conflict arbitration, code evolution |
 
 All model references in code are aliases from `settings.yaml`. To upgrade to a new Gemini release, update one line in that file — no code changes needed.
 
@@ -214,10 +214,8 @@ A single deployment can manage multiple business units or client accounts. Each 
 ```powershell
 git clone https://github.com/EgoNoBueno/Morphic-GAOS-Manager.git
 cd Morphic-GAOS-Manager
-uv venv
-uv pip install google-cloud-secret-manager google-cloud-pubsub gspread pydantic \
-               "google-adk>=1.0.0" langgraph google-cloud-bigquery google-cloud-logging \
-               google-cloud-aiplatform "google-genai>=1.0.0"
+uv venv    # create .venv/
+uv sync    # install all dependencies from pyproject.toml
 ```
 
 > **SDK note:** Use `google-genai>=1.0.0` — not `google-generativeai`. The older package is EOL and returns 404 on all current Gemini models.
@@ -243,7 +241,7 @@ gcloud auth application-default set-quota-project morphic-gaos-prod
 
 > **Important:** Do not set `GOOGLE_APPLICATION_CREDENTIALS`. If it exists in your environment (even pointing at a missing file), `google-auth` silently bypasses ADC. Also note: the default gcloud client ID **blocks** the `spreadsheets` scope — you must use your own OAuth Desktop client.
 
-> **API key source:** Get your `GEMINI_API_KEY` from [AI Studio](https://aistudio.google.com/apikey). AI Studio free-tier keys work directly with the `generativelanguage.googleapis.com` endpoint used by this project. Alternatively, create a key in `console.cloud.google.com/apis/credentials` if you want usage billed to your GCP project.
+> **API key source:** Get your `GEMINI_API_KEY` from **`console.cloud.google.com/apis/credentials`** inside your GCP project — **not** from `aistudio.google.com`. AI Studio keys live in Google's shared project and are not covered by your GCP billing account; they cause `429 RESOURCE_EXHAUSTED` errors with `limit: 0` even when billing is enabled. See `GAOS-Deploy-Spec.md §3.1` for the full warning.
 
 ### 3. GCP Project Setup
 
@@ -270,7 +268,7 @@ models:
   FAST_MODEL:  "gemini-2.5-flash"
   DEEP_MODEL:  "gemini-2.5-pro"
   LOCAL_MODEL_FALLBACK: "gemini-2.5-flash"
-  LOCAL_MODEL_TIMEOUT_SECONDS: 30
+  LOCAL_MODEL_TIMEOUT_SECONDS: 90  # 90 s accommodates CPU-only inference on low-end hardware
 ```
 
 ### 5. Provision remaining infrastructure
@@ -407,8 +405,8 @@ At the start of every work session, agents read all three files as standing orde
 | **Phase 2** | Ollama observability loop, Knowledge Atlas (Memory Mirror) | **Complete** |
 | **Phase 2.5** | Google Chat integration, Vertex AI Search, Google Custom Search, Cloud Scheduler daily-kickoff and poll-comments jobs, Apps Script webhook + approval gate, skill-request flow | **Complete** |
 | **Phase 3** | `think` node (Strategic Architect), multimodal vision, `iterate_plan`, memory mirror, Chat Interactive Hub (JWT + approval cards + CARD_CLICKED routing), OpenTofu IaC + WIF CI/CD | **Complete** |
-| **Phase 4** | Production bootstrap (OpenTofu deploy), Approval Gate Chat-path E2E live validation, Gmail integration, exit criteria, cost verification | **In progress** — Chat E2E validated; Gmail pipeline wired (watch + webhook + reply); cost/security verification and GAOS-Doctor checklist remaining |
-| **Phase 4 / Ch. 8** | Infrastructure resilience: circuit breaker, Phoenix recovery, `AgentState` FSM, output coherence check — wired into Nexus-Prime | **Complete** — 698 tests green |
+| **Phase 4** | Production bootstrap (OpenTofu deploy), Approval Gate Chat-path E2E live validation, Gmail integration, exit criteria, cost verification | **In progress** — Chat E2E validated; Gmail pipeline wired and verified end-to-end (exactly 1 reply, no duplicates — 2026-04-16, revision `nexus-prime-00099-lpx`); cost/security verification and GAOS-Doctor checklist remaining |
+| **Phase 4 / Ch. 8** | Infrastructure resilience: circuit breaker, Phoenix recovery, `AgentState` FSM, output coherence check — wired into Nexus-Prime | **Complete** — 727 tests green |
 | **Phase 5** | CEO dashboard (Grafana + Cloud Run) | **Complete** — Grafana dashboard live on Cloud Run. Vertex Agent Engine remains future scope. |
 
 <div align="center">
@@ -465,6 +463,6 @@ Infrastructure as Code powered by [OpenTofu](https://opentofu.org) — an open-s
 <div align="center">
 
 *Built entirely on Google's cloud ecosystem.*
-*Phases 1–3 complete. Phase 4 in progress — 698 tests green. Cost/security verification and GAOS-Doctor checklist remaining.*
+*Phases 1–3 complete. Phase 4 in progress — 727 tests green. Gmail pipeline E2E verified. Cost/security verification and GAOS-Doctor checklist remaining.*
 
 </div>
