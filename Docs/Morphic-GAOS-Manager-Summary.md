@@ -28,7 +28,7 @@ The system is designed to run at **minimal operating cost** by routing routine w
 
 6. **Layered Memory** — Scratchpad → BigQuery (episodic) → Sheets staging buffer → Vertex AI Memory Bank (long-term). Agents propose learnings; Nexus-Prime promotes them to permanent memory only after owner approval.
 
-**Current State (Phases 1–4 nearly complete, Phase 5 complete):** All 7 orchestrators, the full tool layer (18 modules including `google_chat.py`, `vertex_search.py`, `google_docs.py`, `google_search.py`, `memory_mirror.py`, `circuit_breaker.py`, `phoenix.py`, and `infra_provision.py`), and a **600-test suite** are built and passing. Phases 1 through 3 and Phase 5 are complete. Phase 4 is nearly complete: GAOS-Doctor (33/33 passed 2026-03-21), Approval Gate `/sync` E2E (PASS 2026-04-03), Vision blueprint E2E (PASS 2026-04-03), and `VERTEX_AGENT_ENDPOINT` Script Property (set 2026-04-03) are all done. The single remaining Phase 4 item is the 7-day billing dashboard verification (~2026-04-10). Vertex Agent Engine remains future scope.
+**Current State (Phases 1–4 nearly complete, Phase 5 complete):** All 7 orchestrators, the full tool layer (19 modules including `gmail.py`, `google_chat.py`, `vertex_search.py`, `google_docs.py`, `google_search.py`, `memory_mirror.py`, `circuit_breaker.py`, `phoenix.py`, and `infra_provision.py`), and a **727-test suite** are built and passing. Phases 1 through 3 and Phase 5 are complete. Phase 4 is nearly complete: GAOS-Doctor (33/33 passed 2026-03-21), Approval Gate `/sync` E2E (PASS 2026-04-03), Vision blueprint E2E (PASS 2026-04-03), and `VERTEX_AGENT_ENDPOINT` Script Property (set 2026-04-03) are all done. The single remaining Phase 4 item is the 7-day billing dashboard verification (~2026-04-10). Vertex Agent Engine remains future scope.
 
 ---
 
@@ -58,7 +58,7 @@ Think of Morphic-G AOS like a well-run office with a clear chain of command.
 
 *The authoritative source for how the entire system is designed, why every decision was made, and what the full implementation looks like.*
 
-This is the second-largest document (~1,455 lines; `GAOS-Deploy-Spec.md` at ~1,563 lines is now the longest). It defines the system from top to bottom. Every other spec file links back to it.
+This is the third-largest document (~1,856 lines; `GAOS-Deploy-Spec.md` at ~2,367 lines is the longest and `GAOS-Tools-Spec.md` at ~2,151 lines is second). It defines the system from top to bottom. Every other spec file links back to it.
 
 #### Agent Hierarchy
 **What it is:** A three-tier structure — Nexus-Prime at the top, six domain orchestrators in the middle, unlimited task agents at the bottom.
@@ -122,7 +122,7 @@ This is the second-largest document (~1,455 lines; `GAOS-Deploy-Spec.md` at ~1,5
 
 #### Development Roadmap (5 Phases)
 **What it is:** A phased build plan. **Phase 1 is complete** — all 7 orchestrators, the `main.py` Cloud Run entry point, the core tool layer (`bigquery`, `webhook_sender`, `memory`, `project_registry`, `google_sheets`, `pubsub`, `secrets`), and a baseline test suite covering U1–U5 unit specs and S1–S4 static analysis gate.
-**Phase 2.5 Steps 1–6 are complete (600 tests passing after Phase 3–4 additions):**
+**Phase 2.5 Steps 1–6 are complete (727 tests passing as of 2026-04-16):**
 - Step 1: `tools/google_chat.py` + `POST /chat` (25 tests; commit `551f0ca`)
 - Step 2: `handle_daily_sync()` + `POST /daily-sync` + `ChatConfig` (13 tests; commit `ed6140b`)
 - Step 3: `tools/vertex_search.py` + Playbook schema + `write_playbook` node (22 tests; commit `d0f05b1`)
@@ -130,7 +130,7 @@ This is the second-largest document (~1,455 lines; `GAOS-Deploy-Spec.md` at ~1,5
 - Step 5: AppSheet Vision Hub + `VISION_SUBMITTED` handler + `doc-comment-poll` Scheduler job (30 tests; commit `a62c6cc`)
 - Step 6: `tools/google_search.py` + Scout `_discover` recursive node + `KNOWLEDGE_INJECTION` protocol (24 tests; commit `7def85c`)
 
-Step 7 (`ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow) remains. Phase 2 (Ollama observability) and Phase 3 (think node, multimodal vision, full approval loop, Chat E2E) are **complete**. Phase 4 (production bootstrap, exit criteria validation, cost verification) is **nearly complete** — GAOS-Doctor (33/33 checks passed 2026-03-21), Approval Gate `/sync` E2E (PASS 2026-04-03), and Vision blueprint E2E (PASS 2026-04-03) are all done; the single remaining item is the 7-day billing dashboard verification (expected ~2026-04-10). Phase 5 (Grafana CEO dashboard) is **complete** — Grafana live on Cloud Run; Vertex Agent Engine is future scope. Three **Context Trio** files (`Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`) were added and integrated into `_load_identity_file()` in `agents/__init__.py` — all 7 agents now automatically receive owner business context, brand voice, and operating rules appended to their system prompt at boot, with zero per-orchestrator changes required.
+Step 7 (`ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow) remains. Phase 2 (Ollama observability) and Phase 3 (think node, multimodal vision, full approval loop, Chat E2E) are **complete**. Phase 4 (production bootstrap, exit criteria validation, cost verification) is **nearly complete** — GAOS-Doctor (33/33 checks passed 2026-03-21), Approval Gate `/sync` E2E (PASS 2026-04-03), Vision blueprint E2E (PASS 2026-04-03), and email pipeline E2E (PASS 2026-04-16 — exactly 1 reply, zero loop) are all done; the single outstanding item is the 7-day billing dashboard cost verification (`GAOS-Deploy-Spec.md §4e` — 7-day window targeting ~2026-04-10 has elapsed; manual GCP Billing check is the last unchecked box). Phase 5 (Grafana CEO dashboard) is **complete** — Grafana live on Cloud Run; Vertex Agent Engine is future scope. Three **Context Trio** files (`Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`) were added and integrated into `_load_identity_file()` in `agents/__init__.py` — all 7 agents now automatically receive owner business context, brand voice, and operating rules appended to their system prompt at boot, with zero per-orchestrator changes required.
 **Why it exists:** Building everything at once is how you end up with a broken system that is impossible to debug. Each phase has explicit exit criteria that must all be true before moving to the next.
 **Resources required:** Phases 1–4: Cloud Run, Cloud Pub/Sub, Sheets, Ollama, Gemini. Phase 5 (future): Grafana on Cloud Run, Vertex AI Agent Engine (optional upgrade).
 
@@ -300,6 +300,11 @@ This document defines the public interface for eighteen tool modules. The design
 **Why it exists:** Cloud Run instances are ephemeral. Without persisted checkpoints, a container restart during a multi-step evolution loop or a parked approval task loses all in-progress state. Phoenix gives agents crash recovery without any external database.
 **Resources required:** Google Cloud Storage, `roles/storage.objectAdmin` on the `GAOS_PHOENIX_BUCKET` bucket.
 
+#### `tools/gmail.py`
+**What it does:** Full Gmail pipeline for the GAOS email agent — OAuth token management, Gmail Watch subscription (push notifications to Pub/Sub), message fetch and decoding, thread read/reply, and label management. Used exclusively by Nexus-Prime to drive the inbound email workflow.
+**Why it exists:** Email is the primary inbound channel for external requests. A shared wrapper enforces consistent auth handling, the authorized-sender allowlist gate, and the outbound cascade prevention guards (Rule 26) across every email action.
+**Resources required:** Gmail API, `GMAIL_OAUTH_TOKEN` and `GMAIL_AUTHORIZED_SENDERS` secrets in Secret Manager, `roles/pubsub.publisher` on the Gmail push topic.
+
 #### `tools/infra_provision.py`
 **What it does:** Executes the full infrastructure provisioning workflow — PLAN → APPROVE → APPLY → HEALTHCHECK → ROLLBACK — driven by a Terraform wrapper. Called by the `POST /infra-provision` Cloud Run endpoint. On PLAN, generates a `TerraformPlan` struct and sends a `send_infra_proposal_card()` to the owner via Google Chat. On APPLY (post-approval), runs `terraform apply`, then health-checks the deployed resources. On HEALTHCHECK failure, automatically triggers ROLLBACK.
 **Why it exists:** Infrastructure changes are the highest blast-radius operations in the system. Wrapping them in the same APPROVE → APPLY → HEALTHCHECK → ROLLBACK pattern as code changes gives the owner the same oversight for infra as for skills — with automatic rollback if the apply succeeds but the service fails to become healthy.
@@ -342,7 +347,7 @@ This is the construction counterpart to the behavioral description in `GAOS-Mana
 
 *Two-part guide: first-time deployer setup and ongoing end-user onboarding via Steward.*
 
-**Part 1 — Deployer Onboarding (§1–§4):** A human-facing setup guide that wraps `GAOS-Deploy-Spec.md`. It walks a new operator through the complete service sign-up sequence (Google account, GCP project, GitHub, Gemini API, Vertex AI, Ollama), then hands off to an interactive onboarding script (`tools/onboarding.py`) that automates the `GAOS-Deploy-Spec.md` steps wherever possible and validates the results. Includes a readiness checklist the operator must clear before the system is considered live.
+**Part 1 — Deployer Onboarding (§1–§4):** A human-facing setup guide that wraps `GAOS-Deploy-Spec.md`. It walks a new operator through the complete service sign-up sequence (Google account, GCP project, GitHub, Gemini API, Vertex AI, Ollama). An interactive onboarding script (`tools/onboarding.py`) is planned but not yet implemented — the spec describes its intended behavior. Includes a readiness checklist the operator must clear before the system is considered live.
 
 **Part 2 — End-User Onboarding (§5):** The operational workflow Steward runs when a new employee or stakeholder is added to a running AOS instance. Covers Sheet access provisioning, RBAC tier assignment (writing the new approver row to the `Authorized Approvers` tab), and the orientation message sequence Steward sends to the new user.
 
@@ -473,20 +478,21 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 
 | File | Purpose | Length |
 |------|---------|--------|
-| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,455 lines |
-| `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~1,563 lines |
-| `Docs/GAOS-Nexus-Prime-Spec.md` | Engineering construction requirements for the Tier 1 root orchestrator | ~1,178 lines |
-| `Docs/GAOS-Onboarding-Spec.md` | Deployer first-run guide + end-user onboarding via Steward | ~638 lines |
-| `Docs/GAOS-Memory-Spec.md` | Full memory architecture, five layers, self-learning loop | ~706 lines |
-| `Docs/GAOS-Agent-Spec.md` | Engineering construction requirements for every agent tier | ~317 lines |
-| `Docs/GAOS-Skill-Compliance-Spec.md` | External skill review process before AOS integration | ~298 lines |
-| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 18 modules) | ~1,391 lines |
-| `Docs/GAOS-Persona-Spec.md` | AOS soul ("The Strategic Architect"), `think` node spec, tone standard | ~297 lines |
-| `Docs/GAOS-Security-Policy.md` | Zero trust security policy — identity, code gates, prompt injection, threat detection, incident response | ~400 lines |
-| `Docs/GAOS-Privacy-Spec.md` | Cloud data exposure, privacy risk analysis, and mitigation strategies | ~260 lines |
-| `Docs/GAOS-Project-Glossary.md` | Canonical glossary of all abbreviations and technical terms | ~157 lines |
-| `Docs/GAOS-Doctor.md` | Health-check runbook for diagnosing deployment and runtime issues | ~55 lines |
-| `.github/copilot-instructions.md` | Coding rules enforced during AI-assisted development sessions | ~452 lines |
+| `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~2,367 lines |
+| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 19 modules) | ~2,151 lines |
+| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,856 lines |
+| `Docs/GAOS-Nexus-Prime-Spec.md` | Engineering construction requirements for the Tier 1 root orchestrator | ~1,627 lines |
+| `Docs/GAOS-Email-Pipeline-Spec.md` | Email ingestion pipeline — Gmail Watch, inbound routing, authorized-sender gate, reply safeguards | ~939 lines |
+| `Docs/GAOS-Onboarding-Spec.md` | Deployer first-run guide + end-user onboarding via Steward | ~873 lines |
+| `Docs/GAOS-Memory-Spec.md` | Full memory architecture, five layers, self-learning loop | ~1,007 lines |
+| `Docs/GAOS-Agent-Spec.md` | Engineering construction requirements for every agent tier | ~493 lines |
+| `Docs/GAOS-Security-Policy.md` | Zero trust security policy — identity, code gates, prompt injection, threat detection, incident response | ~405 lines |
+| `Docs/GAOS-Persona-Spec.md` | AOS soul ("The Strategic Architect"), `think` node spec, tone standard | ~392 lines |
+| `Docs/GAOS-Privacy-Spec.md` | Cloud data exposure, privacy risk analysis, and mitigation strategies | ~370 lines |
+| `Docs/GAOS-Skill-Compliance-Spec.md` | External skill review process before AOS integration | ~430 lines |
+| `Docs/GAOS-Project-Glossary.md` | Canonical glossary of all abbreviations and technical terms | ~220 lines |
+| `.github/copilot-instructions.md` | Coding rules enforced during AI-assisted development sessions | ~707 lines |
+| `Docs/GAOS-Doctor.md` | Health-check runbook for diagnosing deployment and runtime issues | ~53 lines |
 | `Docs/about-me.md` | Context Trio — owner business context, priorities, and KPIs (The Compass) | ~67 lines |
 | `Docs/brand-voice.md` | Context Trio — Transparent Champion brand voice standard (The Persona) | ~66 lines |
 | `Docs/working-preferences.md` | Context Trio — operational rules of engagement, the Low Expenses Standard, workflow policies (The Constitution) | ~69 lines |
@@ -498,7 +504,7 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 | `Docs/agents/steward.md` | Identity file — Steward (Admin & HR Agent) | — |
 | `Docs/agents/scout.md` | Identity file — Scout (Research Agent) | — |
 | `main.py` | Cloud Run HTTP entry point — all 7 agents, selected by `AGENT_NAME` env var | — |
-| `tests/` | 600-test suite — U1–U5 unit specs + S1–S4 static analysis + tool modules + Phases 2–3 + Phase 3 reactive routing + memory cap enforcement + regression payloads + Bandit SAST | — |
+| `tests/` | 727-test suite — U1–U5 unit specs + S1–S4 static analysis + tool modules + Phases 2–3 + Phase 3 reactive routing + memory cap enforcement + regression payloads + Bandit SAST | — |
 
 ---
 
