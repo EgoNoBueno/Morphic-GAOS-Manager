@@ -11,6 +11,8 @@ Diagnostic tool for Morphic-G AOS. Verifies system health across all infrastruct
 
 Exit code 0 = all checks passed (or WARN-only). Exit code 1 = one or more FAIL checks.
 
+> **Note:** Local runs never send the health report email — `DOCTOR_SEND_REPORT` is not set in your shell. The Cloud Run Job container sets it automatically via `Dockerfile.doctor`.
+
 ## What It Checks (10 groups, ~50 individual checks)
 
 | # | Check Group | Description |
@@ -45,6 +47,39 @@ Exit code 0 = all checks passed (or WARN-only). Exit code 1 = one or more FAIL c
 ## Last Run
 
 **2026-03-21 — 33/33 passed** (5-group version). Checks 6–8 were added after that baseline run; the current check count is approximately 43. Re-run to get a current count.
+
+## Daily Email Report (Cloud Run Job)
+
+`scripts/gaos_doctor.py` supports an automated daily email report when run as a Cloud Run Job.
+
+### How It Works
+
+- **`send_doctor_report(n_ok, n_warn, n_fail)`** — formats a plain-text health summary and sends it to `settings.gmail.alert_address` via `tools.gmail.send_email`. Subject line: `GAOS-Doctor <date>: N OK  N WARN  N FAIL`. Body includes the full check breakdown plus a list of any non-OK items.
+- **`_maybe_send_report(n_ok, n_warn, n_fail)`** — gate function checked in `__main__`. Sends email only when `DOCTOR_SEND_REPORT=1` (or `true`/`yes`) is set in the environment. Local runs never email; the Cloud Run Job container always does (the env var is baked into `Dockerfile.doctor`).
+- Email failures are non-fatal — logged as WARN, then ignored. A Doctor run that succeeds all checks but fails to send email still exits 0.
+
+### Infrastructure
+
+| Component | Name | Notes |
+|-----------|------|-------|
+| **Container image** | `gaos-doctor` | Built from `Dockerfile.doctor` — thin `python:3.11-slim` wrapper; sets `DOCTOR_SEND_REPORT=1` |
+| **Cloud Run Job** | `gaos-doctor` | `maxRetries=0`; runs as `nexus-prime-sa`; 10-min timeout |
+| **Cloud Scheduler job** | `gaos-doctor-daily` | `0 7 * * *` (7:00 AM PT); triggers the Cloud Run Job via the Jobs v2 API; authenticates with `oauthToken` (scope: `cloud-platform`) — **not** OIDC, because the target is the Jobs API, not an HTTP service endpoint |
+
+### Provisioning
+
+```powershell
+# Step 1 — build and push the doctor image (one-time + after code changes)
+gcloud builds submit --tag us-central1-docker.pkg.dev/morphic-gaos-prod/cloud-run-source-deploy/gaos-doctor:latest --dockerfile=Dockerfile.doctor .
+
+# Step 2 — provision the Cloud Run Job + Scheduler job (idempotent)
+python scripts/provision_doctor_job.py [--project morphic-gaos-prod]
+
+# Step 3 — verify: trigger a manual run
+gcloud run jobs execute gaos-doctor --region=us-central1 --project=morphic-gaos-prod
+```
+
+> ⚠️ **`oauthToken` vs `oidcToken`:** Cloud Scheduler jobs that trigger Cloud Run Jobs must use `oauthToken` (scope: `cloud-platform`). `oidcToken` is for HTTPS service endpoints, not the Jobs v2 API. Using `oidcToken` here returns 403.
 
 ## Planned Enhancements (future scope)
 

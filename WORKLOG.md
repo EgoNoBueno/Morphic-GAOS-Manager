@@ -3,6 +3,39 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-04-21T00:00-07:00 — Doc update session (2026-04-20 changes)
+
+### What was done
+
+Brought all four affected documentation files current after the productive 2026-04-20 session. No code changes — documentation only.
+
+| File | Changes |
+|------|---------|
+| `Docs/GAOS-Doctor.md` | Added "Daily Email Report" section: `send_doctor_report()`, `_maybe_send_report()`, `DOCTOR_SEND_REPORT` env var, `Dockerfile.doctor` + Cloud Run Job + Scheduler infrastructure table + PowerShell provisioning steps + `oauthToken` warning. Updated Quick Start note about local runs not sending email. |
+| `Docs/GAOS-Tools-Spec.md` §22 | Updated `get_gmail_service` cache description (per-project `dict[str, tuple]`, thread-safe `_gmail_svc_lock`, lock released before I/O). Updated `fetch_new_messages` return type to 3-tuple `(list, str, list[str])`, documented `skipped_ids`, added 410 handling, added ⚠️ watermark loop warning. Added `WatermarkRecoveryError` exception class with docstring. Updated test coverage to 13 tests with new 410 + skipped_ids test names. |
+| `Docs/GAOS-Email-Pipeline-Spec.md` §10.5 | Updated Step 2 (per-project cache, 2026-04-20 hardening). Added Step 3a (HTTP 410 handling via `getProfile`). Added ⚠️ warning about 410 watermark loop per Rule 29. |
+| `Docs/GAOS-Deploy-Spec.md` | Added §10.9: GAOS-Doctor daily run (Cloud Run Job `gaos-doctor` + Scheduler job `gaos-doctor-daily` + `Dockerfile.doctor` + `provision_doctor_job.py`). Includes `oauthToken` warning and verification commands. |
+| `Docs/GAOS-Project-Glossary.md` | Added `WatermarkRecoveryError` entry (alphabetical W). |
+
+### Files changed
+
+- `Docs/GAOS-Doctor.md`
+- `Docs/GAOS-Tools-Spec.md`
+- `Docs/GAOS-Email-Pipeline-Spec.md`
+- `Docs/GAOS-Deploy-Spec.md`
+- `Docs/GAOS-Project-Glossary.md`
+
+### Tests added / changed
+
+None — doc-only session.
+
+### What's next
+
+- Verify `pytest --tb=short` stays green
+- Commit: `docs: update Doctor, Tools-Spec, Email-Pipeline-Spec, Deploy-Spec, Glossary for 2026-04-20 session`
+
+---
+
 ## 2026-04-20T21:45-07:00 — Phase 1 Scout mandates MC1–MC3
 
 ### What was done

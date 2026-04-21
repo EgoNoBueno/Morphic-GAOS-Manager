@@ -1970,11 +1970,14 @@ def get_gmail_service(project_id: str) -> Any:
     Build and return an authenticated Gmail API service object.
 
     Fetches OAuth2 credentials from Secret Manager (``GMAIL_OAUTH_CREDENTIALS``
-    secret) on the first call per process. The service is then cached for
-    300 seconds (keyed by ``project_id``) in a module-level dict and reused
-    for subsequent requests, avoiding per-call Secret Manager round-trips.
-    The cache resets on Cloud Run cold start. Credential expiry is handled
-    automatically by google-auth token refresh.
+    secret) on the first call per process. The service is cached in a
+    per-project module-level dict (``dict[str, tuple[Any, float]]``) keyed by
+    ``project_id`` and protected by a ``threading.Lock`` (``_gmail_svc_lock``).
+    Two projects can coexist in cache simultaneously without thrashing.
+    The lock is acquired only during dict read/write — it is released before
+    the slow service build — so I/O never blocks concurrent calls for other
+    projects. The cache resets on Cloud Run cold start. Credential expiry is
+    handled automatically by google-auth token refresh.
 
     Args:
         project_id: GCP project that owns the GMAIL_OAUTH_CREDENTIALS secret.
@@ -1989,7 +1992,7 @@ def get_gmail_service(project_id: str) -> Any:
 def fetch_new_messages(
     project_id: str,
     history_id: str,
-) -> tuple[list[dict[str, Any]], str]:
+) -> tuple[list[dict[str, Any]], str, list[str]]:
     """
     Fetch all messages added since ``history_id`` using the Gmail history delta API.
 
@@ -1997,22 +2000,40 @@ def fetch_new_messages(
     the delta since the last processed ID. Extracts ``text/plain`` body parts
     only; never parses ``text/html``.
 
+    **HTTP 410 Gone handling:** When ``history.list`` returns 410 the watermark
+    is too old (purged by Gmail). The function calls ``getProfile(userId="me")``
+    to obtain a fresh ``historyId`` and returns ``([], fresh_historyId, [])``
+    without raising. This advances the watermark so the caller never replays
+    the same 410 on the next notification (Rule 29). If ``getProfile`` also
+    fails, ``WatermarkRecoveryError`` is raised.
+
     Args:
         project_id: GCP project for credential and secret lookup.
         history_id: The ``historyId`` from the last successfully processed
             notification. Use the initial watch ``historyId`` as the seed.
 
     Returns:
-        A tuple of ``(messages, new_history_id)`` where:
+        A tuple of ``(messages, new_history_id, skipped_ids)`` where:
         - ``messages`` is a list of dicts with keys: ``message_id``, ``thread_id``,
           ``from_addr``, ``subject``, ``body``, ``received_at`` (ISO-8601 UTC),
           ``message_id_header``.
         - ``new_history_id`` is the latest ``historyId`` from the API response.
+        - ``skipped_ids`` is a list of Gmail message IDs that were permanently
+          unavailable (404 after 3 retries) and silently skipped.
 
     Raises:
-        GmailAuthError: Credential fetch failed.
-        GmailAPIError:  Gmail API returned an error.
+        GmailAuthError:         Credential fetch failed.
+        GmailAPIError:          Gmail API returned a non-retryable error.
+        WatermarkRecoveryError: ``history.list`` returned 410 AND the
+                                ``getProfile`` fallback also failed.
     """
+
+> ⚠️ **Warning — HTTP 410 watermark loop:** If ``history.list`` returns 410
+> and the caller does NOT advance the watermark, every subsequent Pub/Sub
+> notification replays the same 410 — a self-perpetuating 100% error loop
+> (Rule 29). ``fetch_new_messages`` handles 410 internally and always returns
+> a fresh ``new_history_id``. Callers must persist ``new_history_id``
+> unconditionally — never skip the persist on empty message lists.
 
 def get_thread_context(
     project_id: str,
@@ -2127,6 +2148,14 @@ class GmailAuthError(Exception):
 
 class GmailAPIError(Exception):
     """Gmail REST API returned a non-retryable error."""
+
+class WatermarkRecoveryError(Exception):
+    """
+    history.list returned HTTP 410 Gone AND the getProfile fallback also failed.
+    The caller must NOT persist the stale watermark — implement backoff and
+    retry. If the error persists, manual intervention is required to obtain
+    a valid historyId (e.g. re-register the Gmail push watch).
+    """
 ```
 
 ### Settings Required
@@ -2148,4 +2177,4 @@ Only Nexus-Prime calls Gmail tool functions. Domain orchestrators must not inter
 
 ### Test Coverage
 
-`tests/test_gmail.py` — covers: happy path (fetch, send, mark_as_read, setup_watch), Secret Manager failure, Gmail API failure, empty/invalid input, thread context retrieval.
+`tests/test_gmail.py` — 13 tests covering: happy path (fetch, send, mark_as_read, setup_watch), Secret Manager failure, Gmail API failure, empty/invalid input, thread context retrieval, 410 watermark reset (`test_fetch_new_messages_410_watermark_reset`), 410 + getProfile failure → `WatermarkRecoveryError` (`test_fetch_new_messages_410_getprofile_failure`), message 404 after max retries → `skipped_ids` (`test_fetch_new_messages_404_skipped`).

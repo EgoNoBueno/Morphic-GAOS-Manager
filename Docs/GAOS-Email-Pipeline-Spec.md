@@ -393,12 +393,15 @@ Additionally calls `get_gmail_service(project_id).users().getProfile(userId="me"
 | Step | Action | Details |
 |------|--------|---------|
 | 1 | `_load_credentials(project_id)` | `get_secret("GMAIL_OAUTH_CREDENTIALS", project_id)` → builds `google.oauth2.credentials.Credentials` |
-| 2 | `get_gmail_service(project_id)` | `build("gmail", "v1", credentials=creds)` — cached per-process with 300s TTL (implemented 2026-04-02) |
+| 2 | `get_gmail_service(project_id)` | `build("gmail", "v1", credentials=creds)` — per-project dict cache keyed by `project_id`, thread-safe with `_gmail_svc_lock` (hardened 2026-04-20) |
 | 3 | `history.list(userId="me", startHistoryId=X, historyTypes=["messageAdded"])` | Returns records AFTER the given history ID |
+| 3a | **HTTP 410 Gone handling** | `history.list` returns 410 when `startHistoryId` is too old (purged by Gmail). Calls `getProfile(userId="me")` → returns `([], fresh_historyId, [])` without raising. Raises `WatermarkRecoveryError` only if `getProfile` also fails. Caller must persist `fresh_historyId` unconditionally (Rule 29). |
 | 4 | Deduplicate message IDs | Across all `messagesAdded` history records |
 | 5 | Per message: `messages.get(userId="me", id=mid, format="full")` | **3 retries** with 1.5s × attempt backoff on 404 |
 | 6 | Extract fields | `message_id`, `thread_id`, `from_addr`, `subject`, `body` (text/plain only), `received_at`, `message_id_header` |
 | 7 | Return `(messages, new_history_id, skipped_ids)` | `skipped_ids` = permanently missing after 3 retries |
+
+> ⚠️ **Warning — 410 watermark loop (Rule 29):** If `history.list` returns 410 and the caller does NOT advance the watermark, every subsequent Pub/Sub notification replays the same 410. `fetch_new_messages` handles 410 internally and always returns a fresh `new_history_id`. The caller **must** persist `new_history_id` unconditionally — even when `messages` is empty.
 
 ### 10.6 Per-Message Processing Loop
 

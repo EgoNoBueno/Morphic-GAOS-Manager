@@ -190,6 +190,7 @@ This glossary defines every abbreviation, acronym, and technical term used in Mo
 ## W
 
 - **winget**: The Windows package manager used to install utilities during setup; referenced specifically for installing NSSM (`winget install nssm`) to register Ollama as a Windows service.
+- **WatermarkRecoveryError**: Exception raised by `tools/gmail.py` `fetch_new_messages()` when `history.list` returns HTTP 410 Gone (watermark too old) AND the `getProfile` fallback also fails. Normal 410s are handled silently inside `fetch_new_messages` — this exception surfaces only when the recovery path itself fails. See GAOS-Tools-Spec.md §22 and Rule 29.
 - **Working Memory**: The Tier 1 memory layer. The agent's in-flight scratchpad for a single Cloud Run invocation — current task ID, sub-task results, running cost, observation buffer, parked proposals. Lives in LangGraph state and is lost when the invocation ends.
 - **Write-Test-Refine loop**: The self-improvement cycle where an agent writes a Python solution in the Vertex AI sandbox, tests it, and iterates up to five times within a 15-minute time limit before submitting the result for human approval.
 

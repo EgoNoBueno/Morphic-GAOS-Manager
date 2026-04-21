@@ -1902,6 +1902,44 @@ Check the owner inbox for the digest email and Cloud Logging for `daily-digest:`
 
 ---
 
+### 10.9 GAOS-Doctor Daily Run (7:00 AM PT daily)
+
+Runs `scripts/gaos_doctor.py` as a **Cloud Run Job** and emails the health report to `settings.gmail.alert_address` after checks complete.
+
+| Field | Value |
+|-------|-------|
+| **Job name** | `gaos-doctor` (Cloud Run Job) |
+| **Scheduler job name** | `gaos-doctor-daily` |
+| **Schedule** | `0 7 * * *` (7:00 AM PT, `America/Los_Angeles`) |
+| **Container** | Built from `Dockerfile.doctor`; sets `DOCTOR_SEND_REPORT=1` |
+| **Provisioned by** | `scripts/provision_doctor_job.py` |
+
+> ⚠️ **`oauthToken` not `oidcToken`:** The Scheduler job triggers the Cloud Run Jobs v2 API (`POST …/jobs/gaos-doctor:run`), not an HTTP service endpoint. Cloud Scheduler must use `oauthToken` (scope: `cloud-platform`) for the Jobs API. Using `oidcToken` returns 403.
+
+**Deploy:**
+```powershell
+# 1. Build and push the doctor image
+gcloud builds submit `
+  --tag us-central1-docker.pkg.dev/morphic-gaos-prod/cloud-run-source-deploy/gaos-doctor:latest `
+  --dockerfile=Dockerfile.doctor .
+
+# 2. Provision job + scheduler (idempotent)
+python scripts/provision_doctor_job.py --project morphic-gaos-prod
+
+# 3. Verify: force a manual run
+gcloud run jobs execute gaos-doctor --region=us-central1 --project=morphic-gaos-prod
+```
+
+**What it does:** Runs all ~50 GAOS-Doctor checks and emails a structured plain-text report. Subject: `GAOS-Doctor <date>: N OK  N WARN  N FAIL`. Full design in `Docs/GAOS-Doctor.md`.
+
+**Verification:**
+```powershell
+gcloud scheduler jobs describe gaos-doctor-daily --project=morphic-gaos-prod --location=us-central1
+gcloud run jobs describe gaos-doctor --region=us-central1 --project=morphic-gaos-prod
+```
+
+---
+
 ## 11. Cloud Logging — Retention Configuration
 
 > **In plain English:** Every time an agent does something, it writes a log entry. Cloud Logging stores all these entries. By default, Google keeps them for 30 days, but that generates more storage than we need and can trigger costs. We reduce retention to 7 days to stay within Google's free tier (50 GB/month).
