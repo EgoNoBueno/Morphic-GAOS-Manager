@@ -468,12 +468,12 @@
           "dataset": "aos_logs",
           "project": "morphic-gaos-prod",
           "rawQuery": true,
-          "rawSql": "SELECT timestamp, agent_id, level, message\nFROM `morphic-gaos-prod.aos_logs.staging_logs`\nORDER BY timestamp DESC\nLIMIT 50",
+          "rawSql": "SELECT\n  timestamp,\n  JSON_VALUE(json_payload, '$.agent_id') AS agent_id,\n  severity AS level,\n  JSON_VALUE(json_payload, '$.message') AS message\nFROM `morphic-gaos-prod.aos_logs.gaos_agents`\nWHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)\nORDER BY timestamp DESC\nLIMIT 50",
           "refId": "A",
           "location": "US"
         }
       ],
-      "title": "Live Log Feed — last 50 (≤5 min delay)",
+      "title": "Live Log Feed — last 50 (Cloud Logging sink)",
       "type": "table"
     },
     {
@@ -507,12 +507,12 @@
           "dataset": "aos_logs",
           "project": "morphic-gaos-prod",
           "rawQuery": true,
-          "rawSql": "SELECT timestamp, agent_id, error_type, message\nFROM `morphic-gaos-prod.aos_logs.staging_errors`\nORDER BY timestamp DESC\nLIMIT 20",
+          "rawSql": "SELECT\n  timestamp,\n  JSON_VALUE(json_payload, '$.agent_id') AS agent_id,\n  severity AS level,\n  JSON_VALUE(json_payload, '$.message') AS message\nFROM `morphic-gaos-prod.aos_logs.gaos_agents`\nWHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)\n  AND severity IN ('ERROR', 'CRITICAL', 'ALERT', 'EMERGENCY')\nORDER BY timestamp DESC\nLIMIT 20",
           "refId": "A",
           "location": "US"
         }
       ],
-      "title": "Live Error Feed — last 20 (≤5 min delay)",
+      "title": "Live Error Feed — last 20 (Cloud Logging sink)",
       "type": "table"    },
     {
       "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },

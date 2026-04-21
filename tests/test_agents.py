@@ -2375,11 +2375,12 @@ class TestProgressiveDistillation:
 
         with (
             patch("agents.nexus_prime.orchestrator._log_cloud"),
-            patch("tools.google_sheets.get_all_records", return_value=logs),
+            patch("tools.google_sheets.get_all_records", return_value=[]),
             patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
             patch("tools.google_sheets.delete_rows"),
             patch("tools.google_sheets.append_row"),
             patch("tools.bigquery.insert_rows"),
+            patch("tools.bigquery.query_rows", return_value=logs),
             patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
             patch("tools.memory.flush_observations") as mock_flush,
         ):
@@ -2401,11 +2402,12 @@ class TestProgressiveDistillation:
 
         with (
             patch("agents.nexus_prime.orchestrator._log_cloud"),
-            patch("tools.google_sheets.get_all_records", return_value=logs),
+            patch("tools.google_sheets.get_all_records", return_value=[]),
             patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
             patch("tools.google_sheets.delete_rows"),
             patch("tools.google_sheets.append_row"),
             patch("tools.bigquery.insert_rows"),
+            patch("tools.bigquery.query_rows", return_value=logs),
             patch("agents.nexus_prime.orchestrator._call_model"),
             patch("tools.memory.flush_observations") as mock_flush,
         ):
@@ -2421,11 +2423,12 @@ class TestProgressiveDistillation:
 
         with (
             patch("agents.nexus_prime.orchestrator._log_cloud") as mock_log,
-            patch("tools.google_sheets.get_all_records", return_value=logs),
+            patch("tools.google_sheets.get_all_records", return_value=[]),
             patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
             patch("tools.google_sheets.delete_rows"),
             patch("tools.google_sheets.append_row"),
             patch("tools.bigquery.insert_rows"),
+            patch("tools.bigquery.query_rows", return_value=logs),
             patch(
                 "agents.nexus_prime.orchestrator._call_model",
                 side_effect=RuntimeError("ollama down"),
@@ -2451,11 +2454,12 @@ class TestProgressiveDistillation:
 
         with (
             patch("agents.nexus_prime.orchestrator._log_cloud"),
-            patch("tools.google_sheets.get_all_records", return_value=logs),
+            patch("tools.google_sheets.get_all_records", return_value=[]),
             patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
             patch("tools.google_sheets.delete_rows"),
             patch("tools.google_sheets.append_row") as mock_append,
             patch("tools.bigquery.insert_rows"),
+            patch("tools.bigquery.query_rows", return_value=logs),
             patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
             patch("tools.memory.flush_observations"),
         ):

@@ -1454,11 +1454,20 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
     # ── 1. Weekly observability summary (Mondays only) ────────────────────────
     if now.weekday() == 0:
         try:
-            logs_week = get_all_records("Logs", project_id)
-            err_week = get_all_records("Error Logs", project_id)
-            week_cutoff = now - timedelta(days=7)
-            recent_logs = [r for r in logs_week if _parse_ts(r.get("timestamp", "")) >= week_cutoff]
-            recent_errs = [r for r in err_week if _parse_ts(r.get("timestamp", "")) >= week_cutoff]
+            from tools.bigquery import query_rows as bq_query_rows
+
+            # Pull last 7 days of logs from the Cloud Logging → BQ sink table.
+            # Sheets Logs/Error Logs tabs are no longer written by _log_cloud.
+            bq_logs_week = bq_query_rows(
+                "SELECT JSON_VALUE(json_payload, '$.agent_id') AS agent_id, severity, timestamp"
+                f" FROM `{project_id}.aos_logs.gaos_agents`"
+                " WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)",
+                project_id,
+            )
+            recent_logs = bq_logs_week
+            recent_errs = [
+                r for r in bq_logs_week if r.get("severity") in ("ERROR", "CRITICAL", "ALERT")
+            ]
             top_agents = list({r["agent_id"] for r in recent_logs[:50] if r.get("agent_id")})
             summary_prompt = (
                 f"Summarize in one sentence: week ending {now.strftime('%Y-W%U')}, "
@@ -1672,13 +1681,31 @@ async def handle_archive(project_id: str) -> dict[str, Any]:
     try:
         from tools.memory import flush_observations
 
-        yesterday = now - timedelta(hours=24)
-        recent_logs = get_all_records("Logs", project_id)
+        # Pull last 24 h of logs from the Cloud Logging → BQ sink table.
+        # Sheets Logs tab is no longer written by _log_cloud.
+        try:
+            from tools.bigquery import query_rows as bq_query_rows
+
+            recent_logs = bq_query_rows(
+                "SELECT JSON_VALUE(json_payload, '$.agent_id') AS agent_id,"
+                " JSON_VALUE(json_payload, '$.message') AS message, timestamp"
+                f" FROM `{project_id}.aos_logs.gaos_agents`"
+                " WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)",
+                project_id,
+            )
+        except Exception as bq_exc:
+            _log_cloud(
+                "nexus-prime",
+                project_id,
+                "task",
+                task_id,
+                f"distillation: BQ log read failed, skipping: {bq_exc}",
+                "WARNING",
+            )
+            recent_logs = []
         # Group recent log messages by agent_id
         agent_messages: dict[str, list[str]] = {}
         for row in recent_logs:
-            if _parse_ts(row.get("timestamp", "")) < yesterday:
-                continue
             aid = row.get("agent_id", "").strip()
             if not aid:
                 continue
