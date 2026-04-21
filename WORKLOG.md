@@ -3,6 +3,104 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-04-21T14:47-07:00 — Completed: BQ Log Sink pipeline wired end-to-end
+
+### What was done
+Completed the two pending items from the previous session: Grafana Live Log Feed + Live Error Feed panels now query the `gaos_agents` BQ sink table, and `handle_archive()` no longer reads from the empty Sheets Logs tab.
+
+### Files changed
+- `dashboard/grafana/dashboards/ceo-overview.json` — Live Log Feed panel: replaced `staging_logs` query with `gaos_agents` BQ sink query using `JSON_VALUE(json_payload, '$.agent_id')` and `JSON_VALUE(json_payload, '$.message')`. Live Error Feed panel: replaced `staging_errors` query with `gaos_agents` filtered by `severity IN ('ERROR','CRITICAL','ALERT','EMERGENCY')`. Removed non-existent `error_type` column.
+- `agents/nexus_prime/orchestrator.py` — `handle_archive()` weekly summary (Monday) and distillation (Step 3.5) now call `tools.bigquery.query_rows()` against `gaos_agents` instead of `get_all_records("Logs")`. The Sheets Logs tab is no longer read for logs anywhere in the archive path.
+- `tests/test_agents.py` — PA1–PA4 `TestProgressiveDistillation` tests updated to patch `tools.bigquery.query_rows` (new log source) instead of `tools.google_sheets.get_all_records`.
+
+### Tests
+763/763 passing (commit `2a4997d`).
+
+### Deployments
+- `grafana-00007-2zp` — Live Log Feed + Error Feed now show real data from Cloud Logging sink
+- `nexus-prime-00105-dlj` — nightly archive reads logs from BQ sink, not empty Sheets tab
+
+### Infrastructure context
+- BQ sink `gaos-logs-bq-sink` → `aos_logs.gaos_agents` (date-partitioned) — created previous session
+- Sink SA `service-975461050387@gcp-sa-logging.iam.gserviceaccount.com` has `roles/bigquery.dataEditor` ✅
+- `grafana-sa` already had `roles/bigquery.dataViewer` ✅ — no IAM changes needed this session
+- `nexus-prime-sa` already had `roles/bigquery.jobUser` ✅
+
+### What's next
+- Monitor `gaos_agents` table in BQ console — first log entries should appear within minutes of next Cloud Run invocation
+- `$0 cost in Grafana` — `task_outcomes.cost_usd` still always 0 (state["cost_usd"] never summed into outcome row at task close). Tracked as known gap.
+
+## 2026-04-21T01:10-07:00 — Fix health-kill counter reset bug in tunnel watchdog
+
+### What was done
+
+Identified and fixed a silent counter-reset bug in `scripts/start_ollama_tunnel.py`:
+`_run_tunnel_once` returned `None` unconditionally, so the watchdog's main loop
+couldn't distinguish a health-thread kill (flapping) from a natural process exit.
+Result: every health-kill reset `consecutive_failures = 0` and `alert_sent = False`,
+meaning sustained flapping never accumulated toward the alert threshold.
+
+**Fix:** Added `health_killed = threading.Event()` local to each call of
+`_run_tunnel_once`. The health loop calls `health_killed.set()` before
+`_kill_tree()`. Changed return type from `-> None` to `-> bool`; returns
+`not health_killed.is_set()` — `True` on natural exit, `False` on health-kill.
+The caller only resets `consecutive_failures` / `alert_sent` on `True`.
+
+### Files changed
+
+- `scripts/start_ollama_tunnel.py` — `_run_tunnel_once` now returns `bool`;
+  `health_killed` event wired; caller updated with `if clean_exit:` branch
+- `tests/test_start_ollama_tunnel.py` — added `TestRunTunnelOnceReturnValue`
+  with `test_natural_exit_returns_true` and `test_health_kill_returns_false`
+
+### Tests
+
+7 / 7 passing (`tests/test_start_ollama_tunnel.py`)
+
+### What's next
+
+Full `pytest --tb=short` sweep to confirm zero regressions, then commit.
+
+---
+
+## 2026-04-21T00:24-07:00 — Watchdog remedial action hardening
+
+### What was done
+
+Added remedial actions to the two watchdogs that previously only logged on failure.
+
+**`scripts/start_ollama_tunnel.py`**
+- Added `_send_tunnel_alert(project, consecutive_failures, subdomain)` — sends an alert
+  email to `settings.gmail.alert_address` when the tunnel watchdog fails to recover
+  after `--max-alert-retries` consecutive `RuntimeError`s (default: 5).
+- Alert fires once per "stuck" session; resets to zero when the tunnel recovers and runs
+  cleanly. The watchdog continues retrying after the alert — no escalation loop.
+- Added `--max-alert-retries N` CLI arg.
+- Tracking vars: `consecutive_failures`, `alert_sent` added to the main loop.
+
+**`scripts/observability_loop.py`**
+- `_check_pubsub_endpoint_staleness` now auto-repairs stale endpoints on detection
+  instead of only printing a WARNING. Calls `subscriber.modify_push_config` with the
+  live Cloud Run URL. Prints `REPAIRED` on success, `REPAIR FAILED` on error (with
+  manual fallback instruction).
+- Updated function docstring to reflect the new remedial-action contract.
+
+### Files changed
+- `scripts/start_ollama_tunnel.py` — `_send_tunnel_alert`, `--max-alert-retries`, loop tracking
+- `scripts/observability_loop.py` — auto-repair in `_check_pubsub_endpoint_staleness`
+- `tests/test_start_ollama_tunnel.py` — NEW: 5 tests for `_send_tunnel_alert`
+- `tests/test_observability_loop.py` — NEW: 5 tests for auto-repair behaviour
+
+### Tests
+756 passed, 0 failed. Net new: 10 tests.
+
+### What's next
+- gaos-doctor Docker image rebuild (Check 11 not yet deployed to production)
+- git commit and push
+- Live email test to confirm end-to-end reply flow is healthy after tunnel restore
+
+---
+
 ## 2026-04-21T00:00-07:00 — Doc update session (2026-04-20 changes)
 
 ### What was done
