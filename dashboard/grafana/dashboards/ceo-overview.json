@@ -758,7 +758,81 @@
         }
       ],
       "title": "Circuit Breaker Events (last 50)",
-      "type": "table"    }
+      "type": "table"    },
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 50000 },
+              { "color": "red",    "value": 100000 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 79 },
+      "id": 25,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT COALESCE(SUM(tokens_used), 0) AS tokens_last_hour\nFROM `morphic-gaos-prod.aos_logs.api_call_log`\nWHERE ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)\n  AND tokens_used IS NOT NULL",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Tokens Last Hour (runaway > 100k = red)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "grafana-bigquery-datasource", "uid": "bigquery-morphic-gaos" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "auto"
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 18, "x": 6, "y": 79 },
+      "id": 26,
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "targets": [
+        {
+          "dataset": "aos_logs",
+          "project": "morphic-gaos-prod",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  TIMESTAMP_TRUNC(ts, MINUTE, 'UTC') AS time,\n  COALESCE(model, 'unknown') AS model,\n  SUM(tokens_used) AS tokens\nFROM `morphic-gaos-prod.aos_logs.api_call_log`\nWHERE ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)\n  AND tokens_used IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
+          "refId": "A",
+          "location": "US"
+        }
+      ],
+      "title": "Token Usage by Model (last 24h)",
+      "type": "timeseries"
+    }
   ],
   "refresh": "30s",
   "schemaVersion": 38,

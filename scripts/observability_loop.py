@@ -75,12 +75,14 @@ def _utcnow() -> str:
 
 
 def _check_pubsub_endpoint_staleness(project_id: str) -> None:
-    """Rule 27.3 — warn if any push subscription points at a stale Cloud Run URL.
+    """Rule 27.3 — detect and auto-repair push subscriptions pointing at stale Cloud Run URLs.
 
     Resolves the live nexus-prime Cloud Run URL via the Cloud Run Admin API and
     compares it against each known push subscription's pushConfig.pushEndpoint.
-    Logs a WARNING for any mismatch so the operator can run provision_schedulers.py
-    to re-point the subscription.
+    When a mismatch is found, immediately calls ``modify_push_config`` to re-point
+    the subscription to the live URL (remedial action). Only prints REPAIR FAILED
+    and sets the stale flag if the repair itself raises an exception, in which case
+    the operator must run provision_schedulers.py manually.
 
     Args:
         project_id: GCP project ID (used for Cloud Run and Pub/Sub API calls).
@@ -121,11 +123,31 @@ def _check_pubsub_endpoint_staleness(project_id: str) -> None:
                         f"endpoint has no /pubsub suffix — comparing full URL: {endpoint}"
                     )
                 if live_url and endpoint_base != live_url:
+                    new_endpoint = f"{live_url}/pubsub"
                     print(
                         f"[{_utcnow()}] WARNING PUBSUB-STALE: {sub_name.split('/')[-1]} "
-                        f"→ {endpoint} (expected prefix {live_url}) — run provision_schedulers.py"
+                        f"→ {endpoint} (expected {new_endpoint}) — attempting auto-repair"
                     )
-                    any_stale = True
+                    try:
+                        from google.pubsub_v1.types import PushConfig  # noqa: PLC0415
+
+                        # Clone the existing PushConfig so oidc_token and other
+                        # fields survive the repair — only swap the endpoint.
+                        push_cfg = sub.push_config if sub.push_config is not None else PushConfig()
+                        push_cfg.push_endpoint = new_endpoint
+                        subscriber.modify_push_config(
+                            request={
+                                "subscription": sub_name,
+                                "push_config": push_cfg,
+                            }
+                        )
+                        print(f"[{_utcnow()}] REPAIRED: {sub_name.split('/')[-1]} → {new_endpoint}")
+                    except Exception as repair_exc:
+                        print(
+                            f"[{_utcnow()}] REPAIR FAILED: {sub_name.split('/')[-1]} — "
+                            f"{repair_exc}. Run provision_schedulers.py manually."
+                        )
+                        any_stale = True
             except Exception as exc:
                 print(f"[{_utcnow()}] PUBSUB-STALE: could not check {sub_name} — {exc}")
         if not any_stale:
@@ -134,6 +156,42 @@ def _check_pubsub_endpoint_staleness(project_id: str) -> None:
             )
     except Exception as exc:
         print(f"[{_utcnow()}] PUBSUB-STALE check failed — {exc}")
+
+
+def _check_token_runaway(project_id: str, settings) -> None:
+    """Query api_call_log for total tokens used in the last hour.
+
+    Logs an ERROR if the rolling total exceeds settings.models.TOKEN_HOURLY_LIMIT.
+    This catches loop storms where many moderate calls accumulate unnoticed —
+    the per-call threshold in _call_model() catches single large calls.
+
+    Args:
+        project_id: GCP project to query.
+        settings:   Loaded settings object (provides TOKEN_HOURLY_LIMIT).
+    """
+    try:
+        from google.cloud import bigquery as _bq
+
+        limit = int(getattr(settings.models, "TOKEN_HOURLY_LIMIT", 100_000))
+        client = _bq.Client(project=project_id)
+        query = f"""
+            SELECT COALESCE(SUM(tokens_used), 0) AS total_tokens
+            FROM `{project_id}.aos_logs.api_call_log`
+            WHERE ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
+              AND tokens_used IS NOT NULL
+        """
+        rows = list(client.query(query).result())
+        total = int(rows[0]["total_tokens"]) if rows else 0
+
+        if total > limit:
+            print(
+                f"[{_utcnow()}] ERROR TOKEN-RUNAWAY: {total:,} tokens used in the last hour "
+                f"(limit={limit:,}). Possible runaway loop — inspect api_call_log immediately."
+            )
+        else:
+            print(f"[{_utcnow()}] TOKEN-CHECK: {total:,} tokens/hour (limit={limit:,}) — OK")
+    except Exception as exc:
+        print(f"[{_utcnow()}] TOKEN-CHECK: BQ query failed — {exc}")
 
 
 def _run_cycle(project_id: str, settings) -> None:
@@ -236,6 +294,7 @@ def main() -> None:
     if args.once:
         _run_cycle(project_id, settings)
         _check_pubsub_endpoint_staleness(project_id)
+        _check_token_runaway(project_id, settings)
         return
 
     print("Press Ctrl-C to stop.\n")
@@ -243,6 +302,7 @@ def main() -> None:
         while True:
             _run_cycle(project_id, settings)
             _check_pubsub_endpoint_staleness(project_id)
+            _check_token_runaway(project_id, settings)
             print(f"  [sleeping {args.interval} min...]\n")
             time.sleep(interval_s)
     except KeyboardInterrupt:

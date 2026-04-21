@@ -3238,7 +3238,7 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     from tools.google_sheets import find_row, update_row
 
     project_id: str = state["project_id"]
-    task_id: str = str(uuid.uuid4())
+    task_id: str = state.get("task_id") or str(uuid.uuid4())
 
     msg: A2AMessage | None = state.get("incoming_message")
     if msg is None:
@@ -3252,6 +3252,16 @@ def compose_reply(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     message_id: str = payload.get("message_id", "")
     message_id_header: str = payload.get("message_id_header", "")
     thread_context: list = payload.get("thread_context", [])
+
+    _log_cloud(
+        "nexus-prime",
+        project_id,
+        "task",
+        task_id,
+        f"compose_reply: received from={_redact_sender(from_addr)} "
+        f"message_id={message_id} subject={subject[:80]!r}",
+        "INFO",
+    )
 
     # Idempotency guard — bail if a concurrent task already sent a reply for this message_id.
     # Pub/Sub at-least-once delivery can produce multiple concurrent EMAIL_RECEIVED tasks
@@ -4287,7 +4297,7 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
     settings = get_settings()
     msg: A2AMessage | None = state["incoming_message"]
     project_id: str = state["project_id"]
-    task_id = str(uuid.uuid4())
+    task_id: str = state.get("task_id") or str(uuid.uuid4())
 
     if msg is None:
         return {
@@ -4497,6 +4507,16 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
         except Exception:
             pass  # Sheets read failure — proceed to avoid dropping a real email
 
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"process_gmail: accepted message_id={message_id} "
+            f"from {_redact_sender(from_addr)} subject={subject[:80]!r}",
+            "INFO",
+        )
+
         # Thread context for downstream LLM nodes
         try:
             thread_context = get_thread_context(project_id, thread_id)
@@ -4544,6 +4564,7 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
             target_agent="nexus-prime",
             message_type=MessageType.EMAIL_RECEIVED,
             priority=3,
+            task_id=task_id,  # propagate so compose_reply shares the same task_id
             payload={**message, "thread_context": thread_context},
         )
         try:

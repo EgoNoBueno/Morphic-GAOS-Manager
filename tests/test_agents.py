@@ -647,6 +647,82 @@ class TestOllamaRouting:
 
         mock_ws.assert_not_called()
 
+    def test_ollama_tokens_counted_from_response(self):
+        """tokens_used must equal prompt_eval_count + eval_count from the Ollama response JSON."""
+        from agents import _call_model
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "response": "some text",
+            "prompt_eval_count": 120,
+            "eval_count": 80,
+        }
+
+        with patch("httpx.post", return_value=mock_resp):
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                result = _call_model("prompt", model="ollama/llama3.1")
+
+        assert result.tokens_used == 200
+
+    def test_ollama_tokens_zero_when_counts_absent(self):
+        """tokens_used must be 0 when prompt_eval_count / eval_count are missing."""
+        from agents import _call_model
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"response": "some text"}
+
+        with patch("httpx.post", return_value=mock_resp):
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                result = _call_model("prompt", model="ollama/llama3.1")
+
+        assert result.tokens_used == 0
+
+    def test_token_runaway_warning_emitted_above_threshold(self):
+        """A WARNING must be logged when tokens_used exceeds TOKEN_WARNING_THRESHOLD."""
+
+        from agents import _call_model
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "response": "big response",
+            "prompt_eval_count": 5000,
+            "eval_count": 5000,  # 10 000 total — above default threshold of 8 000
+        }
+
+        with patch("httpx.post", return_value=mock_resp):
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                with patch("agents.logger") as mock_logger:
+                    result = _call_model("prompt", model="ollama/llama3.1")
+
+        assert result.tokens_used == 10_000
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        assert "Token runaway" in warning_msg
+
+    def test_token_runaway_warning_not_emitted_below_threshold(self):
+        """No WARNING when tokens_used is below TOKEN_WARNING_THRESHOLD."""
+        from agents import _call_model
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "response": "small response",
+            "prompt_eval_count": 100,
+            "eval_count": 50,  # 150 total — well below 8 000 threshold
+        }
+
+        with patch("httpx.post", return_value=mock_resp):
+            with patch("tools.secrets.get_secret", return_value="http://localhost:11434"):
+                with patch("agents.logger") as mock_logger:
+                    _call_model("prompt", model="ollama/llama3.1")
+
+        # warning must not have been called for any token-runaway message
+        for call in mock_logger.warning.call_args_list:
+            assert "Token runaway" not in (call[0][0] if call[0] else "")
+
 
 # ── Gemini AI Studio client ────────────────────────────────────────────────
 

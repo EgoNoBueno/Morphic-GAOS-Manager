@@ -221,6 +221,15 @@ def _call_model(
         ctx["tokens_used"] = resp.tokens_used
         ctx["model"] = model
 
+    warn_threshold = int(getattr(settings.models, "TOKEN_WARNING_THRESHOLD", 8000))
+    if resp.tokens_used > warn_threshold:
+        logger.warning(
+            "Token runaway detected: model=%s tokens=%d exceeds TOKEN_WARNING_THRESHOLD=%d",
+            model,
+            resp.tokens_used,
+            warn_threshold,
+        )
+
     return resp
 
 
@@ -246,7 +255,9 @@ def _call_model_ollama(
     try:
         from tools.secrets import get_secret
 
-        host = get_secret("OLLAMA_HOST", settings.GCP_PROJECT_ID).strip().rstrip("/")
+        host = (
+            get_secret("OLLAMA_HOST", settings.GCP_PROJECT_ID).lstrip("\ufeff").strip().rstrip("/")
+        )
     except Exception:
         host = "http://localhost:11434"
 
@@ -268,6 +279,7 @@ def _call_model_ollama(
         response.raise_for_status()
         data = response.json()
         text = data.get("response", "")
+        ollama_tokens = int(data.get("prompt_eval_count") or 0) + int(data.get("eval_count") or 0)
         parsed: dict = {}
         if parse_json and text:
             json_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
@@ -276,7 +288,7 @@ def _call_model_ollama(
                 parsed = json.loads(raw)
             except (json.JSONDecodeError, ValueError):
                 parsed = {}
-        return ModelResponse(text=text, cost_usd=0.0, tokens_used=0, data=parsed)
+        return ModelResponse(text=text, cost_usd=0.0, tokens_used=ollama_tokens, data=parsed)
 
     except (httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError) as exc:
         # Fallback to Gemini is disabled until Ollama is reachable from Cloud Run.

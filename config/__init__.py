@@ -35,6 +35,8 @@ class ModelAliases(BaseModel):
     DEEP_MODEL: str
     LOCAL_MODEL_FALLBACK: str
     LOCAL_MODEL_TIMEOUT_SECONDS: int = 2
+    TOKEN_WARNING_THRESHOLD: int = 8000  # Single call WARNING threshold
+    TOKEN_HOURLY_LIMIT: int = 100000  # Hourly runaway guard limit
 
 
 class MemoryBankConfig(BaseModel):
