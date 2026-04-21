@@ -380,11 +380,83 @@ def check_error_themes() -> None:
         check("Error themes", False, detail)
 
 
+# ── Check 9: Open circuit breakers ───────────────────────────────────────────
+
+
+def check_circuit_breakers() -> None:
+    """Query BQ circuit_breaker_events for any resource whose last state is OPEN."""
+    print("\n[9/10] Circuit Breaker States")
+    try:
+        client = _bq.Client(project=PROJECT)
+        query = (
+            f"SELECT agent_id, resource_key, new_state "
+            f"FROM ( "
+            f"  SELECT agent_id, resource_key, new_state, "
+            f"    ROW_NUMBER() OVER "
+            f"      (PARTITION BY agent_id, resource_key ORDER BY ts DESC) AS rn "
+            f"  FROM `{PROJECT}.aos_logs.circuit_breaker_events` "
+            f") WHERE rn = 1"
+        )
+        rows = list(client.query(query).result())
+    except Exception as exc:
+        msg = str(exc)
+        if "Not found" in msg or "notFound" in msg:
+            check("Circuit breakers", True, "table not yet created (no events recorded)")
+        else:
+            check("Circuit breaker query", False, msg[:120])
+        return
+
+    open_breakers = [r for r in rows if r["new_state"] == "OPEN"]
+    if not open_breakers:
+        check("Circuit breakers", True, f"{len(rows)} tracked, all CLOSED or HALF_OPEN")
+    else:
+        for r in open_breakers:
+            warn(
+                f"Circuit breaker OPEN: {r['agent_id']}/{r['resource_key']}",
+                "tool calls to this resource are blocked until cooldown elapses",
+            )
+
+
+# ── Check 10: Cloud Scheduler job inventory ────────────────────────────────────
+
+_EXPECTED_SCHEDULER_JOBS: list[str] = [
+    "gaos-archive",
+    "gaos-daily-sync",
+    "gaos-sheets-sync",
+    "gaos-gmail-renew-watch",
+    "gaos-daily-digest",
+]
+
+
+def check_scheduler_jobs() -> None:
+    """Verify all expected Cloud Scheduler jobs exist and are not paused."""
+    print("\n[10/10] Cloud Scheduler Jobs")
+    try:
+        from googleapiclient.discovery import build
+
+        creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+        scheduler = build("cloudscheduler", "v1", credentials=creds, cache_discovery=False)
+        parent = f"projects/{PROJECT}/locations/{REGION}"
+        resp = scheduler.projects().locations().jobs().list(parent=parent).execute()
+        existing: dict[str, dict] = {j["name"].split("/")[-1]: j for j in resp.get("jobs", [])}
+    except Exception as exc:
+        check("Scheduler job list", False, str(exc)[:120])
+        return
+
+    for job_id in _EXPECTED_SCHEDULER_JOBS:
+        if job_id not in existing:
+            check(f"Scheduler: {job_id}", False, "not found — run provision_schedulers.py")
+        elif existing[job_id].get("state") == "PAUSED":
+            warn(f"Scheduler: {job_id}", "PAUSED — job will not fire until resumed")
+        else:
+            check(f"Scheduler: {job_id}", True, existing[job_id].get("state", "ENABLED"))
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 
 def main() -> int:
-    """Run all 8 health check sections and print a summary."""
+    """Run all 10 health check sections and print a summary."""
     print("=" * 60)
     print("  GAOS-Doctor — System Health Check")
     print(f"  Project: {PROJECT}")
@@ -398,6 +470,8 @@ def main() -> int:
     check_agent_heartbeats()
     check_monthly_cost()
     check_error_themes()
+    check_circuit_breakers()
+    check_scheduler_jobs()
 
     n_ok = sum(1 for _, s, _ in results if s == "ok")
     n_warn = sum(1 for _, s, _ in results if s == "warn")

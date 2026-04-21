@@ -215,6 +215,59 @@ def test_fetch_new_messages_404_skipped(mock_secret):
     assert skipped_ids == ["dead-msg"]
 
 
+# ── test_fetch_new_messages_410_watermark_reset ───────────────────────────────
+
+
+def test_fetch_new_messages_410_watermark_reset(mock_secret):
+    """history.list 410 Gone resets watermark via getProfile instead of raising."""
+    from googleapiclient.errors import HttpError
+
+    from tools.gmail import fetch_new_messages
+
+    fake_410_resp = MagicMock()
+    fake_410_resp.status = 410
+
+    fake_service = MagicMock()
+    fake_service.users().history().list(
+        userId="me", startHistoryId="old-id", historyTypes=["messageAdded"]
+    ).execute.side_effect = HttpError(resp=fake_410_resp, content=b"Gone")
+    fake_service.users().getProfile(userId="me").execute.return_value = {
+        "emailAddress": "me@example.com",
+        "historyId": "99999",
+    }
+
+    with patch("tools.gmail.get_gmail_service", return_value=fake_service):
+        messages, new_id, skipped_ids = fetch_new_messages(PROJECT_ID, "old-id")
+
+    # 410 must NOT raise — returns empty result with fresh historyId
+    assert messages == []
+    assert new_id == "99999"
+    assert skipped_ids == []
+
+
+# ── test_fetch_new_messages_410_getprofile_failure ────────────────────────────
+
+
+def test_fetch_new_messages_410_getprofile_failure(mock_secret):
+    """history.list 410 Gone + getProfile failure → raises WatermarkRecoveryError (not stale id)."""
+    from googleapiclient.errors import HttpError
+
+    from tools.gmail import WatermarkRecoveryError, fetch_new_messages
+
+    fake_410_resp = MagicMock()
+    fake_410_resp.status = 410
+
+    fake_service = MagicMock()
+    fake_service.users().history().list(
+        userId="me", startHistoryId="old-id", historyTypes=["messageAdded"]
+    ).execute.side_effect = HttpError(resp=fake_410_resp, content=b"Gone")
+    fake_service.users().getProfile(userId="me").execute.side_effect = Exception("network error")
+
+    with patch("tools.gmail.get_gmail_service", return_value=fake_service):
+        with pytest.raises(WatermarkRecoveryError, match="getProfile fallback failed"):
+            fetch_new_messages(PROJECT_ID, "old-id")
+
+
 # ── test_get_thread_context_happy ─────────────────────────────────────────────
 
 

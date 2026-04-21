@@ -3,6 +3,70 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-04-20T17:35-07:00 — Cache Hardening: gmail.py + google_docs.py
+
+### What was done
+Applied two targeted cache-hardening fixes surfaced by code review.
+
+**`tools/gmail.py` — per-project thread-safe service cache**
+- Replaced single-slot `{"service": None, "project_id": "", "ts": 0.0}` dict with
+  `dict[str, tuple[Any, float]]` keyed by `project_id`.
+- Added `_gmail_svc_lock = threading.Lock()` — guards all reads and writes.
+- Pattern: acquire lock → check cache → release → slow build (no lock held during I/O)
+  → reacquire → write.  Two projects can now coexist without thrashing.
+
+**`tools/google_docs.py` — named constant for key-file cache TTL**
+- Replaced magic `300` in `_cred_cache["expires_at"] = now + timedelta(seconds=300)`
+  with `_KEYFILE_REFRESH_INTERVAL_SECONDS: float = 3600.0`.
+- Added explanatory comment: this interval controls key-file re-reads for rotation
+  pickup, not token refresh (the `Credentials` object handles tokens itself).
+- Bumped from 300 s → 3600 s (1 h) to match the DWD TTL window.
+
+### Files changed
+- `tools/gmail.py` — `_gmail_svc_cache`, `_gmail_svc_lock`, `get_gmail_service()`
+- `tools/google_docs.py` — `_KEYFILE_REFRESH_INTERVAL_SECONDS` constant, write site
+
+### Tests
+- `tests/test_gmail.py`: 13/13 passed
+- `tests/test_google_docs.py`: 29/29 passed
+
+### What's next
+- Deploy and monitor GCP metrics for Gmail 410 error clearance
+- Provision `gaas-gmail-renew-watch` Cloud Scheduler job (TODO Phase 0.5)
+
+---
+
+## 2026-04-20T11:01-07:00 — Gmail API 30% Error Rate — Root Cause Fixed
+
+### What was done
+Diagnosed the Gmail API 30% error rate (3/10 calls failing per GCP metrics).
+
+**Root cause:** `fetch_new_messages` calls `history.list(startHistoryId=...)`. When the stored `gmail_last_history_id` watermark is stale (Gmail purges history after ~30 days), the API returns **HTTP 410 Gone**. The old code raised `GmailAPIError`, which `process_gmail_notification` caught and returned early — with `new_history_id=""`. Because of the `if new_history_id:` guard, the watermark was **never updated**. Every subsequent push notification replayed the same 410 indefinitely.
+
+This is the Rule 29 pattern applied to API error paths: a stalled watermark silently amplifies load rather than recovering.
+
+**Fix:** In `fetch_new_messages`, 410 is now caught specifically before the generic `GmailAPIError` raise. On 410:
+1. Call `getProfile(userId="me")` to fetch the current live historyId
+2. Return `([], fresh_historyId, [])` — empty messages but a valid new watermark
+3. `process_gmail_notification` receives a valid `new_history_id`, advances the watermark, and all future notifications resolve correctly
+
+### Files changed
+- `tools/gmail.py` — 410 handling in `fetch_new_messages()` history.list error block
+- `tests/test_gmail.py` — Added `test_fetch_new_messages_410_watermark_reset`
+
+### Tests
+- `tests/test_gmail.py`: 12/12 passed
+
+### Lesson learned
+See `tools/gmail.py` `fetch_new_messages` docstring and the `⚠️ Warning` callout in `GAOS-Tools-Spec.md` (to add). When `history.list` returns 410, the watermark MUST be advanced — holding it causes a self-perpetuating 100% error loop on that operation.
+
+### What's next
+- Monitor GCP API metrics — 410 errors should clear immediately after this deploys
+- Verify `gaos-gmail-renew-watch` Cloud Scheduler job is provisioned (it's in TODO Phase 0.5) to prevent watch expiry from also stalling notifications
+- Run `python -m pytest --tb=short` before committing
+
+---
+
 ## 2026-04-16T17:58 — Duplicate Reply Storm — Root Cause Fixed and Verified
 
 ### What was done

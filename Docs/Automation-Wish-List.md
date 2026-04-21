@@ -74,6 +74,28 @@ Each item should capture:
 
 ---
 
+## 📡 Marketing Channel Creation & Management
+
+End-to-end automation for researching, launching, and operating marketing channels for SL10 Products. These items are **sequentially dependent** — MC1 and MC2 gate everything downstream. Scout does the research; Beacon does the content generation; n8n handles platform API execution. No channel goes live without an Approval Gate proposal.
+
+> **Note:** No spec or workflow exists yet for this section. The next step is writing `Docs/GAOS-Marketing-Channel-Spec.md` — see the active to-do list.
+
+| # | What | Trigger | Runtime | Priority |
+|---|------|---------|---------|----------|
+| MC1 | Channel audience research — Scout `RESEARCH_MANDATE` to identify which platforms SL10's B2B maintenance audience (facility managers, maintenance professionals, service teams) actually uses; output: ranked platform report with audience size estimates, organic reach potential, and content format breakdown per platform | Manual | GAOS (Scout — RESEARCH_MANDATE) | High |
+| MC2 | Competitor channel audit — Scout crawls the top 10–15 competitors and adjacent brands on each platform surfaced in MC1; output: competitive matrix covering posting frequency, dominant content formats, engagement rates, content gaps, and 3–5 underserved topic angles SL10 can own | Manual (after MC1) | GAOS (Scout — RESEARCH_MANDATE, multi-query) | High |
+| MC3 | Platform API inventory — research which target platforms expose usable APIs for programmatic channel creation and content publishing (YouTube Data API v3: YES; LinkedIn Pages API: limited; Meta Graph API: yes but app review required; TikTok for Developers: limited); output: platform-capability matrix with setup prerequisites, OAuth scopes needed, and approval timelines per channel | Manual (parallel with MC2) | GAOS (Scout) / Manual | High |
+| MC4 | Channel profile content generation — Beacon generates bio, about description, keyword tags, and banner brief for each approved platform in SL10 brand voice; full set submitted to Approval Gate as a single batch proposal before any platform account is created | MC1 + MC2 approved, channel strategy locked | GAOS (Beacon + Approval Gate) | High |
+| MC5 | Channel setup automation — where platform APIs allow, automate channel/page creation and initial profile configuration; non-API platforms flagged with a checklist for manual setup; triggers BI5-Phase B node activation for that platform | MC4 approved | n8n (platform-specific API nodes) + GAOS | Medium |
+| MC6 | 30-day seed content calendar — Beacon generates a platform-specific content calendar for the first 30 days on each active channel (post copy, image prompt, video brief, hashtags, posting time); submitted to Approval Gate as a single batch before any post is scheduled | MC4 approved | GAOS (Beacon + Approval Gate) | High |
+| MC7 | Content publishing & scheduling — approved content published to active channels on schedule; long-form content auto-repurposed into platform-specific formats (extends M3 social repurposing) | Content approved in Approval Gate | n8n (Buffer / direct platform API) | Medium |
+| MC8 | Channel performance → BI5 extension — extend the existing daily BI5 KPI Sheet and Grafana CEO dashboard to include metrics from each live channel (YouTube: views/watch time/CTR; LinkedIn: impressions/engagement rate; Meta: reach/clicks); activates the pre-scaffolded YouTube columns in BI5 | Channels live (MC5 complete) | n8n (extends BI5 — Phase B node activation) | Medium |
+
+> **Dependency chain:** MC1 → MC2 + MC3 (parallel) → human channel strategy approval → MC4 → MC5 + MC6 (parallel) → MC7 + MC8 (parallel).
+> MC1 and MC2 are Scout research mandates that require `tools/google_search.py` and `_discover` node — already built (Phase 2.5 Step 6). No new GAOS infrastructure is needed to run them today.
+
+---
+
 ## 🤝 Human Resources
 
 | # | What | Trigger | Runtime | Priority |

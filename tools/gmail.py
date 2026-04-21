@@ -21,6 +21,7 @@ import base64
 import email.mime.text
 import json
 import logging
+import threading
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -31,11 +32,13 @@ from tools.secrets import SecretNotFoundError, get_secret
 _gmail_log = logging.getLogger(__name__)
 
 # ── Per-process Gmail service cache ─────────────────────────────────────────
-# Avoids Secret Manager fetch + discovery.build() per call. The cached service
-# is reused as long as the project_id matches and the TTL has not expired.
+# Maps project_id -> (service, ts).  Avoids a Secret Manager fetch +
+# discovery.build() on every call.  _gmail_svc_lock guards all reads and
+# writes so concurrent Pub/Sub notifications don't race on cache refresh.
 # Credential expiry is handled by google-auth's automatic refresh.
 _GMAIL_CACHE_TTL_SECONDS = 300.0
-_gmail_svc_cache: dict[str, Any] = {"service": None, "project_id": "", "ts": 0.0}
+_gmail_svc_cache: dict[str, tuple[Any, float]] = {}
+_gmail_svc_lock = threading.Lock()
 
 # ── Error types ────────────────────────────────────────────────────────────
 
@@ -46,6 +49,15 @@ class GmailAuthError(Exception):
 
 class GmailAPIError(Exception):
     """Gmail REST API returned a non-retryable error."""
+
+
+class WatermarkRecoveryError(Exception):
+    """Raised when a 410 Gone watermark reset fails because getProfile also failed.
+
+    Callers must NOT persist the old watermark — doing so causes an infinite 410
+    replay loop.  The caller should log an alert and implement backoff before
+    retrying the next Gmail notification.
+    """
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────
@@ -167,12 +179,10 @@ def get_gmail_service(project_id: str) -> Any:
             insufficient.
     """
     now = time.time()
-    if (
-        _gmail_svc_cache["service"] is not None
-        and _gmail_svc_cache["project_id"] == project_id
-        and now - _gmail_svc_cache["ts"] < _GMAIL_CACHE_TTL_SECONDS
-    ):
-        return _gmail_svc_cache["service"]
+    with _gmail_svc_lock:
+        entry = _gmail_svc_cache.get(project_id)
+        if entry is not None and now - entry[1] < _GMAIL_CACHE_TTL_SECONDS:
+            return entry[0]
 
     from googleapiclient.discovery import build
 
@@ -182,9 +192,8 @@ def get_gmail_service(project_id: str) -> Any:
     except Exception as exc:
         raise GmailAuthError(f"Failed to build Gmail service: {exc}") from exc
 
-    _gmail_svc_cache["service"] = svc
-    _gmail_svc_cache["project_id"] = project_id
-    _gmail_svc_cache["ts"] = now
+    with _gmail_svc_lock:
+        _gmail_svc_cache[project_id] = (svc, now)
     return svc
 
 
@@ -237,6 +246,28 @@ def fetch_new_messages(
             .execute()
         )
     except HttpError as exc:
+        if exc.resp.status == 410:
+            # History ID is too old — Gmail purged history before this point.
+            # Per Rule 29: advance the watermark past the unresolvable point rather than
+            # holding it and replaying the same 410 on every subsequent notification.
+            # Fetch the current historyId so process_gmail_notification can persist it
+            # as the new watermark and resume from the live position.
+            _gmail_log.warning(
+                "fetch_new_messages: history.list returned 410 Gone — startHistoryId=%s is "
+                "too old (Gmail purged history). Resetting watermark to current historyId "
+                "via getProfile. No messages lost: they were already processed or expired.",
+                history_id,
+            )
+            try:
+                profile = service.users().getProfile(userId="me").execute()
+                fresh_history_id = str(profile.get("historyId", history_id))
+            except Exception as _prof_exc:
+                raise WatermarkRecoveryError(
+                    f"fetch_new_messages: getProfile fallback failed after 410 "
+                    f"(startHistoryId={history_id}): {_prof_exc}. "
+                    "Caller must NOT persist stale watermark — implement backoff."
+                ) from _prof_exc
+            return [], fresh_history_id, []
         raise GmailAPIError(
             f"Gmail history.list failed (startHistoryId={history_id}): {exc}"
         ) from exc

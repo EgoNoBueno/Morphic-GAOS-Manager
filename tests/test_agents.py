@@ -2603,6 +2603,7 @@ class TestEmailReply:
             patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
             patch("agents.nexus_prime.orchestrator._check_email_flood", return_value=True),
             patch("tools.gmail.send_email", return_value="sent-id-xyz") as mock_send,
+            patch("tools.google_sheets.find_row", return_value=None),
             patch(
                 "tools.google_sheets.get_all_records_with_row_numbers",
                 return_value=[(2, {"message_id": "msg-001", "status": "Pending"})],
@@ -2692,6 +2693,7 @@ class TestEmailReply:
             patch("agents.nexus_prime.orchestrator._call_model", return_value=self._mock_resp()),
             patch("agents.nexus_prime.orchestrator._check_email_flood", return_value=True),
             patch("tools.gmail.send_email", return_value="sent-id-2") as mock_send,
+            patch("tools.google_sheets.find_row", return_value=None),
             patch("tools.google_sheets.get_all_records_with_row_numbers", return_value=[]),
             patch("agents.nexus_prime.orchestrator._log_cloud"),
         ):

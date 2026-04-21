@@ -4274,6 +4274,7 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
     from tools.gmail import (
         GmailAPIError,
         GmailAuthError,
+        WatermarkRecoveryError,
         fetch_new_messages,
         get_gmail_service,
         get_thread_context,
@@ -4378,6 +4379,22 @@ def process_gmail_notification(state: NexusPrimeWorkingMemory) -> NexusPrimeWork
     # ── Fetch delta ──────────────────────────────────────────────────────────
     try:
         messages, new_history_id, skipped_ids = fetch_new_messages(project_id, last_history_id)
+    except WatermarkRecoveryError as exc:
+        # getProfile also failed after a 410 Gone — we cannot safely reset the watermark.
+        # Do NOT persist any history_id (stale id causes an infinite 410 replay loop).
+        # Log at ERROR so the operator can investigate and manually reseed the watermark.
+        _log_cloud(
+            "nexus-prime",
+            project_id,
+            "task",
+            task_id,
+            f"process_gmail: watermark recovery failed — {exc}",
+            "ERROR",
+        )
+        return {
+            **state,
+            "outcome": {"processed": 0, "skipped": 0, "skipped_ids": [], "new_history_id": ""},
+        }
     except (GmailAuthError, GmailAPIError) as exc:
         _log_cloud(
             "nexus-prime",

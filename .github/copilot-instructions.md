@@ -159,7 +159,7 @@ New entries go at the **top** of WORKLOG.md (most recent first).
 | Infrastructure change (GCP, Pub/Sub, Sheets, etc.) | `GAOS-Deploy-Spec.md` — update the step it affects and the verification command |
 | Phase task completed | `GAOS-Deploy-Spec.md` phase exit checklist — check the item off |
 | Spec contradicted by implementation reality | Correct the spec to match reality — never the other way around |
-| Lesson learned or gotcha discovered | Add a `> ⚠️ **Note:**` callout at the relevant spec location |
+| Lesson learned or gotcha discovered | Add a `> ⚠️ **Warning — [short label]:**` callout at the relevant spec location |
 
 **The core principle:** Specs describe what is built, not what was originally planned. If the implementation diverged from the spec for a good reason, the spec gets updated. If the spec was wrong, it gets corrected. Future developers (and AI sessions) must be able to trust that reading a spec file gives an accurate picture of the live system.
 
@@ -264,7 +264,7 @@ def archive_rows(tab: str, rows: list[dict], project_id: str) -> int:
     msg = f"Archived {len(rows)} rows from {tab}"
 ```
 
-> **Tooling note:** `pyproject.toml` already configures `[tool.ruff]` with `line-length = 100` and `target-version = "py311"`. `.vscode/settings.json` is checked in with Format on Save enabled. A `.pre-commit-config.yaml` running `ruff check --fix` and `ruff format` is not yet present — this is a tracked Phase 4 task. Until it exists, run both commands manually before committing. Per Rule 22 (PowerShell-native commands), the `&&` chaining operator requires **PowerShell 7+**; use the following PS 5.1-compatible sequence instead:
+> **Tooling note:** `pyproject.toml` already configures `[tool.ruff]` with `line-length = 100` and `target-version = "py311"`. `.vscode/settings.json` is checked in with Format on Save enabled. `.pre-commit-config.yaml` is checked in and runs `detect-secrets`, `ruff check --fix`, and `ruff format` on every commit. Install once per clone with `pre-commit install`. To run on all files manually: `pre-commit run --all-files`. For ad-hoc lint + format runs, per Rule 22 (PowerShell-native commands):
 >
 > ```powershell
 > ruff check --fix .; if ($LASTEXITCODE -eq 0) { ruff format . }
@@ -354,8 +354,6 @@ except Exception as exc:
 If an abstraction already exists, it **must** be used — not re-implemented inline. If an existing abstraction is insufficient, extend it and update its spec entry rather than creating a parallel version.
 
 **Why this matters:** Parallel implementations silently diverge. One gets the retry logic update; the other doesn't. Two months later the codebase has two `delete_rows` functions with different behavior and no one knows which is authoritative.
-
----
 
 ---
 
@@ -599,7 +597,7 @@ This guard is the last line of defense if both 26.1 and 26.2 fail. It is cheap (
 
 ### 26.4 Required `settings.yaml` Keys
 
-Add these to `settings.yaml` under a new `outbound:` block. Do not hardcode the values in any source file.
+These keys are configured in `settings.yaml` under the `outbound:` block. Do not hardcode their values in any source file.
 
 ```yaml
 outbound:
@@ -610,6 +608,8 @@ outbound:
 ```
 
 **Why three layers?** The 2026-04-02 incident proved that a single configuration gate is insufficient — it can be misconfigured by any contributor who reasonably adds a new address without understanding the loop risk. Defense-in-depth means the system stays safe even when one layer has an error. The three layers are independent: code identity check, per-task counter, and time-window BQ query. All three must fail simultaneously to produce a loop.
+
+> ⚠️ **Lesson learned — 2026-04-16:** These three outbound layers assume the input pipeline is bounded. In the 2026-04-16 duplicate reply storm, the root failure was an upstream watermark stuck on permanently-unavailable Sent messages — creating a replay loop of ~100 messages per Pub/Sub notification. The resulting Sheets 429 storm caused both idempotency guards to fail **open** (`except: pass → proceed`), generating 14–48 duplicate sends despite all outbound layers being present. **Takeaway:** outbound guards must also fail **closed** on dependency exceptions — `except: pass` on an idempotency check is a critical defect. The upstream replay cause is addressed by Rule 29.
 
 ---
 
@@ -666,7 +666,7 @@ Invoke-WebRequest -Uri "$NEW_URL/health" `
     -Method GET
 ```
 
-If the endpoint returns anything other than 200, resolve the deployment issue before creating the push subscription. A push subscription enabled against a non-200 endpoint will immediately begin generating a 401/404 retry storm (see Rule 25, Pattern 2).
+If the endpoint returns anything other than 200, resolve the deployment issue before creating the push subscription. A push subscription enabled against a non-200 endpoint will immediately begin generating a 401/404 retry storm (see Rule 25.1 — Retry Budget).
 
 ### 27.3 Stale URL Detection
 
@@ -704,4 +704,35 @@ for sub_name, current_cloud_run_endpoint in _KNOWN_PUSH_SUBS.items():
 
 ---
 
-_Last updated: 2026-04-02_
+## 29. Processing State Pointers Must Always Advance — No Partial-Skip Stalls
+
+**Rule:** Any component that maintains a processing watermark, cursor, or offset (e.g., `gmail_last_history_id`, a Pub/Sub acknowledgement sequence, a database read cursor) **must** advance that pointer past any message that fails retrieval after max retries. A pointer that stalls on a permanently-unresolvable message creates an infinite replay loop.
+
+> ⚠️ **Lesson learned — 2026-04-16:** `process_gmail` held `gmail_last_history_id` constant whenever `skipped_ids` was non-empty. Messages in Sent/Trash always 404 from the Inbox fetch — so the watermark never advanced. Every new Pub/Sub notification replayed the same ~100 old Sent messages, generating 100+ concurrent Sheets reads per minute. The resulting 429 storm caused idempotency guards to fail open and produced 14–48 duplicate replies to a single email.
+
+**The correct advance condition:**
+
+```python
+# ❌ Wrong — stalls the pointer when any message is skipped
+if new_history_id and not skipped_ids:
+    update_watermark(new_history_id)
+
+# ✅ Correct — always advance; 404 after max retries means permanently gone
+if new_history_id:
+    update_watermark(new_history_id)
+    if skipped_ids:
+        _log_cloud(..., f"advanced past {len(skipped_ids)} permanently unavailable messages", "WARNING")
+```
+
+**Max-retry threshold for "permanently gone":** Three consecutive 404 responses for the same message ID is sufficient evidence the message will not return. Log a WARNING with the message ID and advance the pointer. Do not hold the pointer indefinitely.
+
+**Where this applies:**
+- `process_gmail` / `gmail_last_history_id` watermark
+- Any message cursor stored and resumed across invocations
+- Any offset-based consumer of an ordered stream
+
+**Why:** A stalled pointer is not a safe failure mode — it is a silent amplifier. Every downstream invocation replays the same unresolvable messages, compounding load until a rate limit or guard fails somewhere. Advancing past skipped messages is the correct fail-safe: log the skip, move the pointer forward, let Pub/Sub redeliver if the failure was transient.
+
+---
+
+_Last updated: 2026-04-16_

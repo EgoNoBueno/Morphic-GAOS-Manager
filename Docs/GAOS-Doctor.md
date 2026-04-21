@@ -11,7 +11,7 @@ Diagnostic tool for Morphic-G AOS. Verifies system health across all infrastruct
 
 Exit code 0 = all checks passed (or WARN-only). Exit code 1 = one or more FAIL checks.
 
-## What It Checks (8 groups, ~43 individual checks)
+## What It Checks (10 groups, ~50 individual checks)
 
 | # | Check Group | Description |
 |---|-------------|-------------|
@@ -23,6 +23,8 @@ Exit code 0 = all checks passed (or WARN-only). Exit code 1 = one or more FAIL c
 | 6 | **Agent Heartbeat Recency** | BQ `aos_logs.status_snapshots` — WARN if last heartbeat > 60 min, FAIL if > 240 min, for all 7 agents |
 | 7 | **Monthly Cost (MTD)** | BQ `aos_logs.task_outcomes` — WARN if MTD cost > $5, FAIL if > $10 |
 | 8 | **Error Themes (last 1h)** | Cloud Logging `gaos-agents` ERROR entries — bucketed by Rate Limiting / Auth Failures / Timeouts / Internal; WARN if 1–5 errors, FAIL if > 5 |
+| 9 | **Circuit Breaker States** | BQ `aos_logs.circuit_breaker_events` — WARN for each resource whose last recorded state is OPEN (tool calls to that resource are blocked until cooldown elapses). Gracefully skips if table doesn't yet exist. |
+| 10 | **Cloud Scheduler Job Inventory** | Verifies all 5 expected jobs exist and are not paused: `gaos-archive`, `gaos-daily-sync`, `gaos-sheets-sync`, `gaos-gmail-renew-watch`, `gaos-daily-digest`. FAIL if any are missing; WARN if any are PAUSED. |
 
 ## Prerequisites
 

@@ -401,6 +401,12 @@ class TestListComments:
 
 
 class TestCredentials:
+    def setup_method(self):
+        # Clear credential cache so each test exercises the full resolution path
+        import tools.google_docs as _gd
+
+        _gd._cred_cache.clear()
+
     def test_uses_service_account_key_when_configured(self, settings_with_sa_key):
         with (
             patch(

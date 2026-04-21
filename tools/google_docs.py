@@ -18,6 +18,7 @@ Spec: GAOS-Tools-Spec.md §16 · GAOS-Memory-Spec.md §3 (Layer 5b — Blueprint
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any
 
 from google.oauth2 import service_account
@@ -47,12 +48,30 @@ class DocumentNotFoundError(Exception):
     """The requested document does not exist or is not accessible."""
 
 
+# ── Credential cache ─────────────────────────────────────────────────────────
+# DWD tokens are valid for ~1 hour.  Cache the credentials object and reuse
+# until 5 minutes before expiry to avoid a signBlob + token exchange on every
+# API call (10 IAM round-trips per poll-comments invocation without this).
+# _cred_lock guards all reads and writes to _cred_cache to prevent concurrent
+# refresh races when multiple threads call _get_credentials simultaneously.
+_cred_cache: dict[str, Any] = {}
+_cred_lock = threading.Lock()
+
+# Key-file credentials are re-loaded from disk at this interval (seconds).
+# The Credentials object manages its own access-token refresh internally;
+# this interval controls how often we re-read the key file to pick up
+# rotation without restarting the process.  3 600 s == 1 hour.
+_KEYFILE_REFRESH_INTERVAL_SECONDS: float = 3600.0
+
 # ── Credential factory ────────────────────────────────────────────────────────
 
 
 def _get_credentials() -> Any:
     """
     Return Google OAuth2 credentials for the Docs and Drive APIs.
+
+    Credentials are cached in ``_cred_cache`` and reused until 5 minutes before
+    token expiry, avoiding a signBlob + token exchange on every API call.
 
     Resolution order:
     1. Service account key file (settings.docs.service_account_key) — local dev override.
@@ -66,9 +85,23 @@ def _get_credentials() -> Any:
     Returns:
         A google.oauth2 Credentials object with Docs + Drive scopes.
     """
+    import datetime
+
     import google.auth
     from google.auth import iam as google_auth_iam
     from google.auth.transport import requests as google_auth_requests
+
+    now = datetime.datetime.now(tz=datetime.UTC)
+
+    # Fast path: return cached credentials if still valid (>5 min before expiry).
+    # Lock protects the dict read so we never see a partially-written cache entry.
+    with _cred_lock:
+        cached_creds = _cred_cache.get("creds")
+        cached_expiry = _cred_cache.get("expires_at")
+        if cached_creds is not None and cached_expiry is not None and now < cached_expiry:
+            return cached_creds
+    # Lock released — perform the slow credential acquisition without blocking
+    # other callers that also need to check the cache.
 
     settings = get_settings()
     docs_cfg = getattr(settings, "docs", None)
@@ -76,11 +109,17 @@ def _get_credentials() -> Any:
     dwd_subject: str = getattr(docs_cfg, "dwd_subject", "") or ""
 
     if key_path:
-        log.warning("google_docs: credential path=key_file key=%s", key_path)
-        return service_account.Credentials.from_service_account_file(key_path, scopes=_DOCS_SCOPES)
+        log.debug("google_docs: credential path=key_file key=%s", key_path)
+        creds = service_account.Credentials.from_service_account_file(key_path, scopes=_DOCS_SCOPES)
+        with _cred_lock:
+            _cred_cache["creds"] = creds
+            _cred_cache["expires_at"] = now + datetime.timedelta(
+                seconds=_KEYFILE_REFRESH_INTERVAL_SECONDS
+            )
+        return creds
 
     if dwd_subject:
-        log.warning("google_docs: credential path=DWD subject=%s", dwd_subject)
+        log.debug("google_docs: credential path=DWD subject=%s", dwd_subject)
         # Cloud Run DWD: use IAM signBlob API to create a JWT with sub=workspace_user,
         # then exchange it for an access token.  impersonated_credentials.Credentials
         # does NOT honour the `subject` param — the token has no `sub` claim, so the
@@ -97,7 +136,7 @@ def _get_credentials() -> Any:
 
         gcp_project: str = getattr(getattr(settings, "gcp", None), "project_id", "") or ""
         sa_email = f"nexus-prime-sa@{gcp_project}.iam.gserviceaccount.com" if gcp_project else ""
-        log.warning("google_docs: DWD sa_email=%s", sa_email)
+        log.debug("google_docs: DWD sa_email=%s", sa_email)
 
         signer = google_auth_iam.Signer(
             request=request,
@@ -114,11 +153,26 @@ def _get_credentials() -> Any:
         # Eagerly exchange the JWT assertion for an access token so any DWD config
         # failure surfaces immediately with a clear error (not as a 403 from the API).
         creds.refresh(request)
-        log.warning("google_docs: DWD token obtained expiry=%s", creds.expiry)
+        log.debug("google_docs: DWD token obtained expiry=%s", creds.expiry)
+        # Compute expiry then write to cache under lock.
+        if creds.expiry:
+            if creds.expiry.tzinfo is None:
+                expiry_utc = creds.expiry.replace(tzinfo=datetime.UTC)
+            else:
+                expiry_utc = creds.expiry.astimezone(datetime.UTC)
+            cache_expiry = expiry_utc - datetime.timedelta(minutes=5)
+        else:
+            cache_expiry = now + datetime.timedelta(seconds=300)
+        with _cred_lock:
+            _cred_cache["expires_at"] = cache_expiry
+            _cred_cache["creds"] = creds
         return creds
 
-    log.warning("google_docs: credential path=ADC (no dwd_subject configured)")
+    log.debug("google_docs: credential path=ADC (no dwd_subject configured)")
     creds, _ = google.auth.default(scopes=_DOCS_SCOPES)
+    with _cred_lock:
+        _cred_cache["creds"] = creds
+        _cred_cache["expires_at"] = now + datetime.timedelta(seconds=300)
     return creds
 
 
@@ -352,27 +406,31 @@ def list_comments(doc_id: str, project_id: str) -> list[dict[str, Any]]:
 
     try:
         drive_svc = _get_drive_service()
-        response = (
-            drive_svc.comments()
-            .list(
-                fileId=doc_id,
-                fields="comments(id,content,author/displayName,createdTime,resolved)",
-                includeDeleted=False,
-            )
-            .execute()
-        )
 
         results: list[dict[str, Any]] = []
-        for c in response.get("comments", []):
-            results.append(
-                {
-                    "id": c.get("id", ""),
-                    "content": c.get("content", ""),
-                    "author": c.get("author", {}).get("displayName", ""),
-                    "created_at": c.get("createdTime", ""),
-                    "resolved": c.get("resolved", False),
-                }
+        page_token: str | None = None
+        while True:
+            kwargs: dict[str, Any] = dict(
+                fileId=doc_id,
+                fields="nextPageToken,comments(id,content,author/displayName,createdTime,resolved)",
+                includeDeleted=False,
             )
+            if page_token:
+                kwargs["pageToken"] = page_token
+            response = drive_svc.comments().list(**kwargs).execute()
+            for c in response.get("comments", []):
+                results.append(
+                    {
+                        "id": c.get("id", ""),
+                        "content": c.get("content", ""),
+                        "author": c.get("author", {}).get("displayName", ""),
+                        "created_at": c.get("createdTime", ""),
+                        "resolved": c.get("resolved", False),
+                    }
+                )
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                break
         return results
 
     except HttpError as exc:

@@ -52,6 +52,68 @@ Think of Morphic-G AOS like a well-run office with a clear chain of command.
 
 ---
 
+## Path to Fully Operational
+
+**Short answer: Two distinct finish lines with two very different timelines.**
+
+"Fully operational" means different things depending on which part of the system you're measuring. Once n8n enters the picture, the Automation Wish List splits cleanly into two execution tracks that should be treated as independent work streams — not sequential phases.
+
+---
+
+### Track 1 — Business Value Delivery (n8n + Current GAOS)
+
+**Timeline: 2–4 weeks to first 5 live workflows**
+
+About **70% of the Automation Wish List** (`GAOS-n8n-Integration-Spec.md §2.1 — Class 1 flows`) involves no GAOS reasoning whatsoever: trigger fires, data moves, notification sent. Receipt OCR to QuickBooks, late payment reminders, CSAT surveys, employee onboarding, proposal follow-up, CRM sync, meeting transcription, and the full Quote-to-Cash flow all belong to n8n — they require connectors, not cognition, and building them as Python tool wrappers would be engineering waste.
+
+**Pilot is already selected:** Option E (BI5 — Daily Digital Performance Report) pulls GA4 sessions/conversions on a schedule, writes to a rolling KPI Sheet, and sends a daily digest email with trend arrows. That's the validation run for all of n8n's core capabilities: scheduled trigger, Google OAuth connector, Sheets write, email send.
+
+What it takes to close Track 1:
+
+| Step | Work | Effort |
+|------|------|--------|
+| n8n Cloud pilot (Phase A) | Sign up, build BI5, run 14 days — no GCP infra, no Pub/Sub | ~2 days |
+| Self-host on Cloud Run (Phase B) | Cloud SQL (Postgres, ~$7/mo) + Cloud Run + keyless ADC auth | ~1 day |
+| Top 5 Class 1 flows | F1 (receipt OCR), F3 (late payment), M1 (lead intake), H2 (onboarding), A1 (meeting → Jira) | ~1–2 days each |
+
+The remaining **~15% of the Wish List** (Class 2 flows: M1 lead scoring, F2 Quote-to-Cash exceptions, F4 fraud anomaly detection, DG1 GDPR deletion) hand off from n8n to GAOS via a single Pub/Sub publish. GAOS already handles those message types — no orchestrator code changes are required.
+
+**Key boundary:** n8n never reads GAOS BigQuery data, never calls GAOS Cloud Run directly, and never holds GAOS service account credentials. The only permitted cross-boundary action is publishing to the appropriate Pub/Sub topic for Class 2 flows.
+
+---
+
+### Track 2 — GAOS Self-Building Agents
+
+**Timeline: ~6–8 focused dev days**
+
+This is the path to "tell the system to build an agent and it does it." The approval circuit is already fully live end-to-end: an agent can detect a capability gap, write and test Python code, pass both static analysis gates (AST pattern gate + import allowlist), submit an `ApprovalProposal` with SHA-256 pinning, and deploy on approval. The Write-Test-Refine loop exists with iteration/TTL/cost caps. All 6 Tier 2 orchestrators and the Tier 3 sub-agent pattern are deployed. 727 tests pass; email pipeline E2E was verified 2026-04-16 (exactly 1 reply, zero loop).
+
+What's missing is the **scaffolding layer above the approval circuit** — the functions that generate a valid, safety-passing agent skeleton from a goal description before anything else can run.
+
+| Gap | What's absent | Effort |
+|-----|---------------|--------|
+| **Gap 1 — `scaffold_agent()`** | Nothing generates the boilerplate: ADK class, Pydantic input/output schemas, LangGraph state machine with required 7 nodes, identity file. This is the foundational code-gen function — Gaps 2–4 are meaningless without it. | ~2 days |
+| **Gap 2 — Agent Registry** | Nexus-Prime has no machine-readable capability table. It cannot answer "which agent handles this?" dynamically. No Sheets tab, no boot-time read, no dynamic routing — new agents can't self-register. | ~1 day |
+| **Gap 3 — `deploy_agent()`** | No automated path from approved code to: `gcloud run deploy` + IAM grants + Pub/Sub subscription creation + `settings.yaml` update. Every new agent requires manual infra steps today. | ~2 days |
+| **Gap 4 — `AgentCreation` proposal subtype** | The Approval Gate needs a new proposal subtype that wires all three gaps together: scaffold → safety gates → approve → deploy → register. Phase 2.5 Step 7 (`SKILL_REQUEST` approval flow) is partial groundwork for this. | ~1–2 days |
+
+**Order is non-negotiable:** Gap 1 is the foundation. Start nothing else until `scaffold_agent()` produces output that passes both static analysis gates cleanly. Gaps 2–4 can be parallelized once Gap 1 is solid.
+
+**Phase 2.5 Step 7 note:** `ITERATE_PLAN` constraint compaction and `SKILL_REQUEST` approval flow (the one outstanding Phase 2.5 step) is adjacent work — completing it reduces the scope of Gap 4 to a routing shim rather than a full new proposal type.
+
+---
+
+### Summary
+
+| Track | What it unlocks | Timeline |
+|-------|----------------|----------|
+| **Track 1 — n8n pilot** | ~70% of the Wish List running live (Class 1 + Class 2 via Pub/Sub) | 2–4 weeks |
+| **Track 2 — GAOS self-building** | System can generate, test, propose, and deploy new agents autonomously | ~6–8 dev days |
+
+The two tracks are fully independent. Track 1 can start tomorrow with a free n8n Cloud account and delivers business value immediately. Track 2 requires sequential foundational work and is the right next phase after Phase 4 exit criteria are fully closed.
+
+---
+
 ## Specification Files
 
 ### 1. `GAOS-Manager-Spec.md` — The Master Blueprint
