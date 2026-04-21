@@ -16,6 +16,13 @@ Tests:
     test_check_scheduler_jobs_one_paused
     test_check_scheduler_jobs_api_error
 
+  Check 11 — Ollama Tunnel Reachability
+    test_check_ollama_tunnel_200_ok
+    test_check_ollama_tunnel_non_200_fails
+    test_check_ollama_tunnel_connection_error_fails
+    test_check_ollama_tunnel_secret_missing_fails
+    test_check_ollama_tunnel_bypass_header_injected_for_loca_lt
+
   send_doctor_report() + _maybe_send_report()
     test_send_doctor_report_subject_contains_counts
     test_send_doctor_report_body_lists_fail_items
@@ -28,6 +35,7 @@ from __future__ import annotations
 from types import ModuleType
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -178,6 +186,7 @@ class TestCheckSchedulerJobs:
         "gaos-sheets-sync",
         "gaos-gmail-renew-watch",
         "gaos-daily-digest",
+        "gaos-doctor-daily",
     ]
 
     def _make_job(self, job_id: str, state: str = "ENABLED") -> dict:
@@ -201,7 +210,7 @@ class TestCheckSchedulerJobs:
             gd.check_scheduler_jobs()
 
         statuses = [r[1] for r in gd.results]
-        assert len(gd.results) == 5
+        assert len(gd.results) == 6
         assert all(s == "ok" for s in statuses)
 
     def test_check_scheduler_jobs_one_missing(self):
@@ -223,7 +232,7 @@ class TestCheckSchedulerJobs:
         assert len(fail_results) == 1
         assert "gaos-gmail-renew-watch" in fail_results[0][0]
         ok_results = [r for r in gd.results if r[1] == "ok"]
-        assert len(ok_results) == 4
+        assert len(ok_results) == 5
 
     def test_check_scheduler_jobs_one_paused(self):
         """One job PAUSED → WARN (not FAIL) — job exists but won't fire."""
@@ -264,6 +273,121 @@ class TestCheckSchedulerJobs:
         assert len(gd.results) == 1
         assert gd.results[0][1] == "fail"
         assert "403" in gd.results[0][2]
+
+
+# ---------------------------------------------------------------------------
+# Check 11: Ollama Tunnel Reachability
+# ---------------------------------------------------------------------------
+
+
+class TestCheckOllamaTunnel:
+    """Tests for check_ollama_tunnel() in gaos_doctor.py."""
+
+    def _mock_secret(self, host: str) -> MagicMock:
+        """Return a mock SecretManagerServiceClient that yields ``host``."""
+        client = MagicMock()
+        payload = MagicMock()
+        payload.data = host.encode("utf-8")
+        client.access_secret_version.return_value.payload = payload
+        return client
+
+    def test_check_ollama_tunnel_200_ok(self):
+        """Tunnel returns HTTP 200 → single OK result."""
+        import scripts.gaos_doctor as gd
+
+        mock_resp = MagicMock(status_code=200)
+        with (
+            patch(
+                "scripts.gaos_doctor.secretmanager.SecretManagerServiceClient",
+                return_value=self._mock_secret("https://gaos-ollama.loca.lt"),
+            ),
+            patch("scripts.gaos_doctor.httpx.get", return_value=mock_resp),
+        ):
+            gd.check_ollama_tunnel()
+
+        assert len(gd.results) == 1
+        assert gd.results[0][1] == "ok"
+
+    def test_check_ollama_tunnel_non_200_fails(self):
+        """Tunnel returns HTTP 503 → single FAIL result."""
+        import scripts.gaos_doctor as gd
+
+        mock_resp = MagicMock(status_code=503)
+        with (
+            patch(
+                "scripts.gaos_doctor.secretmanager.SecretManagerServiceClient",
+                return_value=self._mock_secret("https://gaos-ollama.loca.lt"),
+            ),
+            patch("scripts.gaos_doctor.httpx.get", return_value=mock_resp),
+        ):
+            gd.check_ollama_tunnel()
+
+        assert len(gd.results) == 1
+        assert gd.results[0][1] == "fail"
+        assert "503" in gd.results[0][2]
+
+    def test_check_ollama_tunnel_connection_error_fails(self):
+        """Network error (timeout/refused) → single FAIL result with error detail."""
+        import scripts.gaos_doctor as gd
+
+        with (
+            patch(
+                "scripts.gaos_doctor.secretmanager.SecretManagerServiceClient",
+                return_value=self._mock_secret("https://gaos-ollama.loca.lt"),
+            ),
+            patch(
+                "scripts.gaos_doctor.httpx.get",
+                side_effect=httpx.ConnectTimeout("ConnectTimeout"),
+            ),
+        ):
+            gd.check_ollama_tunnel()
+
+        assert len(gd.results) == 1
+        assert gd.results[0][1] == "fail"
+        assert "ConnectTimeout" in gd.results[0][2]
+
+    def test_check_ollama_tunnel_secret_missing_fails(self):
+        """Secret Manager raises → single FAIL result, no HTTP call made."""
+        import scripts.gaos_doctor as gd
+
+        bad_client = MagicMock()
+        bad_client.access_secret_version.side_effect = Exception("403 Permission denied")
+
+        with (
+            patch(
+                "scripts.gaos_doctor.secretmanager.SecretManagerServiceClient",
+                return_value=bad_client,
+            ),
+            patch("scripts.gaos_doctor.httpx.get") as mock_http,
+        ):
+            gd.check_ollama_tunnel()
+
+        assert len(gd.results) == 1
+        assert gd.results[0][1] == "fail"
+        assert "secret read failed" in gd.results[0][2]
+        mock_http.assert_not_called()
+
+    def test_check_ollama_tunnel_bypass_header_injected_for_loca_lt(self):
+        """Bypass-Tunnel-Reminder header is sent when host contains .loca.lt."""
+        import scripts.gaos_doctor as gd
+
+        mock_resp = MagicMock(status_code=200)
+        captured_headers: dict = {}
+
+        def _fake_get(url, headers=None, timeout=None):
+            captured_headers.update(headers or {})
+            return mock_resp
+
+        with (
+            patch(
+                "scripts.gaos_doctor.secretmanager.SecretManagerServiceClient",
+                return_value=self._mock_secret("https://gaos-ollama.loca.lt"),
+            ),
+            patch("scripts.gaos_doctor.httpx.get", side_effect=_fake_get),
+        ):
+            gd.check_ollama_tunnel()
+
+        assert captured_headers.get("Bypass-Tunnel-Reminder") == "true"
 
 
 # ---------------------------------------------------------------------------

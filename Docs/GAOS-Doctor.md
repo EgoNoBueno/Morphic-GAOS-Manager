@@ -26,7 +26,8 @@ Exit code 0 = all checks passed (or WARN-only). Exit code 1 = one or more FAIL c
 | 7 | **Monthly Cost (MTD)** | BQ `aos_logs.task_outcomes` — WARN if MTD cost > $5, FAIL if > $10 |
 | 8 | **Error Themes (last 1h)** | Cloud Logging `gaos-agents` ERROR entries — bucketed by Rate Limiting / Auth Failures / Timeouts / Internal; WARN if 1–5 errors, FAIL if > 5 |
 | 9 | **Circuit Breaker States** | BQ `aos_logs.circuit_breaker_events` — WARN for each resource whose last recorded state is OPEN (tool calls to that resource are blocked until cooldown elapses). Gracefully skips if table doesn't yet exist. |
-| 10 | **Cloud Scheduler Job Inventory** | Verifies all 5 expected jobs exist and are not paused: `gaos-archive`, `gaos-daily-sync`, `gaos-sheets-sync`, `gaos-gmail-renew-watch`, `gaos-daily-digest`. FAIL if any are missing; WARN if any are PAUSED. |
+| 10 | **Cloud Scheduler Job Inventory** | Verifies all 6 expected jobs exist and are not paused: `gaos-archive`, `gaos-daily-sync`, `gaos-sheets-sync`, `gaos-gmail-renew-watch`, `gaos-daily-digest`, `gaos-doctor-daily`. FAIL if any are missing; WARN if any are PAUSED. |
+| 11 | **Ollama Tunnel Reachability** | Reads `OLLAMA_HOST` from Secret Manager and probes `{host}/api/tags`. Injects `Bypass-Tunnel-Reminder: true` for `loca.lt` hosts. FAIL if secret is missing/empty, host is unreachable, or returns non-200. Catches the gap where `GAOS-OllamaTunnel` watchdog goes Disabled silently — detected during 2026-04-21 incident. |
 
 ## Prerequisites
 

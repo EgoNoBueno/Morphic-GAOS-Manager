@@ -386,7 +386,7 @@ def check_error_themes() -> None:
 
 def check_circuit_breakers() -> None:
     """Query BQ circuit_breaker_events for any resource whose last state is OPEN."""
-    print("\n[9/10] Circuit Breaker States")
+    print("\n[9/11] Circuit Breaker States")
     try:
         client = _bq.Client(project=PROJECT)
         query = (
@@ -426,12 +426,13 @@ _EXPECTED_SCHEDULER_JOBS: list[str] = [
     "gaos-sheets-sync",
     "gaos-gmail-renew-watch",
     "gaos-daily-digest",
+    "gaos-doctor-daily",
 ]
 
 
 def check_scheduler_jobs() -> None:
     """Verify all expected Cloud Scheduler jobs exist and are not paused."""
-    print("\n[10/10] Cloud Scheduler Jobs")
+    print("\n[10/11] Cloud Scheduler Jobs")
     try:
         from googleapiclient.discovery import build
 
@@ -451,6 +452,48 @@ def check_scheduler_jobs() -> None:
             warn(f"Scheduler: {job_id}", "PAUSED — job will not fire until resumed")
         else:
             check(f"Scheduler: {job_id}", True, existing[job_id].get("state", "ENABLED"))
+
+
+# ── Check 11: Ollama tunnel reachability ─────────────────────────────────────
+
+_OLLAMA_TUNNEL_TIMEOUT: float = 10.0
+
+
+def check_ollama_tunnel() -> None:
+    """Verify the Ollama tunnel URL (OLLAMA_HOST secret) responds to /api/tags.
+
+    Reads OLLAMA_HOST from Secret Manager and sends a GET /api/tags request.
+    If the host is a loca.lt tunnel, injects the ``Bypass-Tunnel-Reminder: true``
+    header to skip the HTML challenge page.  Fails if the host is unreachable,
+    returns a non-200 status, or the secret is missing/empty.
+    """
+    print("\n[11/11] Ollama Tunnel Reachability")
+    try:
+        sm_client = secretmanager.SecretManagerServiceClient()
+        name = f"projects/{PROJECT}/secrets/OLLAMA_HOST/versions/latest"
+        resp = sm_client.access_secret_version(request={"name": name})
+        host = resp.payload.data.decode("utf-8").strip().rstrip("/")
+        if not host:
+            check("Ollama tunnel: OLLAMA_HOST", False, "secret exists but is empty")
+            return
+    except Exception as exc:
+        check("Ollama tunnel: OLLAMA_HOST", False, f"secret read failed: {str(exc)[:80]}")
+        return
+
+    headers: dict[str, str] = {}
+    if ".loca.lt" in host:
+        headers["Bypass-Tunnel-Reminder"] = "true"
+
+    url = f"{host}/api/tags"
+    try:
+        r = httpx.get(url, headers=headers, timeout=_OLLAMA_TUNNEL_TIMEOUT)
+        check(
+            "Ollama tunnel: /api/tags",
+            r.status_code == 200,
+            f"HTTP {r.status_code} — {host}",
+        )
+    except Exception as exc:
+        check("Ollama tunnel: /api/tags", False, f"{host} — {str(exc)[:80]}")
 
 
 # ── Email report ──────────────────────────────────────────────────────────────
@@ -519,7 +562,7 @@ def send_doctor_report(n_ok: int, n_warn: int, n_fail: int) -> None:
 
 
 def main() -> int:
-    """Run all 10 health check sections and print a summary."""
+    """Run all 11 health check sections and print a summary."""
     print("=" * 60)
     print("  GAOS-Doctor — System Health Check")
     print(f"  Project: {PROJECT}")
@@ -535,6 +578,7 @@ def main() -> int:
     check_error_themes()
     check_circuit_breakers()
     check_scheduler_jobs()
+    check_ollama_tunnel()
 
     n_ok = sum(1 for _, s, _ in results if s == "ok")
     n_warn = sum(1 for _, s, _ in results if s == "warn")

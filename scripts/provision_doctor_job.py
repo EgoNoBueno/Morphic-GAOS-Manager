@@ -4,7 +4,7 @@ Cloud Run Job and its daily Cloud Scheduler trigger.
 
 Components created (or patched if they already exist):
   Cloud Run Job:       gaos-doctor
-  Cloud Scheduler job: gaos-doctor-daily  → 7:00 AM PT daily
+  Cloud Scheduler job: gaos-doctor-daily  → 4x/day (every 6 hours) PT
 
 The Cloud Scheduler job calls the Cloud Run Jobs v2 API to trigger a run:
   POST https://run.googleapis.com/v2/projects/{PROJECT}/locations/{REGION}/jobs/gaos-doctor:run
@@ -48,7 +48,7 @@ DOCTOR_IMAGE_TEMPLATE = (
 )
 JOB_NAME = "gaos-doctor"
 SCHEDULER_JOB_NAME = "gaos-doctor-daily"
-SCHEDULE = "0 7 * * *"  # 7:00 AM PT (America/Los_Angeles handles DST)
+SCHEDULE = "0 */6 * * *"  # 4x/day: midnight, 6 AM, noon, 6 PM PT (America/Los_Angeles handles DST)
 JOB_TIMEOUT = "600s"  # 10 minutes max per run
 SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 
@@ -139,7 +139,6 @@ def upsert_cloud_run_job(
         try:
             run_client.projects().locations().jobs().patch(
                 name=full_name,
-                updateMask="template",
                 body={**job_body, "name": full_name},
             ).execute()
             print(f"  PATCHED  Cloud Run Job: {JOB_NAME}")
@@ -239,7 +238,7 @@ def upsert_scheduler_job(
 
     body = {
         "name": full_name,
-        "description": "Daily GAOS-Doctor health check — 7:00 AM PT (Rule 29)",
+        "description": "GAOS-Doctor health check — every 6 hours (Rule 29)",
         "schedule": SCHEDULE,
         "timeZone": TIMEZONE,
         "httpTarget": {

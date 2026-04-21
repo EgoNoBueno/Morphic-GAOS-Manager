@@ -3,7 +3,37 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
-## 2026-04-21T15:21-07:00 — Completed: Doc updates for BQ log pipeline + cost tracking
+## 2026-04-21T15:46-07:00 — Completed: Test + script cleanup pass (verify-and-fix series)
+
+### What was done
+Series of targeted verify-then-fix operations across test and script files. All findings confirmed against current code before editing; no speculative changes.
+
+1. **`tests/test_observability_loop.py` — `_make_gcp_mocks` refactor**
+   Added optional `prebuilt_subscription: MagicMock | None = None` parameter. Tests that need a real `PushConfig` (e.g., OIDC token preservation test) now pass a pre-built `sub` object instead of re-creating all 13 lines of Cloud Run mock wiring inline. Other 5 callers unchanged. 6/6 tests green.
+
+2. **`tests/test_start_ollama_tunnel.py` — dead context-manager lines removed**
+   Lines setting `__enter__`/`__exit__` on `mock_sub.Popen.return_value` were immediately overwritten by `mock_sub.Popen.return_value = proc`, making them unreachable dead code. Removed both lines. 7/7 tests green.
+
+3. **`tests/test_start_ollama_tunnel.py` — unused `_patch_env` helper removed**
+   `_patch_env(self, proc)` was defined but never called anywhere in the file. Its return value (a tuple containing a `patch.object` or `None`) was not a usable context manager anyway. Deleted the entire method. 7/7 tests green.
+
+4. **`scripts/start_ollama_tunnel.py` — idempotent `sys.path.insert` guard**
+   The `sys.path.insert(0, ...)` call inside the alert email helper ran unconditionally, potentially prepending the same path on repeated invocations. Changed to compute `_parent` first and only insert if `_parent not in sys.path`.
+
+### Files changed
+- `tests/test_observability_loop.py`
+- `tests/test_start_ollama_tunnel.py`
+- `scripts/start_ollama_tunnel.py`
+
+### Tests run
+- `pytest tests/test_observability_loop.py` → 6 passed
+- `pytest tests/test_start_ollama_tunnel.py` → 7 passed (after each fix)
+
+### What's next
+- Run full `pytest tests/ -q --tb=short` to confirm suite green
+- Commit all pending fixes (this session + prior uncommitted: `_check_ollama_queue.py`, `_check_log_range.py`, `_trace_email_pipeline.py`, `_check_email_sent.py`, `gaos_doctor.py`, `provision_doctor_job.py`)
+
+
 
 ### What was done
 Updated all 5 affected spec docs per Rule 13 to reflect the three changes shipped in this session (BQ log sink pipeline, real cost tracking, `handle_archive()` BQ data source).

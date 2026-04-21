@@ -412,7 +412,7 @@ def _run_tunnel_once(
     no_secret: bool,
     project: str,
     health_interval: float = 30.0,
-) -> None:
+) -> bool:
     """Spawn one localtunnel process, push the URL, drain output until it dies.
 
     A background health-check thread polls Ollama every *health_interval* seconds.
@@ -424,6 +424,14 @@ def _run_tunnel_once(
         no_secret:       When True, skip the Secret Manager update.
         project:         GCP project id for the secret update.
         health_interval: Seconds between /api/tags health polls (default 30).
+
+    Returns:
+        True  — the tunnel ran and the process exited naturally (e.g. loca.lt
+                server-side disconnect). The caller may reset its failure streak.
+        False — the health-check thread killed the process due to two consecutive
+                /api/tags failures (flapping / crash-loop). The caller must *not*
+                reset consecutive_failures or alert_sent so that sustained
+                flapping eventually triggers the alert email.
 
     Raises:
         FileNotFoundError: If npx is not on PATH.
@@ -499,13 +507,16 @@ def _run_tunnel_once(
         "_call_model_ollama invocation.",
         tunnel_url,
     )
-
-    # ── Health-check thread ────────────────────────────────────────────────
+    # ── Health-check thread ────────────────────────────────────────────────────
     # Polls /api/tags every health_interval seconds. Two consecutive failures
     # kill the process so the outer watchdog loop restarts it immediately.
     # This catches the silent 502 / Bad Gateway state localtunnel enters without
     # crashing the process.
     stop_health = threading.Event()
+    # Tracks whether *this* thread killed the process — used to distinguish
+    # a health-kill (flapping) from a natural process exit so the caller can
+    # decide whether to reset consecutive_failures and alert_sent.
+    health_killed = threading.Event()
 
     def _health_loop() -> None:
         consecutive_failures = 0
@@ -529,6 +540,7 @@ def _run_tunnel_once(
                     log.error(
                         "[health] 2 consecutive failures — killing tunnel process to force restart."
                     )
+                    health_killed.set()  # signal to _run_tunnel_once that this was a health-kill
                     _kill_tree(proc.pid)
                     return
 
@@ -544,6 +556,69 @@ def _run_tunnel_once(
         stop_health.set()
         _kill_tree(proc.pid)  # ensure entire cmd.exe → node.exe chain is dead
     log.warning("localtunnel process exited with code %d.", proc.returncode)
+    # Return False when the health thread killed the process — the caller must
+    # not reset consecutive_failures/alert_sent in that case so flapping
+    # accumulates toward the alert threshold.
+    return not health_killed.is_set()
+
+
+def _send_tunnel_alert(project: str, consecutive_failures: int, subdomain: str) -> None:
+    """Send an alert email when the tunnel watchdog cannot recover after repeated failures.
+
+    Called from the main retry loop once ``--max-alert-retries`` consecutive
+    RuntimeErrors have occurred. Uses ``tools.gmail.send_email`` with GAOS
+    credentials; silently no-ops if the tools are unavailable so the watchdog
+    keeps running regardless.
+
+    Args:
+        project:             GCP project id for Secret Manager and Gmail creds.
+        consecutive_failures: Number of consecutive failures that triggered this alert.
+        subdomain:           The loca.lt subdomain being attempted.
+    """
+    try:
+        import pathlib
+
+        _parent = str(pathlib.Path(__file__).parent.parent)
+        if _parent not in sys.path:
+            sys.path.insert(0, _parent)
+        from config import get_settings  # noqa: PLC0415
+        from tools.gmail import send_email  # noqa: PLC0415
+
+        settings = get_settings()
+        to = settings.gmail.alert_address
+        tunnel_url = f"https://{subdomain}.loca.lt"
+        subject = (
+            f"[GAOS] Ollama tunnel DOWN — {subdomain}.loca.lt unreachable "
+            f"after {consecutive_failures} attempts"
+        )
+        body = (
+            f"The Ollama tunnel watchdog (start_ollama_tunnel.py) has failed to restore\n"
+            f"the loca.lt tunnel after {consecutive_failures} consecutive launch failures.\n\n"
+            f"  Tunnel URL: {tunnel_url}\n"
+            f"  Project:    {project}\n\n"
+            f"Manual intervention required:\n"
+            f"  1. Confirm Ollama is running locally on port 11434\n"
+            f"  2. Confirm Node.js / npx is available on PATH\n"
+            f"  3. Restart the GAOS-OllamaTunnel scheduled task (Task Scheduler)\n"
+            f"     or run:  python scripts/start_ollama_tunnel.py\n\n"
+            f"While the tunnel is down, GAOS email replies will fail silently.\n"
+            f"The watchdog will continue retrying — another alert will not be sent\n"
+            f"until the tunnel recovers and fails again."
+        )
+        send_email(
+            project_id=project,
+            to=to,
+            subject=subject,
+            body=body,
+            from_addr=settings.gmail.sender_address,
+        )
+        log.warning(
+            "Tunnel alert email sent to %s after %d consecutive failures.",
+            to,
+            consecutive_failures,
+        )
+    except Exception as exc:
+        log.error("Could not send tunnel alert email: %s", exc)
 
 
 def main() -> int:
@@ -607,6 +682,14 @@ def main() -> int:
         help="Stop a running watchdog: kills the watchdog process, all child node.exe workers, "
         "and removes the PID lock file. Safe to run from any terminal.",
     )
+    p.add_argument(
+        "--max-alert-retries",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Send an alert email after this many consecutive tunnel launch failures (default: 5). "
+        "The alert fires once and resets when the tunnel successfully runs.",
+    )
     args = p.parse_args()
     _configure_logging(args.log_file)
 
@@ -633,12 +716,11 @@ def main() -> int:
         "--subdomain",
         args.subdomain,
     ]
-    log.info(
-        "Requesting subdomain: %s (URL will be https://%s.loca.lt)", args.subdomain, args.subdomain
-    )
 
     try:
         attempt = 0
+        consecutive_failures = 0
+        alert_sent = False
         while True:
             attempt += 1
             log.info("--- Tunnel attempt %d ---", attempt)
@@ -647,12 +729,33 @@ def main() -> int:
                 # before trying to reclaim the preferred subdomain.
                 _kill_orphaned_localtunnel_nodes()
             try:
-                _run_tunnel_once(cmd, args.no_secret, args.project, args.health_interval)
+                clean_exit = _run_tunnel_once(cmd, args.no_secret, args.project, args.health_interval)
+                if clean_exit:
+                    # Tunnel ran and exited naturally — reset failure streak.
+                    consecutive_failures = 0
+                    alert_sent = False
+                else:
+                    # Health thread killed the process (flapping / crash-loop).
+                    # Accumulate consecutive_failures so the alert fires if
+                    # the flapping continues across --max-alert-retries attempts.
+                    consecutive_failures += 1
+                    log.warning(
+                        "Health-kill exit — consecutive_failures now %d (alert threshold %d).",
+                        consecutive_failures,
+                        args.max_alert_retries,
+                    )
+                    if consecutive_failures >= args.max_alert_retries and not alert_sent:
+                        _send_tunnel_alert(args.project, consecutive_failures, args.subdomain)
+                        alert_sent = True
             except FileNotFoundError:
                 log.error("npx not found. Install Node.js from https://nodejs.org")
                 return 1
             except RuntimeError as exc:
                 log.error("Tunnel error: %s", exc)
+                consecutive_failures += 1
+                if consecutive_failures >= args.max_alert_retries and not alert_sent:
+                    _send_tunnel_alert(args.project, consecutive_failures, args.subdomain)
+                    alert_sent = True
 
             if args.once:
                 log.info("--once flag set — not restarting.")

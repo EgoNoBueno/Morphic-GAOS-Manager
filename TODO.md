@@ -7,7 +7,7 @@ See `Docs/Automation-Wish-List.md` for the full Wish List and item details.
 
 ## Phase 0 — Unblock (this week)
 
-- [ ] **Close Phase 4** — Check GCP Billing for the 7-day cost window and check off `GAOS-Deploy-Spec.md §4e`. The only remaining Phase 4 exit-criteria box.
+- [x] **Close Phase 4** — ✅ 2026-04-20 — §4e reviewed: $1.83 net / $82.43 gross for Apr 1–20. Credits offset Cloud Run ($77.20) and infra costs. Gross run rate ~$115/month Cloud Run alone — elevated by incident storms. See §4e warning in GAOS-Deploy-Spec.md.
 - [ ] **n8n pilot (BI5)** — Create free n8n Cloud account. Build Option E: GA4 → KPI Sheet → daily digest email. Run for 14 days. This validates n8n before it is used for any channel automation. See `GAOS-n8n-Integration-Spec.md §5 Option E`.
 - [ ] **Add Google Search secrets** — Create `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_CX` in Secret Manager (`morphic-gaos-prod`). Required before any Scout `RESEARCH_MANDATE` (MC1+MC2) can run. Get the Custom Search Engine ID from [cse.google.com](https://cse.google.com) and the API key from Google Cloud Console → Credentials.
 
@@ -28,6 +28,7 @@ and the Doctor/observability improvements below.
 **GCP provisioning steps (run once, requires ADC):**
 - [x] **Run `scripts/create_staging_tables.py`** — Creates 6 tables in `morphic-gaos-prod.aos_logs`: `staging_approvals`, `staging_logs`, `staging_errors`, `staging_pending_knowledge`, `api_call_log`, `circuit_breaker_events`. Idempotent. ✅ 2026-04-20 — all 6 tables ready.
 - [x] **Run `scripts/provision_schedulers.py`** — Provisions all 5 jobs: `gaos-archive`, `gaos-daily-sync`, `gaos-sheets-sync`, `gaos-gmail-renew-watch`, `gaos-daily-digest`. Idempotent. Resolves Gmail watch auto-renewal (HIGHEST PRIORITY). ✅ 2026-04-20 — all 5 PATCHED to current nexus-prime URL.
+- [x] **Run `scripts/provision_doctor_job.py`** — Creates the `gaos-doctor` Cloud Run Job and provisions the `gaos-doctor-daily` Cloud Scheduler job (triggers at 7:00 AM PT). Required before Check 10 passes in production. Idempotent. ✅ 2026-04-20 — job CREATED, IAM bound, scheduler CREATED.
 
 **Still needs code:**
 - [x] **GAOS-Doctor daily cron + email report** — Run as a **Cloud Run Job** (not `POST /doctor` on Nexus-Prime) so the health check works even when all 7 orchestrators are down. Cloud Scheduler triggers the Job at `0 7 * * *` (7:00 AM PT). Steps: (1) add a `__main__` entry point to `scripts/gaos_doctor.py` that runs all 8 checks, collects results, and exits non-zero on any FAIL; (2) add `send_doctor_report()` that formats the pass/warn/fail summary as a plain-text email and sends via `tools/gmail.py` `send_email()`; (3) add a `gaos-doctor` Cloud Run Job definition (`Dockerfile.doctor` or reuse the main image with `--command`); (4) provision a `gaos-doctor-daily` Cloud Scheduler job targeting the Cloud Run Job (not a Cloud Run service URL); (5) add tests to `tests/test_gaos_doctor.py`.
