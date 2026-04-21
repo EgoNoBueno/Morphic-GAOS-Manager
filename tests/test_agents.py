@@ -738,11 +738,15 @@ class TestGeminiAIStudio:
         cb_reset("agents", "gemini/gemini-2.5-pro")
         cb_reset("agents", "gemini-api-key")
 
-    def _make_mock_response(self, text: str = "ok"):
+    def _make_mock_response(
+        self, text: str = "ok", input_tokens: int = 100, output_tokens: int = 50
+    ):
         mock_resp = MagicMock()
         mock_resp.text = text
         mock_resp.usage_metadata = MagicMock()
-        mock_resp.usage_metadata.total_token_count = 42
+        mock_resp.usage_metadata.prompt_token_count = input_tokens
+        mock_resp.usage_metadata.candidates_token_count = output_tokens
+        mock_resp.usage_metadata.total_token_count = input_tokens + output_tokens
         return mock_resp
 
     def test_client_initialised_with_api_key_only(self):
@@ -774,18 +778,22 @@ class TestGeminiAIStudio:
         assert "project" not in kwargs, "project must not be passed to genai.Client"
         assert "location" not in kwargs, "location must not be passed to genai.Client"
 
-    def test_cost_usd_is_always_zero(self):
-        """AI Studio free tier — cost_usd must be 0.0 regardless of token count."""
+    def test_cost_usd_computed_from_tokens(self):
+        """cost_usd is calculated from prompt+candidates token counts using settings pricing."""
         from agents import _call_model
 
         with patch("google.genai.Client") as mock_client_cls:
             mock_client = MagicMock()
-            mock_client.models.generate_content.return_value = self._make_mock_response()
+            mock_client.models.generate_content.return_value = self._make_mock_response(
+                input_tokens=1000, output_tokens=500
+            )
             mock_client_cls.return_value = mock_client
             with patch("tools.secrets.get_secret", return_value="test-api-key"):
                 result = _call_model("prompt", model="gemini-2.5-flash")
 
-        assert result.cost_usd == 0.0
+        # 1000 * $0.15/M input + 500 * $0.60/M output = $0.00015 + $0.0003 = $0.00045
+        assert result.cost_usd == pytest.approx(0.00045, rel=1e-3)
+        assert result.cost_usd > 0.0
 
     def test_tokens_used_is_tracked(self):
         """tokens_used must reflect total_token_count from usage_metadata."""
@@ -793,7 +801,9 @@ class TestGeminiAIStudio:
 
         with patch("google.genai.Client") as mock_client_cls:
             mock_client = MagicMock()
-            mock_client.models.generate_content.return_value = self._make_mock_response()
+            mock_client.models.generate_content.return_value = self._make_mock_response(
+                input_tokens=30, output_tokens=12
+            )
             mock_client_cls.return_value = mock_client
             with patch("tools.secrets.get_secret", return_value="test-api-key"):
                 result = _call_model("prompt", model="gemini-2.5-flash")

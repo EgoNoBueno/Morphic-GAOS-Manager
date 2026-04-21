@@ -37,6 +37,12 @@ class ModelAliases(BaseModel):
     LOCAL_MODEL_TIMEOUT_SECONDS: int = 2
     TOKEN_WARNING_THRESHOLD: int = 8000  # Single call WARNING threshold
     TOKEN_HOURLY_LIMIT: int = 100000  # Hourly runaway guard limit
+    # Pricing per 1M tokens (USD) — used to compute cost_usd from token counts.
+    # Update these when switching model versions or moving to a paid tier.
+    FAST_MODEL_INPUT_PRICE_PER_M: float = 0.15
+    FAST_MODEL_OUTPUT_PRICE_PER_M: float = 0.60
+    DEEP_MODEL_INPUT_PRICE_PER_M: float = 1.25
+    DEEP_MODEL_OUTPUT_PRICE_PER_M: float = 10.00
 
 
 class MemoryBankConfig(BaseModel):

@@ -394,8 +394,8 @@ def _call_model_gemini(
                        request is sent as a multimodal image+text payload.
 
     Returns:
-        ModelResponse with text, cost_usd=0.0 (AI Studio free tier), and
-        tokens_used for usage monitoring.
+        ModelResponse with text, cost_usd computed from token counts using
+        settings.models pricing fields, and tokens_used for usage monitoring.
 
     Raises:
         RuntimeError: If GEMINI_API_KEY cannot be retrieved from Secret Manager.
@@ -486,7 +486,20 @@ def _call_model_gemini(
     text = response.text or ""
 
     usage = getattr(response, "usage_metadata", None)
-    tokens_used = int(getattr(usage, "total_token_count", 0) or 0)
+    input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
+    output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
+    tokens_used = int(getattr(usage, "total_token_count", 0) or 0) or (input_tokens + output_tokens)
+
+    # Compute estimated cost from token counts using configured per-model pricing.
+    # On AI Studio free tier actual spend is $0, but this tracks equivalent cost
+    # for capacity planning and the Grafana cost panels.
+    if model == settings.models.DEEP_MODEL:
+        input_price = settings.models.DEEP_MODEL_INPUT_PRICE_PER_M
+        output_price = settings.models.DEEP_MODEL_OUTPUT_PRICE_PER_M
+    else:
+        input_price = settings.models.FAST_MODEL_INPUT_PRICE_PER_M
+        output_price = settings.models.FAST_MODEL_OUTPUT_PRICE_PER_M
+    cost_usd = (input_tokens * input_price + output_tokens * output_price) / 1_000_000
 
     parsed: dict = {}
     if parse_json and text:
@@ -497,7 +510,7 @@ def _call_model_gemini(
         except (json.JSONDecodeError, ValueError):
             parsed = {}
 
-    return ModelResponse(text=text, cost_usd=0.0, tokens_used=tokens_used, data=parsed)
+    return ModelResponse(text=text, cost_usd=cost_usd, tokens_used=tokens_used, data=parsed)
 
 
 # ── Code safety gate ──────────────────────────────────────────────────────────
