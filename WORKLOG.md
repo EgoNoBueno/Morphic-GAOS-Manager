@@ -3,7 +3,27 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
-## 2026-04-21T14:47-07:00 — Completed: BQ Log Sink pipeline wired end-to-end
+## 2026-04-21T15:21-07:00 — Completed: Doc updates for BQ log pipeline + cost tracking
+
+### What was done
+Updated all 5 affected spec docs per Rule 13 to reflect the three changes shipped in this session (BQ log sink pipeline, real cost tracking, `handle_archive()` BQ data source).
+
+### Files changed
+- `Docs/GAOS-Tools-Spec.md` — Updated `ModelResponse.cost_usd` field description: no longer "always 0.0", now documents computed token-based pricing
+- `Docs/GAOS-Deploy-Spec.md` — Added §8.1 (new section) documenting `gaos-logs-bq-sink` provisioning commands, IAM bindings, and supersession of `staging_logs`/`staging_errors`; added 4 pricing keys to `settings.yaml` reference block; added `gaos_agents` to BQ table inventory
+- `Docs/GAOS-Agent-Spec.md` — Updated §2.5 Cost Tracking: Gemini models now return real computed `cost_usd` from token counts × pricing config; Ollama still 0.0
+- `Docs/GAOS-Manager-Spec.md` — Updated Gemini pricing in §9.4 cost table to current rates ($0.15/$0.60 flash, $1.25/$10.00 pro); updated archive job Steps 1 and 3.5 to document BQ sink as data source; added warning callout that Sheets Logs/Error Logs tabs are permanently empty
+- `Docs/GAOS-CEO-Dashboard.md` — Updated Live Log Feed and Live Error Feed panels (data source, freshness, removed `error_type` column note); updated data table reference removing `staging_logs`/`staging_errors`; updated update cadence table; added cost data note to Cost This Week panel
+
+### What was learned
+No new gotchas — this was a documentation-only session completing Rule 13 obligations for the prior implementation work.
+
+### What's next
+- Monitor Grafana — confirm Live Log/Error feeds show live data (not stale March rows)
+- Confirm nightly archive writes rows to BQ next run (2 AM)
+- Confirm Cost This Week panel shows non-zero values as tasks complete
+
+
 
 ### What was done
 Completed the two pending items from the previous session: Grafana Live Log Feed + Live Error Feed panels now query the `gaos_agents` BQ sink table, and `handle_archive()` no longer reads from the empty Sheets Logs tab.

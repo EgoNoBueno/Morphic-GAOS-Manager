@@ -74,6 +74,8 @@ The dashboard is organised top-to-bottom into five logical sections (business KP
 | **Tasks Completed (24h)** | Count of rows written to `task_outcomes` in the last 24 hours | `aos_logs.task_outcomes` | Blue (no alert threshold) |
 | **Cost This Week (USD)** | `SUM(cost_usd)` since the start of the current ISO week (Monday) | `aos_logs.task_outcomes` | Green (no alert threshold) |
 
+> **Cost data note:** `cost_usd` values in `task_outcomes` reflect real computed costs from `prompt_token_count` × `FAST_MODEL_INPUT_PRICE_PER_M` + `candidates_token_count` × `FAST_MODEL_OUTPUT_PRICE_PER_M` (and Pro pricing for `DEEP_MODEL` calls). On the AI Studio free tier actual billing is $0, but the cost is tracked for capacity planning. Values are non-zero starting from the 2026-04-21 deployment.
+
 > **Note:** "Approval Queue — Oldest Age" uses `PARSE_TIMESTAMP` on a string-encoded ISO-8601 timestamp column. The stat turns red at 4 hours — meaning a proposal has been waiting for human action longer than a full work block.
 
 ---
@@ -138,17 +140,21 @@ Count of rows in `staging_pending_knowledge` where `status` is `'pending'` or em
 
 **BQ table:** `morphic-gaos-prod.aos_logs.staging_pending_knowledge`
 
-#### Live Log Feed — last 50 (≤5 min delay) — table
+#### Live Log Feed — last 50 (real-time) — table
 
-Most recent 50 entries from the staging logs table: `timestamp`, `agent_id`, `level`, `message`.
+Most recent 50 entries from the Cloud Logging sink table: `timestamp`, `agent_id`, `severity` (as `level`), `message`. Populated by every `_log_cloud()` call — reflects live agent activity with ~30-second Grafana poll lag.
 
-**BQ table:** `morphic-gaos-prod.aos_logs.staging_logs`
+**BQ table:** `morphic-gaos-prod.aos_logs.gaos_agents` (date-partitioned Cloud Logging export, auto-created by `gaos-logs-bq-sink`)
 
-#### Live Error Feed — last 20 (≤5 min delay) — table
+> **Note:** `staging_logs` (previously used here) was always empty because `_log_cloud()` never writes to Sheets. This panel now reads from the live BQ sink.
 
-Most recent 20 error entries: `timestamp`, `agent_id`, `error_type`, `message`.
+#### Live Error Feed — last 20 (real-time) — table
 
-**BQ table:** `morphic-gaos-prod.aos_logs.staging_errors`
+Most recent 20 entries with severity `ERROR`, `CRITICAL`, `ALERT`, or `EMERGENCY`: `timestamp`, `agent_id`, `severity` (as `level`), `message`.
+
+**BQ table:** `morphic-gaos-prod.aos_logs.gaos_agents` filtered by `severity IN ('ERROR','CRITICAL','ALERT','EMERGENCY')`
+
+> **Note:** `staging_errors` (previously used here) was always empty. The `error_type` column no longer appears in this panel — the Cloud Logging sink schema does not include it.
 
 ---
 
@@ -227,11 +233,13 @@ All panels use a single Grafana data source:
 | Data path | How it gets there | Lag |
 |-----------|------------------|-----|
 | `status_snapshots`, `approval_history`, `task_outcomes`, `evolution_tasks`, `api_call_log`, `circuit_breaker_events` | Agents write directly to BigQuery via `tools/bigquery.py` | Near real-time (seconds) |
-| `staging_approvals`, `staging_pending_knowledge`, `staging_logs`, `staging_errors` | Periodic sync from Google Sheets (Approval and Knowledge queues) | ≤5 minutes |
+| `staging_approvals`, `staging_pending_knowledge` | Periodic sync from Google Sheets (Approval and Knowledge queues) | ≤5 minutes |
+| `gaos_agents` | Cloud Logging BQ sink (`gaos-logs-bq-sink`) — exports every `_log_cloud()` call directly from Cloud Logging | ~seconds (no Sheets sync hop) |
 | Grafana browser refresh | Dashboard `"refresh": "30s"` — Grafana re-runs all BQ queries every 30 seconds | 30 s polling cycle |
 
 **Effective freshness for most panels:** 30–60 seconds.
-**Effective freshness for staging panels:** up to 5 minutes 30 seconds (Sheets sync lag + one Grafana cycle).
+**Effective freshness for staging panels (approvals/knowledge):** up to 5 minutes 30 seconds (Sheets sync lag + one Grafana cycle).
+**Effective freshness for log panels (Live Log Feed, Live Error Feed):** 30–60 seconds — these read directly from the BQ sink, no Sheets hop.
 
 ---
 
@@ -245,8 +253,9 @@ All panels use a single Grafana data source:
 | `aos_logs.evolution_tasks` | Evolution Tasks by Agent (30 Days) |
 | `aos_logs.staging_approvals` | Live Approval Queue · Pending Approvals (live) |
 | `aos_logs.staging_pending_knowledge` | Pending Knowledge (live) |
-| `aos_logs.staging_logs` | Live Log Feed |
-| `aos_logs.staging_errors` | Live Error Feed |
+| `aos_logs.gaos_agents` | Live Log Feed · Live Error Feed |
+| ~~`aos_logs.staging_logs`~~ | *(superseded by `gaos_agents` — always empty, not read by any panel)* |
+| ~~`aos_logs.staging_errors`~~ | *(superseded by `gaos_agents` — always empty, not read by any panel)* |
 | `aos_logs.api_call_log` | Gmail Watch Expiry · API Health · API Calls Success vs Failure |
 | `aos_logs.circuit_breaker_events` | Circuit Breakers Open Count · Circuit Breaker Events |
 

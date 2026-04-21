@@ -890,7 +890,7 @@ print('Dataset ready')
 "
 ```
 
-Then create all 7 tables:
+Then create all 7 tables (the `gaos_agents` table is auto-created by the BQ log sink — see §Log Sink below):
 
 | Table | Partition | TTL | Purpose |
 |-------|-----------|-----|---------|
@@ -901,6 +901,7 @@ Then create all 7 tables:
 | `memory_entries` | — | indefinite | Structured metadata for Vertex AI RAG entries |
 | `monologue_frames` | `timestamp` | 90 days | Think node reasoning traces (`GAOS-Persona-Spec.md` §4) |
 | `agent_checkpoints` | `timestamp` | 30 days | Phoenix recovery — SHA-256-pinned agent state snapshots (`tools/phoenix.py`) |
+| `gaos_agents` | `timestamp` (date-partitioned, auto) | 7 days (Log Explorer retention) | **Auto-created by Cloud Logging BQ sink** — structured `_log_cloud()` entries exported from Cloud Logging. Primary source for Grafana Live Log/Error feeds and `handle_archive()` distillation. Do not create manually. |
 
 The `memory_entries` table holds the structured `MemoryEntry` metadata (agent_id, knowledge_type,
 active flag, version, etc.) so that `load_domain_memory()` can filter by agent and active status
@@ -1146,6 +1147,10 @@ models:
   LOCAL_MODEL_TIMEOUT_SECONDS: 90
   FAST_MODEL: "gemini-2.5-flash"
   DEEP_MODEL: "gemini-2.5-pro"
+  FAST_MODEL_INPUT_PRICE_PER_M: 0.15    # USD per 1M input tokens — update when switching model versions
+  FAST_MODEL_OUTPUT_PRICE_PER_M: 0.60   # USD per 1M output tokens
+  DEEP_MODEL_INPUT_PRICE_PER_M: 1.25    # USD per 1M input tokens
+  DEEP_MODEL_OUTPUT_PRICE_PER_M: 10.00  # USD per 1M output tokens
 
 pubsub:
   all_topics:                   # Nexus-Prime validates these exist at boot
@@ -1188,6 +1193,56 @@ docs:
   knowledge_atlas_doc_id: ""   # Google Doc ID for the Knowledge Atlas
                                # See §17 for one-time setup steps.
 ```
+
+---
+
+## 8.1 Cloud Logging → BigQuery Sink (`gaos-logs-bq-sink`)
+
+The `gaos_agents` BQ table is auto-created by a Cloud Logging export sink — do not create it manually.
+
+### What it does
+
+Every `_log_cloud()` call writes a structured entry to Cloud Logging under log name `projects/morphic-gaos-prod/logs/gaos-agents`. The sink exports those entries to `aos_logs.gaos_agents` as a date-partitioned BigQuery table. Grafana's Live Log Feed and Live Error Feed panels read from this table directly, and `handle_archive()` queries it for distillation and weekly summaries.
+
+### One-time provisioning
+
+```powershell
+# Create the sink (run once per project)
+gcloud logging sinks create gaos-logs-bq-sink `
+    "bigquery.googleapis.com/projects/morphic-gaos-prod/datasets/aos_logs" `
+    --project=morphic-gaos-prod `
+    --log-filter='resource.type="cloud_run_revision" AND logName="projects/morphic-gaos-prod/logs/gaos-agents"' `
+    --use-partitioned-tables
+
+# Grant the sink's service account write access to the dataset
+# (get the SA email from the sink describe output)
+$SINK_SA = $(gcloud logging sinks describe gaos-logs-bq-sink `
+    --project=morphic-gaos-prod `
+    --format="value(writerIdentity)")
+
+gcloud projects add-iam-policy-binding morphic-gaos-prod `
+    --member="$SINK_SA" `
+    --role="roles/bigquery.dataEditor"
+```
+
+### Verify
+
+```powershell
+gcloud logging sinks describe gaos-logs-bq-sink --project=morphic-gaos-prod
+# Confirm: destination matches aos_logs dataset, writerIdentity is populated
+```
+
+After the first `_log_cloud()` call, BigQuery auto-creates `aos_logs.gaos_agents` with a `timestamp` partition column. No manual schema creation required.
+
+### IAM summary
+
+| SA | Role | Why |
+|----|------|-----|
+| `service-975461050387@gcp-sa-logging.iam.gserviceaccount.com` | `roles/bigquery.dataEditor` | Sink writer — writes log entries to `gaos_agents` |
+| `grafana-sa` | `roles/bigquery.dataViewer` (already granted) | Grafana reads `gaos_agents` for log panels |
+| `nexus-prime-sa` | `roles/bigquery.jobUser` (already granted) | `handle_archive()` queries `gaos_agents` |
+
+> ⚠️ **`staging_logs` and `staging_errors` superseded:** These two tables (populated by the gaos-sheets-sync job from the Sheets Logs/Error Logs tabs) always contained 0 rows because `_log_cloud()` never writes to Sheets — it writes to Cloud Logging only. The Grafana panels that previously used them have been migrated to `gaos_agents`. The `staging_logs` and `staging_errors` tables remain in the dataset but are no longer read by any panel.
 
 ---
 
@@ -1487,7 +1542,8 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 
 ### 4e — Cost + Security Verification
 
-- [ ] Cloud Billing dashboard confirms low operating expenses after first 7-day period at normal load *(pending — check expected ~2026-04-10)*
+- [x] Cloud Billing dashboard reviewed — **$1.83 net charged for Apr 1–20, 2026** (only Gemini API). Gross infrastructure spend was **$82.43** ($77.20 Cloud Run + $2.05 AR + $1.83 Gemini API + $1.07 Secret Manager + $0.28 Scheduler), all offset by GCP starter credits. ✅ 2026-04-20
+  > ⚠️ **Warning — credits mask real run rate:** The net $1.83 is not representative of steady-state cost. Gross Cloud Run spend of ~$77/20 days (~$115/month) reflects two significant incident storms this month (89k Pub/Sub fault loop + 48-reply duplicate storm). Once credits are exhausted, the $10/month budget alert will need revisiting. Track gross spend trend, not net, to spot cost anomalies early.
 - [x] Budget alert configured at $10/month threshold in GCP Billing console — `SL10 Cloud Dev Budget` at $10/month with 50%/90%/100% thresholds; confirmed 2026-03-21 via `gcloud billing budgets list`
 - [x] Cloud Logging retention set to 7 days for `projects/morphic-gaos-prod/logs/` — `_Default` bucket: 7 days; confirmed 2026-03-21 via `gcloud logging buckets describe _Default`
 - [x] All 7 Cloud Run services confirm `--no-allow-unauthenticated` — no `allUsers` IAM binding on any service; verified 2026-03-21 via `gcloud run services get-iam-policy` on all 7

@@ -487,8 +487,8 @@ Volume includes the `think` node (`GAOS-Persona-Spec.md` §4) and weekly frictio
 | **Cloud Pub/Sub** | $0.04/GB after 10 GB free | ~50 MB messages | **$0.00** (under free tier) |
 | **Cloud Run** (agent runtime + triggers) | $0.000024/vCPU-sec + $0.0000025/GB-sec | ~500 agent invocations × 2 s × 0.25 vCPU + 2 scheduled jobs | **~$0.01** |
 | **Cloud Scheduler** | $0.10/job/month (first 3 free) | 5 jobs: `gaos-archive` (2 AM nightly), `gaos-daily-sync` (6 AM), `gaos-sheets-sync` (every 5 min), `gaos-gmail-renew-watch` (every 23 h), `gaos-daily-digest` (2 PM UTC) — provisioned via `scripts/provision_schedulers.py` | **$0.20/month** (3 free; 2 above free tier at $0.10 each) |
-| **Gemini Flash (`FAST_MODEL`)** | ~$0.075/1M input + ~$0.30/1M output tokens | ~700K in + 150K out (routing, Scout synthesis, fallback tasks) | **~$0.10** |
-| **Gemini Pro (`DEEP_MODEL`)** | ~$1.25/1M input + ~$5.00/1M output tokens | ~800K in + 200K out (approvals, think node, diagnostics, weekly review) | **~$2.00** |
+| **Gemini Flash (`FAST_MODEL`)** | $0.15/1M input + $0.60/1M output tokens | ~700K in + 150K out (routing, Scout synthesis, fallback tasks) | **~$0.10** |
+| **Gemini Pro (`DEEP_MODEL`)** | $1.25/1M input + $10.00/1M output tokens | ~800K in + 200K out (approvals, think node, diagnostics, weekly review) | **~$2.00** |
 | **Vertex AI Code Execution** | ~$0.001/session | ~10 sessions (evolution tasks) | **~$0.01** |
 | **Vertex AI Memory Bank** | ~$0.005/write, ~$0.002/read | ~10 writes + ~20 queries + ~100 reads (~7-agent boot cycles × monthly; per-agent entry caps enforced by `nightly_knowledge_promotion.py`) | **~$0.55** |
 | **Google Secret Manager** | Free first 6 secrets; $0.06/10K accesses | 6 secrets, ~1K accesses | **$0.00** |
@@ -534,10 +534,10 @@ A **Cloud Scheduler job** (`nightly-archive`, `0 2 * * *`) POSTs to the Nexus-Pr
 0. **Idempotency guard — two layers:**
    - **Layer 1 (fast skip):** Reads the Logs tab for any row where `agent_id == "nexus-prime"` AND `level == "ARCHIVE"` AND timestamp is within the last 4 hours. If found, logs a WARNING and returns `{"skipped": True}` immediately — prevents a redundant full run when Cloud Scheduler retries on a 5xx or timeout *after* the previous run completed.
    - **Layer 2 (BQ insertId):** Each archive row is assigned a deterministic SHA-256 `insertId` derived from its natural key (`project_id + timestamp + agent_id + level/error_type`). BigQuery deduplicates rows with identical `insertId` values within its ~1-minute streaming buffer window. This guards against the race condition where a retry fires *during* steps 1–3 (before the Step 4 ARCHIVE summary row is written) — the rows are re-sent to BQ on retry but BigQuery silently drops the duplicates.
-1. **Summarize:** `LOCAL_MODEL` (Ollama / fallback Flash) generates one weekly aggregate row per log type (e.g., "Week of 2026-W12: 847 observability entries, top agent: beacon, 3 evolution tasks, $0.34 spent") and writes it to the Cold tier in BigQuery. Runs on Mondays only.
+1. **Summarize:** `LOCAL_MODEL` (Ollama / fallback Flash) generates one weekly aggregate row per log type (e.g., "Week of 2026-W12: 847 observability entries, top agent: beacon, 3 evolution tasks, $0.34 spent") and writes it to the Cold tier in BigQuery. Runs on Mondays only. **Source:** queries `aos_logs.gaos_agents` BQ sink table for the previous 7 days; the Sheets Logs tab is no longer used for this step.
 2. **Archive:** Rows older than their Sheet retention threshold are moved to BigQuery.
 3. **Delete:** Rows moved successfully are deleted from the Sheet.
-3.5. **Distill:** `LOCAL_MODEL` distills the last 24 h of Logs per active agent into candidate knowledge entries and appends them to the `Pending_Knowledge` Sheet tab for review.
+3.5. **Distill:** `LOCAL_MODEL` distills the last 24 h of agent activity per active agent into candidate knowledge entries and appends them to the `Pending_Knowledge` Sheet tab for review. **Source:** queries `aos_logs.gaos_agents` BQ sink table for the previous 24 hours; the Sheets Logs tab is no longer used for this step.
 4. **Report:** Appends one summary row to the **Logs** Sheet tab with `level == "ARCHIVE"`: timestamp, rows archived per tab, current Sheet row counts.
 5. **Alert:** If any Sheet tab exceeds **25,000 rows** after the job (indicating the archive is failing or a log source is unusually high-volume), publishes an `ALERT` to Nexus-Prime.
 
@@ -556,6 +556,8 @@ Each BigQuery table has a native TTL set to its retention window. No ongoing mai
 #### Sheet Health Guardrail
 
 The nightly job logs current row counts per tab. If any tab exceeds **25,000 rows** (half the sluggish threshold), Nexus-Prime publishes an `ALERT` — the archive job may be failing or a log source is unexpectedly high-volume.
+
+> ⚠️ **Warning — Sheets Logs/Error Logs tabs are permanently empty:** `_log_cloud()` writes to Cloud Logging only — it never writes to the Sheets Logs or Error Logs tabs. Those tabs will always be empty. All log data flows through Cloud Logging → `gaos-logs-bq-sink` → `aos_logs.gaos_agents`. Any code that reads `get_all_records("Logs")` or `get_all_records("Error Logs")` for observability purposes will return 0 rows. Use `tools.bigquery.query_rows()` against `gaos_agents` instead. The `handle_archive()` distillation step (Step 3.5) and weekly summary step (Step 1) were corrected to do this — see `GAOS-Deploy-Spec.md §8.1`.
 
 ---
 

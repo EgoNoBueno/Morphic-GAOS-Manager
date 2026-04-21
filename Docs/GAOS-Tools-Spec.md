@@ -837,7 +837,7 @@ When `web_access=True` and the model is an `ollama/` alias, `_call_model` prepen
 @dataclass
 class ModelResponse:
     text: str           # raw response text
-    cost_usd: float     # always 0.0 — per-call cost calculation is not implemented; actual spend is tracked via GCP billing (see GAOS-Manager-Spec.md §9.4)
+    cost_usd: float     # computed from token counts × pricing config for Gemini models; 0.0 for Ollama (local, no billing). Pricing keys live in settings.yaml under models.FAST_MODEL_INPUT_PRICE_PER_M etc. (see GAOS-Manager-Spec.md §9.4)
     tokens_used: int    # total tokens from usage_metadata (0 for Ollama); tracked for usage monitoring
     data: dict          # parsed JSON if parse_json=True, else {}
 ```
