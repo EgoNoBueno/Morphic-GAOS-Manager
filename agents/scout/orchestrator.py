@@ -658,8 +658,9 @@ def _discover(state: AgentWorkingMemory) -> AgentWorkingMemory:
     settings = get_settings()
     pid = state["project_id"]
     payload = msg.payload or {}
-    topic = payload.get("topic", "")
-    mandate_id = msg.task_id or str(uuid.uuid4())
+    # RESEARCH_MANDATE payloads use "research_domain"; normalise to "topic" here
+    topic = payload.get("topic") or payload.get("research_domain", "")
+    mandate_id = payload.get("mandate_id") or msg.task_id or str(uuid.uuid4())
     max_depth = settings.google_search.max_search_depth
     max_queries = settings.google_search.max_queries_per_mandate
 

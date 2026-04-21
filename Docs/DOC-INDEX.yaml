@@ -326,6 +326,26 @@ documents:
       - Major new capability added or removed
       - Test count changes significantly (>10%)
 
+  GAOS-Marketing-Channel-Spec.md:
+    purpose: >
+      Marketing channel build-out spec — Phase 1 research mandates (MC1–MC3) with
+      full Scout RESEARCH_MANDATE payloads, output schemas, and the HUMAN DECISION gate;
+      Phase 2 setup (MC4–MC5 Beacon + n8n); Phase 3 content pipeline (MC6–MC8);
+      platform API capability matrix; and Approval Gate proposal designs.
+    code_paths:
+      - agents/scout/orchestrator.py
+      - agents/scout/tasks/discover_channels.py
+      - scripts/send_scout_mandates.py
+      - Docs/GAOS-Marketing-Channel-Spec.md
+    triggers:
+      - Scout RESEARCH_MANDATE handler logic changed
+      - MC1/MC2/MC3 mandate payloads or output schemas revised
+      - HUMAN DECISION gate design changed
+      - Platform API capability matrix updated (after MC3 Scout output)
+      - Phase 2 or Phase 3 mandate designs refined
+      - n8n workflow sketches updated for MC5/MC7/MC8
+      - New marketing channel mandate added (MC4+)
+
   GAOS-n8n-Integration-Spec.md:
     purpose: >
       Architecture decision and deployment guide for n8n as GAOS's SaaS connector
@@ -469,6 +489,11 @@ inverse_index:
     - GAOS-Email-Pipeline-Spec.md       # email pipeline nodes
     - "Docs/agents/nexus-prime.md"
 
+  "agents/scout/":
+    - GAOS-Agent-Spec.md
+    - "Docs/agents/scout.md"
+    - GAOS-Marketing-Channel-Spec.md    # RESEARCH_MANDATE handler + discover_channels task
+
   "agents/steward/archivist/":
     - GAOS-Agent-Spec.md                # Tier 3 sub-agent
     - GAOS-Manager-Spec.md              # §17 implementation checklist
@@ -538,6 +563,9 @@ inverse_index:
   "scripts/setup_*.py":
     - GAOS-Onboarding-Spec.md
     - GAOS-Deploy-Spec.md
+
+  "scripts/send_scout_mandates.py":
+    - GAOS-Marketing-Channel-Spec.md   # mandate payload definitions live here
 
   "scripts/gaos_doctor.py":
     - GAOS-Doctor.md

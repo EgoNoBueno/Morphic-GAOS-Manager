@@ -3,6 +3,76 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-04-20T21:45-07:00 — Phase 1 Scout mandates MC1–MC3
+
+### What was done
+
+- `Docs/GAOS-Marketing-Channel-Spec.md` — created; covers full Phase 1–3 channel build-out:
+  Phase 1 Scout mandates (MC1 audience research, MC2 competitor audit, MC3 API inventory),
+  HUMAN DECISION gate design, Phase 2 Beacon + n8n setup sketches, Phase 3 content pipeline
+  sketches, platform API capability matrix placeholder, and Approval Gate proposal schemas.
+- `agents/scout/orchestrator.py` — added `RESEARCH_MANDATE` handler in `_plan`: short-circuits
+  sheet read and LLM planning, routes directly to `discover_channels` Tier 3 task.
+- `agents/scout/tasks/discover_channels.py` — new Tier 3 task agent implementing the full
+  `_discover` protocol: query expansion (LLM), `research_topic()` execution (Google Custom
+  Search), FAST_MODEL synthesis, `requires_approval` flag for MC1/MC2, `inject_to_knowledge`
+  flag when confidence ≥ 0.70 + source_count ≥ 5.
+- `scripts/send_scout_mandates.py` — new script; publishes MC1/MC2/MC3 `RESEARCH_MANDATE`
+  messages to `agent.nexus-prime.events`. Supports `--mandate`, `--platforms`, `--project`
+  flags. Includes next-steps guidance.
+- `Docs/DOC-INDEX.yaml` — added `GAOS-Marketing-Channel-Spec.md` document entry +
+  `agents/scout/` and `scripts/send_scout_mandates.py` inverse index entries.
+
+### Files changed
+- `Docs/GAOS-Marketing-Channel-Spec.md` (new)
+- `agents/scout/orchestrator.py` (RESEARCH_MANDATE handler in `_plan`)
+- `agents/scout/tasks/discover_channels.py` (new)
+- `scripts/send_scout_mandates.py` (new)
+- `Docs/DOC-INDEX.yaml` (new spec entry + inverse entries)
+- `WORKLOG.md` (this entry)
+
+### Tests
+- Full suite: **741 passed, 0 failures** (no new tests added for discover_channels — see next steps)
+
+### What's next
+1. Create `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_CX` secrets in Secret Manager
+   (blocks all three mandates — see TODO.md §Phase 0)
+2. Write `tests/test_discover_channels.py` — happy path, search failure, empty results, no seeds
+3. Send MC1 first: `python scripts/send_scout_mandates.py --mandate MC1`
+4. Review MC1 output in Research Products tab, then send MC2+MC3:
+   `python scripts/send_scout_mandates.py --mandate MC2 MC3 --platforms <list>`
+5. Start LinkedIn + Meta developer app registrations in parallel (per MC3 long_lead_registrations)
+6. Review Agent_Approvals tab for HUMAN DECISION proposal (MC1+MC2 both set requires_approval=True)
+
+---
+
+## 2026-04-20T20:30-07:00 — GCP provisioning: staging tables + scheduler jobs
+
+### What was done
+
+- `scripts/create_staging_tables.py` — ran successfully; all 6 BigQuery tables confirmed ready in `morphic-gaos-prod.aos_logs`: `staging_approvals`, `staging_logs`, `staging_errors`, `staging_pending_knowledge`, `api_call_log`, `circuit_breaker_events`.
+- `scripts/provision_schedulers.py` — ran successfully; all 5 Cloud Scheduler jobs PATCHED to current nexus-prime URL (`https://nexus-prime-7bu22bxlda-uc.a.run.app`): `gaos-archive`, `gaos-daily-sync`, `gaos-sheets-sync`, `gaos-gmail-renew-watch`, `gaos-daily-digest`. IAM `roles/run.invoker` binding already present — no change needed.
+- `TODO.md` — both GCP provisioning checkboxes ticked.
+
+### Files changed
+- `TODO.md` (2 checkboxes)
+
+### What's next
+- Phase 1 marketing channel research tasks are the next open TODO block.
+
+
+
+### What was done
+
+- Verified `_check_pubsub_endpoint_staleness()` is fully implemented in `scripts/observability_loop.py` (landed in `74d59fb`). The function resolves the live nexus-prime URL via the Cloud Run Admin API (`run v2`), iterates all 8 known push subscriptions from `_NEXUS_SUB_SUFFIXES`, compares the subscription `pushEndpoint` base URL against the live URL, and logs `WARNING PUBSUB-STALE:` per mismatch with the instruction to run `provision_schedulers.py`. Runs every cycle in continuous mode and on `--once`.
+- `TODO.md` — Pub/Sub push endpoint staleness check item checked off (was stale — implementation already committed).
+
+### Files changed
+- `TODO.md` (checkbox ticked)
+
+### What's next
+- Next open TODO items: `scripts/create_staging_tables.py` GCP provisioning step, Phase 1 marketing channel research tasks.
+
 ## 2026-04-20T18:36-07:00 — GAOS-Doctor daily cron + email report
 
 ### What was done

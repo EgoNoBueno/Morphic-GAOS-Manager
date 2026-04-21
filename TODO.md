@@ -26,19 +26,19 @@ and the Doctor/observability improvements below.
 - `tests/test_sheets_sync.py` — 9 tests all passing ✅
 
 **GCP provisioning steps (run once, requires ADC):**
-- [ ] **Run `scripts/create_staging_tables.py`** — Creates 4 `staging_*` tables in `morphic-gaos-prod.aos_logs`. Idempotent.
-- [ ] **Run `scripts/provision_schedulers.py`** — Provisions all 5 jobs: `gaos-archive`, `gaos-daily-sync`, `gaos-sheets-sync`, `gaos-gmail-renew-watch`, `gaos-daily-digest`. Idempotent. Resolves Gmail watch auto-renewal (HIGHEST PRIORITY).
+- [x] **Run `scripts/create_staging_tables.py`** — Creates 6 tables in `morphic-gaos-prod.aos_logs`: `staging_approvals`, `staging_logs`, `staging_errors`, `staging_pending_knowledge`, `api_call_log`, `circuit_breaker_events`. Idempotent. ✅ 2026-04-20 — all 6 tables ready.
+- [x] **Run `scripts/provision_schedulers.py`** — Provisions all 5 jobs: `gaos-archive`, `gaos-daily-sync`, `gaos-sheets-sync`, `gaos-gmail-renew-watch`, `gaos-daily-digest`. Idempotent. Resolves Gmail watch auto-renewal (HIGHEST PRIORITY). ✅ 2026-04-20 — all 5 PATCHED to current nexus-prime URL.
 
 **Still needs code:**
 - [x] **GAOS-Doctor daily cron + email report** — Run as a **Cloud Run Job** (not `POST /doctor` on Nexus-Prime) so the health check works even when all 7 orchestrators are down. Cloud Scheduler triggers the Job at `0 7 * * *` (7:00 AM PT). Steps: (1) add a `__main__` entry point to `scripts/gaos_doctor.py` that runs all 8 checks, collects results, and exits non-zero on any FAIL; (2) add `send_doctor_report()` that formats the pass/warn/fail summary as a plain-text email and sends via `tools/gmail.py` `send_email()`; (3) add a `gaos-doctor` Cloud Run Job definition (`Dockerfile.doctor` or reuse the main image with `--command`); (4) provision a `gaos-doctor-daily` Cloud Scheduler job targeting the Cloud Run Job (not a Cloud Run service URL); (5) add tests to `tests/test_gaos_doctor.py`.
 - [x] **Doctor Check 9 + 10: open circuit breakers and scheduler job inventory** — (9) Query `aos_logs.circuit_breaker_events` for any resource whose last recorded state is OPEN; WARN per open circuit. (Grafana shows this visually but Doctor has no check — so the daily email is blind to it.) (10) Verify all expected Cloud Scheduler jobs exist and are enabled via the Scheduler API; FAIL if any are missing or paused. Add both to `scripts/gaos_doctor.py` and update the check count in `Docs/GAOS-Doctor.md`.
-- [ ] **Pub/Sub push endpoint staleness check** — Required by Rule 27.3. Not implemented. Caused silent message loss 2026-03-31. Add to `scripts/observability_loop.py`: for each known push subscription, compare `pushConfig.pushEndpoint` to the current Cloud Run service URL; log WARNING if any mismatch. The subscriber client and known sub list are already used in `gaos_doctor.py` — lift the pattern from there.
+- [x] **Pub/Sub push endpoint staleness check** — Rule 27.3. Implemented in `74d59fb`. `_check_pubsub_endpoint_staleness()` in `scripts/observability_loop.py`: resolves live nexus-prime URL via Cloud Run Admin API, compares against all 8 push subscription `pushEndpoint` values, logs WARNING per mismatch. Runs every cycle (continuous) and on `--once`.
 
 ---
 
 ## Phase 1 — Research
 
-- [ ] **Write `Docs/GAOS-Marketing-Channel-Spec.md`** — Stub the spec before sending any Scout mandates. Must cover: target channel candidates, Scout mandate design for MC1+MC2, platform API capability matrix (MC3), Approval Gate proposal design for MC4+MC6, n8n workflow sketches for MC5+MC7.
+- [x] **Write `Docs/GAOS-Marketing-Channel-Spec.md`** — ✅ 2026-04-20 — Spec created covering MC1–MC8 phases, Scout mandate payloads, HUMAN DECISION gate, platform API matrix, and Approval Gate designs.
 - [ ] **MC1 — Scout channel audience mandate** — Send `RESEARCH_MANDATE` to Scout: which platforms does the SL10 B2B maintenance audience (facility managers, building operators, service teams) actually use? Output: ranked platform list with audience size, organic reach potential, content format breakdown per platform.
 - [ ] **MC2 + MC3 — Competitor audit + API inventory (parallel)**
   - MC2: Scout crawls top 10–15 competitors on the MC1-recommended platforms. Output: competitive matrix — posting frequency, dominant formats, engagement rates, content gaps, 3–5 underserved angles SL10 can own.
