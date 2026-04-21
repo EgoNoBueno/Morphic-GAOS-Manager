@@ -3,6 +3,34 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-04-20T18:22-07:00 — Track B: Doctor Checks 9+10 tests + Track A GCP provisioning
+
+### What was done
+
+**Track A — GCP provisioning (all idempotent, ran against morphic-gaos-prod)**
+- `scripts/create_staging_tables.py` — 6 BQ tables confirmed OK (`staging_approvals`, `staging_logs`, `staging_errors`, `staging_pending_knowledge`, `api_call_log`, `circuit_breaker_events`)
+- `scripts/provision_schedulers.py` — 5 Cloud Scheduler jobs confirmed PATCHED; `gaos-gmail-renew-watch` verified pointing at live `nexus-prime-7bu22bxlda-uc.a.run.app` URL (MATCH)
+
+**Track B — Doctor Checks 9 + 10 tests**
+- Checks 9 (circuit breakers) and 10 (scheduler inventory) were already implemented in `scripts/gaos_doctor.py` — confirmed present on inspection
+- `tests/test_gaos_doctor.py` created (new file) — 8 tests covering both checks:
+  - Check 9: `all_closed` (OK), `one_open` (WARN not FAIL), `table_not_found` (graceful OK), `bq_error` (FAIL)
+  - Check 10: `all_present_enabled` (5×OK), `one_missing` (FAIL+4 OK), `one_paused` (WARN), `api_error` (FAIL)
+- Note: `build` is a lazy import inside `check_scheduler_jobs()` — patched at `googleapiclient.discovery.build`, not `scripts.gaos_doctor.build`
+
+### Files changed
+- `tests/test_gaos_doctor.py` — new file, 8 tests
+- `TODO.md` — Doctor Checks 9+10 checked off
+
+### Tests
+- `tests/test_gaos_doctor.py`: 8/8 passed
+
+### What's next
+- GAOS-Doctor daily cron + email report (Cloud Run Job + `send_doctor_report()` + `gaos-doctor-daily` Scheduler job)
+- Pub/Sub push endpoint staleness check in `observability_loop.py` (Rule 27.3)
+- Phase 0 close: check GCP Billing 7-day window and check off `GAOS-Deploy-Spec.md §4e`
+
+---
 ## 2026-04-20T17:35-07:00 — Cache Hardening: gmail.py + google_docs.py
 
 ### What was done
