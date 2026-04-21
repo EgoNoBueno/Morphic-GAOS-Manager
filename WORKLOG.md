@@ -3,6 +3,42 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-04-20T18:36-07:00 — GAOS-Doctor daily cron + email report
+
+### What was done
+
+- `scripts/gaos_doctor.py` — added `send_doctor_report()` (formats plain-text health summary, sends via `tools.gmail.send_email` to `settings.gmail.alert_address`); added `_maybe_send_report()` (DOCTOR_SEND_REPORT=1 gate — local runs never email, Cloud Run Job always does); updated `__main__` to call `_maybe_send_report` after `main()` returns; added `import os` to imports
+- `Dockerfile.doctor` — new file; thin wrapper on python:3.11-slim, copies repo, runs `scripts/gaos_doctor.py`; sets `DOCTOR_SEND_REPORT=1`
+- `scripts/provision_doctor_job.py` — new file; idempotent provisioner for (1) Cloud Run Job `gaos-doctor`, (2) IAM `roles/run.invoker` grant on the job, (3) Cloud Scheduler job `gaos-doctor-daily` at `0 7 * * *` PT; uses oauthToken (not oidcToken) because target is the Cloud Run Jobs API, not an HTTP service URL
+- `tests/test_gaos_doctor.py` — 4 new tests in `TestSendDoctorReport`: subject contains counts, body lists FAIL items, no-env-var skips send, email failure is non-fatal
+- `TODO.md` — GAOS-Doctor daily cron item checked off
+
+### Files changed
+- `scripts/gaos_doctor.py`
+- `Dockerfile.doctor` (new)
+- `scripts/provision_doctor_job.py` (new)
+- `tests/test_gaos_doctor.py` (4 new tests)
+- `TODO.md`
+
+### Tests
+- `tests/test_gaos_doctor.py`: 12/12 passed
+
+### Design notes
+- `DOCTOR_SEND_REPORT` env var is the gate between local runs and Cloud Run Job runs — no config change needed, just the env var in the container
+- oauthToken (scope: cloud-platform) is correct for triggering Cloud Run Jobs; oidcToken is for HTTP service endpoints — this distinction matters and is documented in `provision_doctor_job.py` comments
+- Cloud Run Job `maxRetries=0` and Scheduler `retryCount=0` — Doctor failures surface immediately, not silently swallowed by retry machinery
+
+### Next steps to go live
+1. Build + push the image: `gcloud builds submit --tag us-central1-docker.pkg.dev/morphic-gaos-prod/cloud-run-source-deploy/gaos-doctor:latest --dockerfile=Dockerfile.doctor .`
+2. Run: `python scripts/provision_doctor_job.py`
+3. Test manually: `gcloud run jobs execute gaos-doctor --region=us-central1`
+
+### What's next
+- Pub/Sub push endpoint staleness check in `scripts/observability_loop.py` (Rule 27.3)
+- Close Phase 4: GCP Billing 7-day window check + `GAOS-Deploy-Spec.md §4e` exit criteria tick
+
+---
+
 ## 2026-04-20T18:22-07:00 — Track B: Doctor Checks 9+10 tests + Track A GCP provisioning
 
 ### What was done

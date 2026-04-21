@@ -15,6 +15,12 @@ Tests:
     test_check_scheduler_jobs_one_missing
     test_check_scheduler_jobs_one_paused
     test_check_scheduler_jobs_api_error
+
+  send_doctor_report() + _maybe_send_report()
+    test_send_doctor_report_subject_contains_counts
+    test_send_doctor_report_body_lists_fail_items
+    test_maybe_send_report_no_env_var_skips_send
+    test_maybe_send_report_email_failure_is_non_fatal
 """
 
 from __future__ import annotations
@@ -258,3 +264,87 @@ class TestCheckSchedulerJobs:
         assert len(gd.results) == 1
         assert gd.results[0][1] == "fail"
         assert "403" in gd.results[0][2]
+
+
+# ---------------------------------------------------------------------------
+# send_doctor_report() + _maybe_send_report()
+# ---------------------------------------------------------------------------
+
+
+class TestSendDoctorReport:
+    """Tests for send_doctor_report() and _maybe_send_report() in gaos_doctor.py."""
+
+    def test_send_doctor_report_subject_contains_counts(self):
+        """Subject line includes the OK / WARN / FAIL counts."""
+        import scripts.gaos_doctor as gd
+
+        gd.results[:] = [
+            ("Sheet connectivity", "ok", ""),
+            ("Pub/Sub topics", "warn", "1 topic missing"),
+            ("Secret Manager", "fail", "GEMINI_API_KEY inaccessible"),
+        ]
+
+        captured: dict = {}
+
+        def _fake_send_email(project_id, to, subject, body, from_addr=None, **kw):
+            captured["subject"] = subject
+            captured["body"] = body
+
+        with (
+            patch("scripts.gaos_doctor.get_settings") as mock_settings,
+            patch("tools.gmail.send_email", _fake_send_email),
+        ):
+            mock_settings.return_value.gmail.alert_address = "alerts@example.com"
+            mock_settings.return_value.gmail.sender_address = "from@example.com"
+            gd.send_doctor_report(n_ok=1, n_warn=1, n_fail=1)
+
+        assert "1 OK" in captured["subject"]
+        assert "1 WARN" in captured["subject"]
+        assert "1 FAIL" in captured["subject"]
+
+    def test_send_doctor_report_body_lists_fail_items(self):
+        """Body includes the label and detail of every FAIL result."""
+        import scripts.gaos_doctor as gd
+
+        gd.results[:] = [
+            ("Sheet connectivity", "ok", ""),
+            ("Secret Manager", "fail", "GEMINI_API_KEY inaccessible"),
+        ]
+
+        captured: dict = {}
+
+        def _fake_send_email(project_id, to, subject, body, from_addr=None, **kw):
+            captured["body"] = body
+
+        with (
+            patch("scripts.gaos_doctor.get_settings") as mock_settings,
+            patch("tools.gmail.send_email", _fake_send_email),
+        ):
+            mock_settings.return_value.gmail.alert_address = "alerts@example.com"
+            mock_settings.return_value.gmail.sender_address = "from@example.com"
+            gd.send_doctor_report(n_ok=1, n_warn=0, n_fail=1)
+
+        assert "Secret Manager" in captured["body"]
+        assert "GEMINI_API_KEY inaccessible" in captured["body"]
+        assert "[FAIL]" in captured["body"]
+
+    def test_maybe_send_report_no_env_var_skips_send(self, monkeypatch):
+        """When DOCTOR_SEND_REPORT is unset, send_doctor_report is never called."""
+        import scripts.gaos_doctor as gd
+
+        monkeypatch.delenv("DOCTOR_SEND_REPORT", raising=False)
+
+        with patch.object(gd, "send_doctor_report") as mock_send:
+            gd._maybe_send_report(n_ok=5, n_warn=0, n_fail=0)
+
+        mock_send.assert_not_called()
+
+    def test_maybe_send_report_email_failure_is_non_fatal(self, monkeypatch):
+        """A send_email exception inside _maybe_send_report must not propagate."""
+        import scripts.gaos_doctor as gd
+
+        monkeypatch.setenv("DOCTOR_SEND_REPORT", "1")
+
+        with patch.object(gd, "send_doctor_report", side_effect=Exception("SMTP timeout")):
+            # Must not raise — email failure is logged as WARN, not fatal
+            gd._maybe_send_report(n_ok=5, n_warn=0, n_fail=0)

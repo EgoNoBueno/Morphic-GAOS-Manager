@@ -1,0 +1,15 @@
+FROM python:3.11-slim
+
+# Cache invalidation: pass --build-arg CACHE_BUST=$(date +%s) to force rebuild
+ARG CACHE_BUST
+LABEL cache_bust=${CACHE_BUST}
+
+WORKDIR /app
+COPY . .
+
+RUN pip install --no-cache-dir .
+
+# Trigger email send on every execution (local runs omit this var)
+ENV DOCTOR_SEND_REPORT=1
+
+CMD ["python", "scripts/gaos_doctor.py"]

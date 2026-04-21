@@ -22,6 +22,7 @@ Exit codes:
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from datetime import UTC, datetime, timedelta
@@ -452,6 +453,68 @@ def check_scheduler_jobs() -> None:
             check(f"Scheduler: {job_id}", True, existing[job_id].get("state", "ENABLED"))
 
 
+# ── Email report ──────────────────────────────────────────────────────────────
+
+
+def send_doctor_report(n_ok: int, n_warn: int, n_fail: int) -> None:
+    """Format and email the Doctor health report.
+
+    Reads the module-level ``results`` list and sends a plain-text summary to
+    ``settings.gmail.alert_address`` via ``tools.gmail.send_email``.
+
+    Args:
+        n_ok:   Count of OK results.
+        n_warn: Count of WARN results.
+        n_fail: Count of FAIL results.
+
+    Raises:
+        Exception: Re-raises any exception from ``send_email`` so the caller
+            can decide whether to treat it as fatal.
+    """
+    from tools.gmail import send_email  # lazy import — not needed for local runs
+
+    settings = get_settings()
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+
+    subject = f"GAOS-Doctor {today}: {n_ok} OK  {n_warn} WARN  {n_fail} FAIL"
+
+    lines: list[str] = [
+        "GAOS-Doctor — Daily Health Report",
+        f"Date:    {today}",
+        f"Project: {PROJECT}",
+        "",
+        f"Summary: {n_ok} OK, {n_warn} WARN, {n_fail} FAIL  ({len(results)} total checks)",
+    ]
+
+    if n_fail:
+        lines.append("Status:  ACTION REQUIRED — one or more checks failed.")
+    elif n_warn:
+        lines.append("Status:  WARNING — system is operational with caveats.")
+    else:
+        lines.append("Status:  All checks passed — system is healthy.")
+
+    if n_warn or n_fail:
+        lines += ["", "Non-OK checks:"]
+        for label, status, detail in results:
+            if status in ("warn", "fail"):
+                tag = "[FAIL]" if status == "fail" else "[WARN]"
+                lines.append(f"  {tag} {label}" + (f" -- {detail}" if detail else ""))
+
+    lines += ["", "Full check breakdown:"]
+    for label, status, detail in results:
+        tag = "[OK]  " if status == "ok" else ("[WARN] " if status == "warn" else "[FAIL] ")
+        lines.append(f"  {tag} {label}" + (f" -- {detail}" if detail else ""))
+
+    body = "\n".join(lines)
+    send_email(
+        project_id=PROJECT,
+        to=settings.gmail.alert_address,
+        subject=subject,
+        body=body,
+        from_addr=settings.gmail.sender_address,
+    )
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 
@@ -500,5 +563,32 @@ def main() -> int:
     return 0
 
 
+def _maybe_send_report(n_ok: int, n_warn: int, n_fail: int) -> None:
+    """Send the Doctor email report when DOCTOR_SEND_REPORT=1 is set.
+
+    Controlled by the ``DOCTOR_SEND_REPORT`` environment variable so local
+    runs (python scripts/gaos_doctor.py) never send email, while the Cloud
+    Run Job (which sets the var in its container environment) always does.
+
+    Args:
+        n_ok:   Count of OK results.
+        n_warn: Count of WARN results.
+        n_fail: Count of FAIL results.
+    """
+    if os.getenv("DOCTOR_SEND_REPORT", "").lower() not in ("1", "true", "yes"):
+        return
+    try:
+        send_doctor_report(n_ok, n_warn, n_fail)
+        settings = get_settings()
+        print(f"\n{OK_TAG} Report emailed to {settings.gmail.alert_address}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"\n{WARN_TAG} Email send failed (non-fatal): {exc}")
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    _exit_code = main()
+    n_ok_ = sum(1 for _, s, _ in results if s == "ok")
+    n_warn_ = sum(1 for _, s, _ in results if s == "warn")
+    n_fail_ = sum(1 for _, s, _ in results if s == "fail")
+    _maybe_send_report(n_ok_, n_warn_, n_fail_)
+    sys.exit(_exit_code)
