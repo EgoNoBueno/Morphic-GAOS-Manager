@@ -3,6 +3,26 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-04-22T11:17-07:00 — query_episodic Schema Fix + Clean Boot Confirmed
+
+### What was done
+- **Fixed `query_episodic` schema mismatch** — `tools/memory.py` SELECT included `result_summary` (column does not exist in live `task_outcomes` table) and `total_cost_usd` (actual column is `cost_usd`). This caused a `400 Unrecognized name: result_summary` error on every scout and steward boot. Fix: removed `result_summary` from SELECT, renamed `total_cost_usd` → `cost_usd`.
+- **Verified caller uses `.get('result_summary', '')` defensively** — nexus-prime dereferences the field with a default, so no crash risk post-fix.
+- **Confirmed clean scout boot (scout-00036-7t5)** — zero errors: no 403s, no `query_episodic` 400, no `load_domain_memory` errors visible in initial boot window. All 4 instances reach `Startup IDLE heartbeat written` cleanly.
+- **All 7 services deployed** (`nexus-prime-00112-6jc`, `scout-00036-7t5`, `beacon-00033-xzt`, `foreman-00034-ncz`, `ledger-00034-spp`, `pursuit-00035-4f2`, `steward-00036-4t5`).
+
+### Files changed
+- `tools/memory.py` — `query_episodic()`: removed `result_summary`, renamed `total_cost_usd` → `cost_usd` in SQL SELECT
+
+### Key findings / lessons
+- `query_episodic` schema mismatch was masked by the 403 IAM errors on prior revisions — the BQ query never actually ran until this deploy.
+- `result_summary` and `total_cost_usd` appear in the `TaskOutcome` model (write path) and in docs, but the live BQ table uses `cost_usd` (not `total_cost_usd`) and has no `result_summary` column. Spec drift: the spec and model were written before the final BQ table was created.
+
+### What's next
+1. Run `send_scout_mandates.py --mandate MC1` and watch scout's Cloud Logs for `corr_prompt size=` to confirm the prompt guard is live
+2. Verify `query_episodic` now populates `episodic_cache` in scout state (no more 400 in logs)
+3. Start n8n pilot (BI5)
+
 ## 2026-04-22T10:13-07:00 — Spike Investigation + Scout IAM Fix
 
 ### What was done
