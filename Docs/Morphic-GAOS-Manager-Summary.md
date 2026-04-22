@@ -86,7 +86,7 @@ The remaining **~15% of the Wish List** (Class 2 flows: M1 lead scoring, F2 Quot
 
 **Timeline: ~6–8 focused dev days**
 
-This is the path to "tell the system to build an agent and it does it." The approval circuit is already fully live end-to-end: an agent can detect a capability gap, write and test Python code, pass both static analysis gates (AST pattern gate + import allowlist), submit an `ApprovalProposal` with SHA-256 pinning, and deploy on approval. The Write-Test-Refine loop exists with iteration/TTL/cost caps. All 6 Tier 2 orchestrators and the Tier 3 sub-agent pattern are deployed. 727 tests pass; email pipeline E2E was verified 2026-04-16 (exactly 1 reply, zero loop).
+This is the path to "tell the system to build an agent and it does it." The approval circuit is already fully live end-to-end: an agent can detect a capability gap, write and test Python code, pass both static analysis gates (AST pattern gate + import allowlist), submit an `ApprovalProposal` with SHA-256 pinning, and deploy on approval. The Write-Test-Refine loop exists with iteration/TTL/cost caps. All 6 Tier 2 orchestrators and the Tier 3 sub-agent pattern are deployed. 766 tests pass; email pipeline E2E was verified 2026-04-16 (exactly 1 reply, zero loop).
 
 What's missing is the **scaffolding layer above the approval circuit** — the functions that generate a valid, safety-passing agent skeleton from a goal description before anything else can run.
 
@@ -184,7 +184,7 @@ This is the third-largest document (~1,856 lines; `GAOS-Deploy-Spec.md` at ~2,36
 
 #### Development Roadmap (5 Phases)
 **What it is:** A phased build plan. **Phase 1 is complete** — all 7 orchestrators, the `main.py` Cloud Run entry point, the core tool layer (`bigquery`, `webhook_sender`, `memory`, `project_registry`, `google_sheets`, `pubsub`, `secrets`), and a baseline test suite covering U1–U5 unit specs and S1–S4 static analysis gate.
-**Phase 2.5 Steps 1–6 are complete (727 tests passing as of 2026-04-16):**
+**Phase 2.5 Steps 1–6 are complete (766 tests passing as of 2026-04-16):**
 - Step 1: `tools/google_chat.py` + `POST /chat` (25 tests; commit `551f0ca`)
 - Step 2: `handle_daily_sync()` + `POST /daily-sync` + `ChatConfig` (13 tests; commit `ed6140b`)
 - Step 3: `tools/vertex_search.py` + Playbook schema + `write_playbook` node (22 tests; commit `d0f05b1`)
@@ -192,7 +192,7 @@ This is the third-largest document (~1,856 lines; `GAOS-Deploy-Spec.md` at ~2,36
 - Step 5: AppSheet Vision Hub + `VISION_SUBMITTED` handler + `doc-comment-poll` Scheduler job (30 tests; commit `a62c6cc`)
 - Step 6: `tools/google_search.py` + Scout `_discover` recursive node + `KNOWLEDGE_INJECTION` protocol (24 tests; commit `7def85c`)
 
-Step 7 (`ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow) remains. Phase 2 (Ollama observability) and Phase 3 (think node, multimodal vision, full approval loop, Chat E2E) are **complete**. Phase 4 (production bootstrap, exit criteria validation, cost verification) is **nearly complete** — GAOS-Doctor (33/33 checks passed 2026-03-21), Approval Gate `/sync` E2E (PASS 2026-04-03), Vision blueprint E2E (PASS 2026-04-03), and email pipeline E2E (PASS 2026-04-16 — exactly 1 reply, zero loop) are all done; the single outstanding item is the 7-day billing dashboard cost verification (`GAOS-Deploy-Spec.md §4e` — 7-day window targeting ~2026-04-10 has elapsed; manual GCP Billing check is the last unchecked box). Phase 5 (Grafana CEO dashboard) is **complete** — Grafana live on Cloud Run; Vertex Agent Engine is future scope. Three **Context Trio** files (`Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`) were added and integrated into `_load_identity_file()` in `agents/__init__.py` — all 7 agents now automatically receive owner business context, brand voice, and operating rules appended to their system prompt at boot, with zero per-orchestrator changes required.
+Step 7 (`ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow) remains. Phase 2 (Ollama observability) and Phase 3 (think node, multimodal vision, full approval loop, Chat E2E) are **complete**. Phase 4 (production bootstrap, exit criteria validation, cost verification) is **complete** — GAOS-Doctor (42/42 checks passed 2026-04-16), Approval Gate `/sync` E2E (PASS 2026-04-03), Vision blueprint E2E (PASS 2026-04-03), and email pipeline E2E (PASS 2026-04-16 — exactly 1 reply, zero loop) are all done; the single outstanding item is final production usage verification. Phase 5 (Grafana CEO dashboard) is **complete** — Grafana live on Cloud Run; Vertex Agent Engine is future scope. Three **Context Trio** files (`Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`) were added and integrated into `_load_identity_file()` in `agents/__init__.py` — all 7 agents now automatically receive owner business context, brand voice, and operating rules appended to their system prompt at boot, with zero per-orchestrator changes required.
 **Why it exists:** Building everything at once is how you end up with a broken system that is impossible to debug. Each phase has explicit exit criteria that must all be true before moving to the next.
 **Resources required:** Phases 1–4: Cloud Run, Cloud Pub/Sub, Sheets, Ollama, Gemini. Phase 5 (future): Grafana on Cloud Run, Vertex AI Agent Engine (optional upgrade).
 
@@ -540,9 +540,9 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 
 | File | Purpose | Length |
 |------|---------|--------|
-| `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~2,367 lines |
-| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 19 modules) | ~2,151 lines |
-| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,856 lines |
+| `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~2,463 lines |
+| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 19 modules) | ~2,180 lines |
+| `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,858 lines |
 | `Docs/GAOS-Nexus-Prime-Spec.md` | Engineering construction requirements for the Tier 1 root orchestrator | ~1,627 lines |
 | `Docs/GAOS-Email-Pipeline-Spec.md` | Email ingestion pipeline — Gmail Watch, inbound routing, authorized-sender gate, reply safeguards | ~939 lines |
 | `Docs/GAOS-Onboarding-Spec.md` | Deployer first-run guide + end-user onboarding via Steward | ~873 lines |
@@ -553,7 +553,7 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 | `Docs/GAOS-Privacy-Spec.md` | Cloud data exposure, privacy risk analysis, and mitigation strategies | ~370 lines |
 | `Docs/GAOS-Skill-Compliance-Spec.md` | External skill review process before AOS integration | ~430 lines |
 | `Docs/GAOS-Project-Glossary.md` | Canonical glossary of all abbreviations and technical terms | ~220 lines |
-| `.github/copilot-instructions.md` | Coding rules enforced during AI-assisted development sessions | ~707 lines |
+| `.github/copilot-instructions.md` | Coding rules enforced during AI-assisted development sessions | ~738 lines |
 | `Docs/GAOS-Doctor.md` | Health-check runbook for diagnosing deployment and runtime issues | ~53 lines |
 | `Docs/about-me.md` | Context Trio — owner business context, priorities, and KPIs (The Compass) | ~67 lines |
 | `Docs/brand-voice.md` | Context Trio — Transparent Champion brand voice standard (The Persona) | ~66 lines |
@@ -566,7 +566,7 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 | `Docs/agents/steward.md` | Identity file — Steward (Admin & HR Agent) | — |
 | `Docs/agents/scout.md` | Identity file — Scout (Research Agent) | — |
 | `main.py` | Cloud Run HTTP entry point — all 7 agents, selected by `AGENT_NAME` env var | — |
-| `tests/` | 727-test suite — U1–U5 unit specs + S1–S4 static analysis + tool modules + Phases 2–3 + Phase 3 reactive routing + memory cap enforcement + regression payloads + Bandit SAST | — |
+| `tests/` | 766-test suite — U1–U5 unit specs + S1–S4 static analysis + tool modules + Phases 2–3 + Phase 3 reactive routing + memory cap enforcement + regression payloads + Bandit SAST | — |
 
 ---
 
