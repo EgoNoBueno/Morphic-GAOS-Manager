@@ -58,6 +58,7 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
     import sys
 
     from config import get_settings
+    from tools.google_sheets import init_sheets_client
     from tools.memory import load_domain_memory, query_episodic
     from tools.project_registry import load_project_registry
     from tools.pubsub import ensure_topic_exists
@@ -91,6 +92,19 @@ def _boot(state: AgentWorkingMemory) -> AgentWorkingMemory:
     except (SecretNotFoundError, SecretAccessDenied) as exc:
         _log_cloud(_AGENT_ID, pid, "security", "boot", f"STARTUP_FAILURE: {exc}", "CRITICAL")
         sys.exit(1)
+
+    # Step 2.5: init Sheets client before registry read (project_registry uses get_all_records)
+    try:
+        init_sheets_client(pid)
+    except Exception as _sheets_exc:
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            "boot",
+            f"boot: init_sheets_client failed — {_sheets_exc}",
+            "ERROR",
+        )
 
     # Step 3: Project Registry validation — registry read failure is fatal
     try:
