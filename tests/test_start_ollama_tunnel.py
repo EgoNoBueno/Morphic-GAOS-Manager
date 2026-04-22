@@ -15,12 +15,9 @@ Tests:
 from __future__ import annotations
 
 import importlib.util
-import sys
 from pathlib import Path
 from types import ModuleType
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # Loader
@@ -154,7 +151,6 @@ class TestRunTunnelOnceReturnValue:
     def test_natural_exit_returns_true(self):
         """When the tunnel process exits on its own (not health-killed), return True."""
         import subprocess
-        import threading
 
         url = "https://gaos-ollama.loca.lt"
         proc = self._make_proc(lines=[f"your url is: {url}\n", "some other line\n"])
@@ -187,7 +183,6 @@ class TestRunTunnelOnceReturnValue:
         """When the health thread kills the process, _run_tunnel_once must return False."""
         import subprocess
         import threading
-        import time
 
         url = "https://gaos-ollama.loca.lt"
 

@@ -301,10 +301,14 @@ def _collect(state: AgentWorkingMemory) -> AgentWorkingMemory:
     """Aggregate sub-agent results and decide whether to escalate."""
     results = state.get("sub_task_results", [])
     escalated = [r for r in results if r.get("status") == "escalated"]
+
+    # Calculate cycle cost for logging. State increment handled immediately in _dispatch.
+    sub_task_cost = sum(r.get("cost_usd", 0.0) for r in results)
+
     state["messages"].append(
         {
             "role": "system",
-            "content": f"Cycle results: {len(results)} tasks, {len(escalated)} escalated.",
+            "content": f"Cycle results: {len(results)} tasks, {len(escalated)} escalated. Sub-task cost: ${sub_task_cost:.4f}",
             "escalated": escalated,
         }
     )
@@ -444,7 +448,11 @@ def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 task_id=state.get("task_id", proposal.id),
                 message_type=MessageType.APPROVAL_REQUEST,
                 priority=3,
-                payload={"proposal_id": proposal.id, "code_sha256": sha256},
+                payload={
+                    "proposal_id": proposal.id,
+                    "code_sha256": sha256,
+                    "cost_usd": state.get("cost_usd", 0.0),
+                },
             ),
         )
     except Exception as exc:
@@ -503,6 +511,7 @@ def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
             "description": last_error,
             "error_fingerprint": last_error[:64],
             "tasks_attempted": len(state.get("sub_task_results", [])),
+            "cost_usd": state.get("cost_usd", 0.0),
         },
     )
     try:
@@ -610,7 +619,11 @@ def _evolve(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 task_id=state.get("task_id", proposal.id),
                 message_type=MessageType.APPROVAL_REQUEST,
                 priority=4,
-                payload={"proposal_id": proposal.id, "code_sha256": sha256},
+                payload={
+                    "proposal_id": proposal.id,
+                    "code_sha256": sha256,
+                    "cost_usd": state.get("cost_usd", 0.0),
+                },
             ),
         )
     except Exception as exc:

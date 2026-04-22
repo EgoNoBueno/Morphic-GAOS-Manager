@@ -544,9 +544,7 @@ def _call_model_gemini(
         output_price = settings.models.FAST_MODEL_OUTPUT_PRICE_PER_M
         thinking_price = float(getattr(settings.models, "FAST_MODEL_THINKING_PRICE_PER_M", 3.50))
     cost_usd = (
-        input_tokens * input_price
-        + output_tokens * output_price
-        + thinking_tokens * thinking_price
+        input_tokens * input_price + output_tokens * output_price + thinking_tokens * thinking_price
     ) / 1_000_000
 
     parsed: dict = {}

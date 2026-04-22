@@ -91,7 +91,11 @@ def _make_gcp_mocks(
     mock_run_client.projects.return_value = mock_run_proj
     mock_build = MagicMock(return_value=mock_run_client)
 
-    sub = prebuilt_subscription if prebuilt_subscription is not None else _make_sub_with_endpoint(sub_endpoint)
+    sub = (
+        prebuilt_subscription
+        if prebuilt_subscription is not None
+        else _make_sub_with_endpoint(sub_endpoint)
+    )
     mock_subscriber = MagicMock()
     mock_subscriber.get_subscription.return_value = sub
     mock_sub_cls = MagicMock(return_value=mock_subscriber)

@@ -284,10 +284,14 @@ def _dispatch(state: AgentWorkingMemory) -> AgentWorkingMemory:
 def _collect(state: AgentWorkingMemory) -> AgentWorkingMemory:
     results = state.get("sub_task_results", [])
     escalated = [r for r in results if r.get("status") == "escalated"]
+
+    # Calculate cycle cost for logging. State increment handled immediately in _dispatch.
+    sub_task_cost = sum(r.get("cost_usd", 0.0) for r in results)
+
     state["messages"].append(
         {
             "role": "system",
-            "content": f"Cycle: {len(results)} tasks, {len(escalated)} escalated.",
+            "content": f"Cycle: {len(results)} tasks, {len(escalated)} escalated. Sub-task cost: ${sub_task_cost:.4f}",
             "escalated": escalated,
         }
     )
@@ -412,7 +416,11 @@ def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 task_id=state.get("task_id", proposal.id),
                 message_type=MessageType.APPROVAL_REQUEST,
                 priority=3,
-                payload={"proposal_id": proposal.id, "code_sha256": sha256},
+                payload={
+                    "proposal_id": proposal.id,
+                    "code_sha256": sha256,
+                    "cost_usd": state.get("cost_usd", 0.0),
+                },
             ),
         )
     except Exception as exc:
@@ -459,7 +467,11 @@ def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 task_id=state.get("task_id", str(uuid.uuid4())),
                 message_type=MessageType.ESCALATION,
                 priority=3,
-                payload={"description": last_error, "error_fingerprint": last_error[:64]},
+                payload={
+                    "description": last_error,
+                    "error_fingerprint": last_error[:64],
+                    "cost_usd": state.get("cost_usd", 0.0),
+                },
             ),
         )
     except Exception as exc:
@@ -565,7 +577,13 @@ def _evolve(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 task_id=state.get("task_id", proposal.id),
                 message_type=MessageType.APPROVAL_REQUEST,
                 priority=4,
-                payload={"proposal_id": proposal.id, "code_sha256": sha256},
+                payload={
+                    "proposal_id": proposal.id,
+                    "code_sha256": sha256,
+                    # Carry the full orchestrator spend in the A2A message to allow
+                    # Nexus-Prime to update project-level budget tracking.
+                    "cost_usd": state.get("cost_usd", 0.0),
+                },
             ),
         )
     except Exception as exc:

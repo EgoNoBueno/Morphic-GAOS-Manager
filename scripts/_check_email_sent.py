@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import google.auth
 from google.cloud import logging as gcloud_logging
 
+
 def main() -> None:
     creds, _ = google.auth.default()
     creds = creds.with_quota_project("morphic-gaos-prod")

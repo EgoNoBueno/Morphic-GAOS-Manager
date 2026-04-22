@@ -37,7 +37,9 @@ def main() -> None:
         raise RuntimeError(f"Failed to fetch log entries (filter={filter_str!r}): {exc}") from exc
 
     if len(entries) == MAX_LOG_FETCH:
-        print(f"WARNING: result set hit the {MAX_LOG_FETCH}-entry limit — output may be truncated.\n")
+        print(
+            f"WARNING: result set hit the {MAX_LOG_FETCH}-entry limit — output may be truncated.\n"
+        )
 
     print(f"=== nexus-prime logs {start_str} → {end_str} ({len(entries)} entries) ===\n")
     for e in entries:
@@ -47,9 +49,21 @@ def main() -> None:
         marker = ""
         if isinstance(payload, dict):
             msg = payload.get("message", "")
-            if any(k in msg for k in ("process_gmail", "compose_reply", "send_email",
-                                       "inbound", "classify", "draft", "idempotency",
-                                       "skipping", "flood", "outbound")):
+            if any(
+                k in msg
+                for k in (
+                    "process_gmail",
+                    "compose_reply",
+                    "send_email",
+                    "inbound",
+                    "classify",
+                    "draft",
+                    "idempotency",
+                    "skipping",
+                    "flood",
+                    "outbound",
+                )
+            ):
                 marker = "  <<<<<"
         print(f"[{ts}] {str(payload)[:500]}{marker}")
 
@@ -58,4 +72,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -247,7 +247,12 @@ def _log_hard_stop(state: NexusPrimeWorkingMemory, reason: str) -> None:
     )
 
 
-def _format_heartbeat(state: NexusPrimeWorkingMemory) -> str:
+def _format_heartbeat(state: NexusPrimeWorkingMemory) -> tuple[str, float]:
+    """Summarize project state for heartbeat message.
+
+    Returns:
+        tuple[str, float]: (heartbeat text, call cost)
+    """
     from config import get_settings
 
     s = get_settings()
@@ -259,7 +264,7 @@ def _format_heartbeat(state: NexusPrimeWorkingMemory) -> str:
     # os.environ["K_SERVICE"] is set by Cloud Run; its presence means we're in a
     # container with no local Ollama. Avoids a guaranteed ConnectError + timeout.
     if model.partition("/")[0] == "ollama" and os.environ.get("K_SERVICE"):
-        return static_fallback
+        return static_fallback, 0.0
 
     summary_prompt = (
         f"Summarize in one sentence: project={state.get('project_id')}, "
@@ -269,9 +274,9 @@ def _format_heartbeat(state: NexusPrimeWorkingMemory) -> str:
     )
     try:
         resp = _call_model(summary_prompt, model=model)
-        return resp.text.strip()
+        return resp.text.strip(), resp.cost_usd
     except Exception:
-        return static_fallback
+        return static_fallback, 0.0
 
 
 def _write_to_pending_knowledge(
@@ -625,6 +630,13 @@ def monitor(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     state["incoming_message"] = msg
     state["project_id"] = msg.project_id
     state["task_id"] = msg.task_id or str(uuid.uuid4())
+
+    # Tier 1 cost recovery: If the incoming message carries a cost_usd payload
+    # (e.g. from STATUS_UPDATE or ESCALATION), add it to the state.
+    # This ensures that cost generated in Tier 2 orchestrators is preserved.
+    incoming_cost = (msg.payload or {}).get("cost_usd", 0.0)
+    state["cost_usd"] = state.get("cost_usd", 0.0) + incoming_cost
+
     state["step_count"] = state.get("step_count", 0) + 1
     _log_cloud(
         "nexus-prime",
@@ -1318,7 +1330,9 @@ def record(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
 
     # Don't re-publish a STATUS_UPDATE when already processing one — prevents
     # the nexus-prime.sub.events self-delivery loop.
-    heartbeat_text = _format_heartbeat(state)
+    heartbeat_text, heartbeat_cost = _format_heartbeat(state)
+    state["cost_usd"] = state.get("cost_usd", 0.0) + heartbeat_cost
+
     if not (msg and msg.message_type == MessageType.STATUS_UPDATE):
         heartbeat = A2AMessage(
             source_agent="nexus-prime",

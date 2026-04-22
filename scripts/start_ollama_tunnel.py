@@ -729,7 +729,9 @@ def main() -> int:
                 # before trying to reclaim the preferred subdomain.
                 _kill_orphaned_localtunnel_nodes()
             try:
-                clean_exit = _run_tunnel_once(cmd, args.no_secret, args.project, args.health_interval)
+                clean_exit = _run_tunnel_once(
+                    cmd, args.no_secret, args.project, args.health_interval
+                )
                 if clean_exit:
                     # Tunnel ran and exited naturally — reset failure streak.
                     consecutive_failures = 0

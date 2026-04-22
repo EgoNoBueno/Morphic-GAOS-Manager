@@ -308,12 +308,17 @@ def _collect(state: AgentWorkingMemory) -> AgentWorkingMemory:
     escalated = [r for r in results if r.get("status") == "escalated"]
     needs_park = bool(pending_approval) or bool(drive_approval)
     approval_count = len(pending_approval) + len(drive_approval)
+
+    # Note: Per-task costs (result["cost_usd"]) are handled immediately in _dispatch
+    # and not re-aggregated here to prevent double-counting.
+    sub_task_cost = sum(r.get("cost_usd", 0.0) for r in results)
+
     state["messages"].append(
         {
             "role": "system",
             "content": (
                 f"Cycle: {len(results)} tasks, {len(escalated)} escalated, "
-                f"{approval_count} pending approval."
+                f"{approval_count} pending approval. Sub-task cost: ${sub_task_cost:.4f}"
             ),
             "escalated": escalated,
             "needs_park": needs_park,
@@ -453,6 +458,7 @@ def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
                         "proposal_id": proposal.id,
                         "code_sha256": sha256,
                         "description": "Calendar API interaction requires approval.",
+                        "cost_usd": state.get("cost_usd", 0.0),
                     },
                 ),
             )
@@ -517,6 +523,7 @@ def _park(state: AgentWorkingMemory) -> AgentWorkingMemory:
                         "proposal_id": drive_proposal.id,
                         "code_sha256": sha256,
                         "description": f"Archivist proposed {move_count} file move(s). Review before execution.",
+                        "cost_usd": state.get("cost_usd", 0.0),
                     },
                 ),
             )
@@ -669,7 +676,11 @@ def _escalate(state: AgentWorkingMemory) -> AgentWorkingMemory:
                 task_id=state.get("task_id", str(uuid.uuid4())),
                 message_type=MessageType.ESCALATION,
                 priority=3,
-                payload={"description": last_error, "error_fingerprint": last_error[:64]},
+                payload={
+                    "description": last_error,
+                    "error_fingerprint": last_error[:64],
+                    "cost_usd": state.get("cost_usd", 0.0),
+                },
             ),
         )
     except Exception as exc:

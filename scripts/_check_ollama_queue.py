@@ -6,9 +6,8 @@ and estimated VRAM usage.  Reads OLLAMA_HOST from Secret Manager.
 
 import sys
 
-import google.auth
-from google.cloud import secretmanager
 import httpx
+from google.cloud import secretmanager
 
 PROJECT = "morphic-gaos-prod"
 
@@ -55,7 +54,7 @@ try:
     r = httpx.get(f"{host}/api/tags", timeout=10.0, headers=headers)
     r.raise_for_status()
     for m in r.json().get("models", []):
-        size_gb = m.get("size", 0) / (1024 ** 3)
+        size_gb = m.get("size", 0) / (1024**3)
         modified = m.get("modified_at", "?")[:19]
         print(f"  {m.get('name', '<unknown>'):<40} {size_gb:.1f}GB  modified={modified}")
 except Exception as exc:
