@@ -1,6 +1,6 @@
-# Gmail Integration — Implementation Plan v3
+# Gmail Integration — Implementation Plan v4
 
-_Last updated: 2026-04-03 — all phases complete and deployed_
+_Last updated: 2026-04-16 — all phases complete and hardened per Rule 29_
 
 ---
 
@@ -315,7 +315,29 @@ All mocked at the SDK boundary: `googleapiclient.discovery.build` and `tools.sec
 
 ---
 
-## Phase 10 — `config/settings.yaml`
+## Phase 10 — Watermark Resilience (Rule 29)
+
+> ⚠️ **Lesson learned — 2026-04-16:** A watermark that stalls on permanently-unavailable messages (e.g., 404s on Sent/Trash items) creates an infinite replay loop. Every new Pub/Sub notification re-fetches the same old history range, potentially flooding the system.
+
+### The Advance-Always Rule
+
+The `process_gmail_notification` node follows Rule 29: the `gmail_last_history_id` **always advances** to the `new_history_id` returned by the API, even if some messages were skipped or returned 404.
+
+```python
+# ✅ Correct — the watermark must always advance to prevent replay loops
+if new_history_id:
+    # Update System_State sheet immediately after fetch, before processing loop
+    update_row("System_State", "gmail_last_history_id", new_history_id, project_id)
+    if skipped_ids:
+        _log_cloud(..., f"advanced past {len(skipped_ids)} unavailable messages", "WARNING")
+```
+
+- **Fail-closed on 404:** Three consecutive 404s for the same message ID is treated as "permanently gone."
+- **Pointer Stall Prevention:** Never hold `gmail_last_history_id` constant simply because `skipped_ids` is non-empty.
+
+---
+
+## Phase 11 — `config/settings.yaml`
 
 Add a new `gmail:` section and `outbound:` section:
 
@@ -363,7 +385,7 @@ Both fetched at runtime via `tools.secrets.get_secret()`. Neither stored in sour
 
 ---
 
-## Phase 11 — `compose_reply` LangGraph node (implemented)
+## Phase 12 — `compose_reply` LangGraph node (implemented)
 
 > **Note:** Originally listed as out-of-scope future work. Implemented and deployed.
 
