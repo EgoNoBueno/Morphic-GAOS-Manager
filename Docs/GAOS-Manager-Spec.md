@@ -1687,24 +1687,24 @@ Inserted between Phase 2 and Phase 3. All items below must be deployed and verif
   5. Cloud Scheduler TTL sweep handles the no-response case (see Section 3.B).
 
 ### Phase 4: The Validation ("First Run") — *Complete*
-> **Status: Complete — Full GAOS stack deployed and verified 2026-04-03. GAOS-Doctor: 41 OK, 1 WARN, 0 FAIL (42 checks across 8 groups). All Tier 2 orchestrators live on Cloud Run; Pub/Sub OIDC auth verified on all 25 subscriptions.**
+> **Status: Complete — Full GAOS stack deployed and verified 2026-04-03. GAOS-Doctor: 42 OK, 0 FAIL (42 checks across 8 groups). All Tier 2 orchestrators live on Cloud Run; Pub/Sub OIDC auth verified on all 25 subscriptions.**
 
-1. Run connectivity test — verify a row appears in the sheet.
-2. Manually change status to `Approved`.
-3. Click **🤖 Agent OS > Sync**.
-4. Verify the "Approved" signal reaches Vertex.
+- [x] Run connectivity test — verify a row appears in the sheet.
+- [x] Manually change status to `Approved`.
+- [x] Click **🤖 Agent OS > Sync**.
+- [x] Verify the "Approved" signal reaches Vertex.
 
 #### Phase 4 Exit Criteria
 
 Phase 4 is complete when **all** of the following are true:
 
-1. Nexus-Prime publishes at least one `TASK` message and a Tier 2 orchestrator returns a `COMPLETED` reply within 60 seconds — confirmed in Cloud Logging.
-2. A Priority-4 or Priority-5 proposal triggers the full Approval Gate loop end-to-end: Pub/Sub push received → row written to `Agent_Approvals` → `onChangeApproval` fires → RBAC check passes → confirmation event published back to Nexus-Prime.
-3. At least one Tier 2 orchestrator completes a self-evolution loop: `EvolutionIteration` rows written, Write-Test-Refine cycle completes, `EvolutionTaskOutcome` row logged with `convergence_achieved = TRUE`.
-4. All three hard stops (iteration cap, TTL, cost cap) are individually verified to halt the evolution loop when triggered artificially in a test run.
-5. Ollama fallback verified end-to-end: stop the local Ollama service → confirm `LOCAL_MODEL_FALLBACK` (Gemini Flash) takes over → `local_fallback = true` appears in the `EvolutionTaskOutcome` log row.
-6. `post_to_webhook` HMAC validation passes all 8 tests in the test matrix (Section 14).
-7. Estimated monthly cost — projected from actual Cloud Logging `DEEP_MODEL` and `FAST_MODEL` call counts over the 7-day test run — is below **$5.00/month** at equivalent production load.
+1. [x] Nexus-Prime publishes at least one `TASK` message and a Tier 2 orchestrator returns a `COMPLETED` reply within 60 seconds — confirmed in Cloud Logging.
+2. [x] A Priority-4 or Priority-5 proposal triggers the full Approval Gate loop end-to-end: Pub/Sub push received → row written to `Agent_Approvals` → `onChangeApproval` fires → RBAC check passes → confirmation event published back to Nexus-Prime.
+3. [x] At least one Tier 2 orchestrator completes a self-evolution loop: `EvolutionIteration` rows written, Write-Test-Refine cycle completes, `EvolutionTaskOutcome` row logged with `convergence_achieved = TRUE`.
+4. [x] All three hard stops (iteration cap, TTL, cost cap) are individually verified to halt the evolution loop when triggered artificially in a test run.
+5. [x] Ollama fallback verified end-to-end: stop the local Ollama service → confirm `LOCAL_MODEL_FALLBACK` (Gemini Flash) takes over → `local_fallback = true` appears in the `EvolutionTaskOutcome` log row.
+6. [x] `post_to_webhook` HMAC validation passes all 8 tests in the test matrix (Section 14).
+7. [x] Estimated monthly cost — projected from actual Cloud Logging `DEEP_MODEL` and `FAST_MODEL` call counts over the 7-day test run — is below **$5.00/month** at equivalent production load.
 
 ### Phase 5: CEO Dashboard (Grafana) — *Complete*
 > **Status: Complete — Grafana deployed on Cloud Run. Dashboard panels are version-controlled as JSON in `dashboard/grafana/`. Vertex Agent Engine remains future scope.**
@@ -1729,7 +1729,7 @@ Phase 4 is complete when **all** of the following are true:
 
 | Component | Google Service | Status |
 |-----------|---------------|--------|
-| Logic/Reasoning | Gemini 2.5 + Google ADK | [x] |
+| Logic/Reasoning | Gemini 2.x (Settings-defined) | [x] |
 | Code Execution | Vertex AI Sandbox | [ ] |
 | Messaging | Cloud Pub/Sub | [x] |
 | Proactive Trigger | Cloud Scheduler | [x] |
