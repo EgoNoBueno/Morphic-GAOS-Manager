@@ -671,10 +671,16 @@ def _discover(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
     settings = get_settings()
     pid = state["project_id"]
-    payload = msg.payload or {}
+    # MemorySaver may deserialise A2AMessage as a plain dict — handle both.
+    if isinstance(msg, dict):
+        payload = msg.get("payload") or {}
+        msg_task_id = msg.get("task_id")
+    else:
+        payload = msg.payload or {}
+        msg_task_id = msg.task_id
     # RESEARCH_MANDATE payloads use "research_domain"; normalise to "topic" here
     topic = payload.get("topic") or payload.get("research_domain", "")
-    mandate_id = payload.get("mandate_id") or msg.task_id or str(uuid.uuid4())
+    mandate_id = payload.get("mandate_id") or msg_task_id or str(uuid.uuid4())
     max_depth = settings.google_search.max_search_depth
     max_queries = settings.google_search.max_queries_per_mandate
 
@@ -806,8 +812,13 @@ def _inject_knowledge(state: AgentWorkingMemory) -> AgentWorkingMemory:
 
     pid = state["project_id"]
     msg = state.get("incoming_message")
-    mandate_id: str = (msg.task_id if msg else None) or str(uuid.uuid4())
-    payload = (msg.payload or {}) if msg else {}
+    # MemorySaver may deserialise A2AMessage as a plain dict — handle both.
+    if isinstance(msg, dict):
+        mandate_id: str = msg.get("task_id") or str(uuid.uuid4())
+        payload = msg.get("payload") or {}
+    else:
+        mandate_id = (msg.task_id if msg else None) or str(uuid.uuid4())
+        payload = (msg.payload or {}) if msg else {}
     corroborated = state.get("observation_buffer", [])
     total_found = len(state.get("sub_task_results", []))
 
@@ -883,7 +894,14 @@ def _route_after_boot(state: AgentWorkingMemory) -> str:
     All other messages follow the standard plan→dispatch→collect path.
     """
     msg = state.get("incoming_message")
-    if msg and msg.message_type == MessageType.RESEARCH_MANDATE:
+    if msg is None:
+        return "plan"
+    # MemorySaver may deserialise the A2AMessage back as a plain dict — handle both.
+    if isinstance(msg, dict):
+        msg_type = msg.get("message_type")
+    else:
+        msg_type = msg.message_type
+    if msg_type == MessageType.RESEARCH_MANDATE:
         return "discover"
     return "plan"
 
