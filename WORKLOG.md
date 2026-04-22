@@ -3,26 +3,21 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
-## 2026-04-22T00:51-07:00 — Completed: Standardized cost accumulation and propagation
+## 2026-04-22T01:06-07:00 — Documentation Audit & Compliance Cleanup
 
 ### What was done
-- Completed the "Standardize cost accumulation" task across all orchestrators to ensure budget tracking transparency.
-- **Root cause resolution:** Noticed that tasks "parked" for human approval or involving parallel sub-task execution (Tier 2 agents) were losing their accumulated `cost_usd` context before reaching the final `task_outcomes` record in BigQuery.
-- **Fix 1: Parallel Cost De-duplication:** Verified all Tier 2 agents (`scout`, `beacon`, `foreman`, `ledger`, `pursuit`, `steward`) now manually sum `cost_usd` from `sub_task_results` in their `_collect` node for logging purposes only. The state increment is handled immediately in their `_dispatch` (per-task) node to ensure the global `state["cost_usd"]` remains accurate during parallel execution and prevents double-counting upon collection.
-- **Fix 2: A2A Cost Injection:** Updated `APPROVAL_REQUEST` and `ESCALATION` Pub/Sub payloads in all Tier 2 orchestrators to explicitly include `cost_usd`. This ensures that when Nexus-Prime handles these signals, it has the current spend for the entire branch of the task tree.
-- **Fix 3: Nexus-Prime Internal Tracking:** Fixed two sites in `nexus_prime/orchestrator.py` where `_call_model` results (specifically single-sentence summaries) were not being added to `state["cost_usd"]`.
-- **Verified:** All `APPROVAL_REQUEST` sites across all orchestrators now carry the standard `{..., "cost_usd": state.get("cost_usd", 0.0)}` payload.
-- **Fix 4: Spend Checker Refactoring:** Hardened `scripts/_check_gemini_spend.py` by whitelisting dynamic SQL columns, adding null-fallsbacks, and ensuring consistent output.
-- **Fix 5: Foreman Cost Documentation:** Documented the intentional difference between `ApprovalProposal.total_cost_usd` (limited to the evolution loop) and `A2AMessage.payload.cost_usd` (total accumulated orchestrator spend).
+- Conducted a project-wide audit of [Docs/GAOS-Manager-Spec.md](Docs/GAOS-Manager-Spec.md) and [Docs/Morphic-GAOS-Manager-Summary.md](Docs/Morphic-GAOS-Manager-Summary.md) against the live codebase.
+- **Fixed Code-Spec Divergence:** Discovered `importlib` was listed as a blocked pattern in the spec but was missing from `_BLOCKED_PATTERNS` in [agents/__init__.py](agents/__init__.py). Added it to restore safety parity.
+- **Verified Test Parity:** Confirmed test suite has grown to 766 collected tests (vs 727 cited in summary).
+- **Verified Tooling Parity:** Confirmed 19 tool modules in `tools/` (excluding `__init__.py`), matching summary metrics.
+- **Verified Orchestrator Parity:** Confirmed all 7 orchestrators are active and have standardized cost logic.
+- **Improved Summary Accuracy:** Updated progress metrics in the project summary file.
 
 ### Files changed
-- `agents/beacon/orchestrator.py` — Fixed double-counting in `_collect`; costs are now handled exclusively in `_dispatch`. Added `APPROVAL_REQUEST` cost injection.
-- `agents/foreman/orchestrator.py` — Fixed double-counting in `_collect`; costs are now handled exclusively in `_dispatch`. Added `APPROVAL_REQUEST` cost injection.
-- `agents/ledger/orchestrator.py` — Fixed double-counting in `_collect`; costs are now handled exclusively in `_dispatch`. Added `APPROVAL_REQUEST` cost injection.
-- `agents/pursuit/orchestrator.py` — Fixed double-counting in `_collect`; costs are now handled exclusively in `_dispatch`. Added `APPROVAL_REQUEST` cost injection.
-- `agents/scout/orchestrator.py` — Fixed double-counting in `_collect`; costs are now handled exclusively in `_dispatch`. Added `APPROVAL_REQUEST` cost injection.
-- `agents/steward/orchestrator.py` — Fixed double-counting in `_collect`; costs are now handled exclusively in `_dispatch`. Added `APPROVAL_REQUEST` cost injection.
-- `agents/nexus_prime/orchestrator.py` — cost accumulation added to `_summarize_project_state`; fixed `handle_archive` (deleted invalid `state` reference, kept local `cost_usd` aggregation); refactored `_format_heartbeat` to return `(text, cost)` instead of mutating state; simplified `incoming_cost` logic in `monitor` node.
+- [agents/__init__.py](agents/__init__.py) — Added `importlib` to `_BLOCKED_PATTERNS` to match [GAOS-Manager-Spec.md](Docs/GAOS-Manager-Spec.md).
+- [Docs/Morphic-GAOS-Manager-Summary.md](Docs/Morphic-GAOS-Manager-Summary.md) — Updated test counts and finalized phase completion statuses.
+
+## 2026-04-22T01:03-07:00 — Completed: Standardized cost accumulation and propagation
 - `agents/__init__.py` — (previous task) Reasoning pricing and thinking token extraction
 - `main.py` — (previous task) 204 Ack for spending cap ResourceExhausted errors
 

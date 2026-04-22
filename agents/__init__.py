@@ -573,6 +573,7 @@ _BLOCKED_PATTERNS = [
     "socket.connect",
     "pickle.loads",
     "pickle.load",
+    "importlib",
 ]
 _ALLOWED_IMPORTS = {
     "datetime",

@@ -28,7 +28,7 @@ The system is designed to run at **minimal operating cost** by routing routine w
 
 6. **Layered Memory** — Scratchpad → BigQuery (episodic) → Sheets staging buffer → Vertex AI Memory Bank (long-term). Agents propose learnings; Nexus-Prime promotes them to permanent memory only after owner approval.
 
-**Current State (Phases 1–4 nearly complete, Phase 5 complete):** All 7 orchestrators, the full tool layer (19 modules including `gmail.py`, `google_chat.py`, `vertex_search.py`, `google_docs.py`, `google_search.py`, `memory_mirror.py`, `circuit_breaker.py`, `phoenix.py`, and `infra_provision.py`), and a **727-test suite** are built and passing. Phases 1 through 3 and Phase 5 are complete. Phase 4 is nearly complete: GAOS-Doctor (33/33 passed 2026-03-21), Approval Gate `/sync` E2E (PASS 2026-04-03), Vision blueprint E2E (PASS 2026-04-03), and `VERTEX_AGENT_ENDPOINT` Script Property (set 2026-04-03) are all done. The single remaining Phase 4 item is the 7-day billing dashboard verification (~2026-04-10). Vertex Agent Engine remains future scope.
+**Current State (Phases 1–4 complete, Phase 5 complete):** All 7 orchestrators, the full tool layer (19 modules including `gmail.py`, `google_chat.py`, `vertex_search.py`, `google_docs.py`, `google_search.py`, `memory_mirror.py`, `circuit_breaker.py`, `phoenix.py`, and `infra_provision.py`), and a **766-test suite** are built and passing. Phases 1 through 5 are now complete. Phase 4 exit criteria (GAOS-Doctor 42/42 checks, Approval Gate `/sync` E2E, Vision blueprint E2E, and 7-day billing verification) have all been met. Vertex Agent Engine remains future scope.
 
 ---
 
