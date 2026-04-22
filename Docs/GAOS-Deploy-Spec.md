@@ -723,7 +723,7 @@ gcloud projects add-iam-policy-binding $PROJECT \
   --role="roles/iam.serviceAccountTokenCreator"
 ```
 
-**Step D — Create all 22 subscriptions:**
+**Step D — Create all 23 subscriptions:**
 
 > ⚠️ **Replace the URLs below with your own.** The URLs in the `URLS` array are from the original deployment and will not work for a new project. Get your actual URLs after completing §9 by running:
 > ```bash
@@ -774,7 +774,8 @@ for sub_agent_topic in \
   "foreman.sub.pursuit:foreman:agent.pursuit.events" \
   "beacon.sub.pursuit:beacon:agent.pursuit.events" \
   "beacon.sub.scout:beacon:agent.scout.events" \
-  "scout.sub.foreman:scout:agent.foreman.events"; do
+  "scout.sub.foreman:scout:agent.foreman.events" \
+  "scout.sub.nexus-prime:scout:agent.nexus-prime.events"; do
     IFS=: read name subscriber topic <<< "$sub_agent_topic"
     gcloud pubsub subscriptions create $name \
       --topic="${BASE}/${topic}" \
@@ -784,7 +785,7 @@ for sub_agent_topic in \
 done
 ```
 
-**Verification:** `gcloud pubsub subscriptions list --project=$PROJECT --format="table(name,pushConfig.pushEndpoint)"` — 22 subscriptions listed, all pointing to `*.run.app/pubsub`.
+**Verification:** `gcloud pubsub subscriptions list --project=$PROJECT --format="table(name,pushConfig.pushEndpoint)"` — 23 subscriptions listed, all pointing to `*.run.app/pubsub`.
 
 ---
 
@@ -1515,8 +1516,9 @@ Phase 4 is complete — and the system is **production-ready** — when **every 
 
 > *URLs in this section are from the original deployment. Your deployment URLs will be different — use your `gcloud run services list` output.*
 
-- [x] All Pub/Sub push subscriptions confirmed: 22 subscriptions exist with OIDC push auth; `pubsub-push-sa` has `roles/run.invoker` on all 7 services; Pub/Sub service agent granted `roles/iam.serviceAccountTokenCreator` — 2026-03-21. URLs use `*-975461050387.us-central1.run.app` (confirmed valid alias per `run.googleapis.com/urls` annotation — both URL formats work)
+- [x] All Pub/Sub push subscriptions confirmed: 23 subscriptions exist with OIDC push auth; `pubsub-push-sa` has `roles/run.invoker` on all 7 services; Pub/Sub service agent granted `roles/iam.serviceAccountTokenCreator` — 2026-03-21. URLs use `*-975461050387.us-central1.run.app` (confirmed valid alias per `run.googleapis.com/urls` annotation — both URL formats work)
   > *(Note: 2026-04-02 — 8 `/pubsub` push subscriptions were found to be missing `--push-auth-service-account` (OIDC). All re-configured; a 9th Gmail subscription was already correct. All 25 active subscriptions verified with OIDC auth as of 2026-04-03.)*
+  > *(Note: 2026-04-21 — `scout.sub.nexus-prime` added so Scout receives `RESEARCH_MANDATE` messages published to `agent.nexus-prime.events`. Required for MC1–MC3 marketing channel research mandates. Now 23 subscriptions total.)*
 - [x] `VERTEX_AGENT_ENDPOINT` Script Property in Apps Script updated via Apps Script editor → Project Settings → Script Properties — set to `https://nexus-prime-975461050387.us-central1.run.app/sync` — 2026-04-03
 - [x] `CLOUD_RUN_URL` environment variable on `nexus-prime` — **set automatically by CI/CD pipeline** (`Wire CLOUD_RUN_URL on nexus-prime` step in apply job reads TF output `nexus_prime_url` and updates the service in-place)
 - [x] `settings.yaml` `chat.owner_space` set to `spaces/jbpdpSAAAAE` — confirmed 2026-03-21 via `Select-String owner_space config/settings.yaml`

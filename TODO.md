@@ -9,7 +9,7 @@ See `Docs/Automation-Wish-List.md` for the full Wish List and item details.
 
 - [x] **Close Phase 4** — ✅ 2026-04-20 — §4e reviewed: $1.83 net / $82.43 gross for Apr 1–20. Credits offset Cloud Run ($77.20) and infra costs. Gross run rate ~$115/month Cloud Run alone — elevated by incident storms. See §4e warning in GAOS-Deploy-Spec.md.
 - [ ] **n8n pilot (BI5)** — Create free n8n Cloud account. Build Option E: GA4 → KPI Sheet → daily digest email. Run for 14 days. This validates n8n before it is used for any channel automation. See `GAOS-n8n-Integration-Spec.md §5 Option E`.
-- [ ] **Add Google Search secrets** — Create `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_CX` in Secret Manager (`morphic-gaos-prod`). Required before any Scout `RESEARCH_MANDATE` (MC1+MC2) can run. Get the Custom Search Engine ID from [cse.google.com](https://cse.google.com) and the API key from Google Cloud Console → Credentials.
+- [x] **Add Google Search secrets** — `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_CX` both present in Secret Manager (`morphic-gaos-prod`). ✅
 
 ---
 

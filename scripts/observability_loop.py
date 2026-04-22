@@ -59,6 +59,7 @@ _NEXUS_SUB_SUFFIXES: list[str] = [
     "nexus-prime.sub.foreman",
     "nexus-prime.sub.steward",
     "nexus-prime.sub.scout",
+    "scout.sub.nexus-prime",
 ]
 
 
