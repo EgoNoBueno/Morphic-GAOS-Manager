@@ -3,6 +3,23 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-04-22T00:15-07:00 — Fixed: Grafana CEO Dashboard heartbeat query 400 error
+
+### What was done
+- Diagnosed BigQuery 400 error in `gaos-ceo-overview` dashboard panel 1 ("Agent Status").
+- Root cause: `TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), timestamp, MINUTE)` fails because the
+  `status_snapshots` table defines `timestamp` as a `STRING` (ISO format from `utcnow_iso()`).
+  BigQuery requires a `TIMESTAMP` or `DATETIME` for both arguments.
+- Fixed `dashboard/grafana/dashboards/ceo-overview.json` by adding `CAST(timestamp AS TIMESTAMP)`
+  to the heartbeat SQL query.
+
+### Files changed
+- `dashboard/grafana/dashboards/ceo-overview.json` — heartbeat SQL updated with CAST
+
+### What's next
+1. Continue with Gemini cap resolution (previous task).
+2. Monitor Grafana dashboard health.
+
 ## 2026-04-22T00:00-07:00 — Completed: Fix Gemini thinking cost, monthly cap retry storm
 
 ### What was done
