@@ -70,11 +70,11 @@ The dashboard is organised top-to-bottom into five logical sections (business KP
 
 | Tile | Value | BQ table | Threshold |
 |------|-------|----------|-----------|
-| **Approval Queue — Oldest Age** | Minutes since the oldest pending approval was submitted | `aos_logs.approval_history` WHERE `status = 'pending'` | Green <60 min · Yellow 60–240 min · **Red ≥240 min** |
+| **Approval Queue — Oldest Age** | Minutes since the oldest pending approval was submitted | `aos_logs.staging_approvals` WHERE `status = 'pending'` | Green <60 min · Yellow 60–240 min · **Red ≥240 min** |
 | **Tasks Completed (24h)** | Count of rows written to `task_outcomes` in the last 24 hours | `aos_logs.task_outcomes` | Blue (no alert threshold) |
 | **Cost This Week (USD)** | `SUM(cost_usd)` since the start of the current ISO week (Monday) | `aos_logs.task_outcomes` | Green (no alert threshold) |
 
-> **Cost data note:** `cost_usd` values in `task_outcomes` reflect real computed costs from `prompt_token_count` × `FAST_MODEL_INPUT_PRICE_PER_M` + `candidates_token_count` × `FAST_MODEL_OUTPUT_PRICE_PER_M` (and Pro pricing for `DEEP_MODEL` calls). On the AI Studio free tier actual billing is $0, but the cost is tracked for capacity planning. Values are non-zero starting from the 2026-04-21 deployment.
+> **Cost data note:** `cost_usd` values in `task_outcomes` reflect real computed costs including token rates and thinking budget — see `config/settings.yaml` for active Gemini pricing.
 
 > **Note:** "Approval Queue — Oldest Age" uses `PARSE_TIMESTAMP` on a string-encoded ISO-8601 timestamp column. The stat turns red at 4 hours — meaning a proposal has been waiting for human action longer than a full work block.
 
@@ -154,7 +154,7 @@ Most recent 20 entries with severity `ERROR`, `CRITICAL`, `ALERT`, or `EMERGENCY
 
 **BQ table:** `morphic-gaos-prod.aos_logs.gaos_agents` filtered by `severity IN ('ERROR','CRITICAL','ALERT','EMERGENCY')`
 
-> **Note:** `staging_errors` (previously used here) was always empty. The `error_type` column no longer appears in this panel — the Cloud Logging sink schema does not include it.
+> **Note:** `staging_errors` (previously used here) was always empty. The `agent_id` and `message` fields are extracted from the `jsonPayload` column in the BQ sink.
 
 ---
 
@@ -198,6 +198,8 @@ One row per `api_name`. Columns:
 | avg latency (ms) | `AVG(latency_ms)` all-time | Green <1 s · Yellow 1–5 s · **Red** ≥5 s |
 
 **BQ table:** `morphic-gaos-prod.aos_logs.api_call_log`
+
+> **Schema note:** Many queries in the dashboard use `CAST(... AS FLOAT64)` or `CAST(... AS TIMESTAMP)` for columns written as strings or integers to ensure Grafana handles the types correctly. For example, some cost calculations in the `api_call_log` may require extracting values from metadata using `JSON_VALUE`.
 
 #### API Calls — Success vs Failure (Last 24h) — bar chart
 
