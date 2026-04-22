@@ -31,6 +31,16 @@ models:
   # log summarisation) use LOCAL_MODEL, so the extra wait does not affect
   # interactive response time.
   LOCAL_MODEL_TIMEOUT_SECONDS: 30
+  # Pricing per 1M tokens (USD)
+  FAST_MODEL_INPUT_PRICE_PER_M: 0.15
+  FAST_MODEL_OUTPUT_PRICE_PER_M: 0.60    # non-thinking text output
+  FAST_MODEL_THINKING_PRICE_PER_M: 3.50  # Flash thinking tokens (billed separately)
+  DEEP_MODEL_INPUT_PRICE_PER_M: 1.25
+  DEEP_MODEL_OUTPUT_PRICE_PER_M: 10.00
+  DEEP_MODEL_THINKING_PRICE_PER_M: 3.50  # Pro thinking tokens
+  # 0 = disabled, -1 = dynamic. FAST_MODEL defaults to 0 to prevent $3.50/1M surprise spend.
+  FAST_MODEL_THINKING_BUDGET: 0
+  DEEP_MODEL_THINKING_BUDGET: -1
 
 # Pub/Sub topic names that Nexus-Prime monitors and validates at boot.
 pubsub:

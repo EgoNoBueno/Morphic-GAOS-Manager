@@ -447,7 +447,29 @@ async def pubsub(request: Request) -> Response:
         result = await agent.run(envelope)
         log.info("Agent '%s' completed task: %s", _AGENT_NAME, getattr(result, "task_id", "?"))
     except Exception as exc:
-        # Return 500 so Pub/Sub retries the message.
+        # Gemini monthly spending cap: returning 500 here causes Pub/Sub to redeliver
+        # every ~5 min indefinitely (each delivery spins a new container with a fresh
+        # in-memory circuit breaker, bypassing the 48 h cooldown set in _call_model_gemini).
+        # Return 204 to ack the message and stop the retry storm.  The operator must
+        # raise/remove the cap at https://ai.studio/spend then re-fire the task.
+        try:
+            from google.api_core import exceptions as _gapi_exc
+
+            _is_cap = isinstance(exc, _gapi_exc.ResourceExhausted) and (
+                "spending cap" in str(exc).lower() or "monthly" in str(exc).lower()
+            )
+        except ImportError:
+            _is_cap = False
+        if _is_cap:
+            log.error(
+                "Gemini monthly spending cap exceeded — acking Pub/Sub message to stop "
+                "retry storm. Raise the cap at https://ai.studio/spend then re-fire "
+                "the task. Agent: %s. Error: %s",
+                _AGENT_NAME,
+                exc,
+            )
+            return Response(status_code=204)
+        # For all other exceptions, return 500 so Pub/Sub retries the message.
         log.exception("Agent '%s' raised an exception: %s", _AGENT_NAME, exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

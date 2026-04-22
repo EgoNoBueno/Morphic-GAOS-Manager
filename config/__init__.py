@@ -40,9 +40,16 @@ class ModelAliases(BaseModel):
     # Pricing per 1M tokens (USD) — used to compute cost_usd from token counts.
     # Update these when switching model versions or moving to a paid tier.
     FAST_MODEL_INPUT_PRICE_PER_M: float = 0.15
-    FAST_MODEL_OUTPUT_PRICE_PER_M: float = 0.60
+    FAST_MODEL_OUTPUT_PRICE_PER_M: float = 0.60   # non-thinking text output
+    FAST_MODEL_THINKING_PRICE_PER_M: float = 3.50  # Flash thinking tokens (billed separately)
     DEEP_MODEL_INPUT_PRICE_PER_M: float = 1.25
     DEEP_MODEL_OUTPUT_PRICE_PER_M: float = 10.00
+    DEEP_MODEL_THINKING_PRICE_PER_M: float = 3.50  # Pro thinking tokens (billed separately)
+    # Thinking budget: 0 = disabled, -1 = dynamic (expensive — enables full thinking mode).
+    # FAST_MODEL defaults to 0 (disabled) to prevent surprise spend at $3.50/1M.
+    # DEEP_MODEL defaults to -1 (dynamic) for complex reasoning tasks.
+    FAST_MODEL_THINKING_BUDGET: int = 0
+    DEEP_MODEL_THINKING_BUDGET: int = -1
 
 
 class MemoryBankConfig(BaseModel):

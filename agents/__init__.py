@@ -444,6 +444,21 @@ def _call_model_gemini(
     client = genai.Client(api_key=api_key)
     full_prompt = f"System: {system_prompt}\n\n{prompt}" if system_prompt else prompt
 
+    # ── Thinking config ───────────────────────────────────────────────────────
+    # Gemini 2.5 Flash has dynamic thinking enabled by default — billed at
+    # $3.50/1M (≈6× the $0.60/1M non-thinking output rate).  FAST_MODEL disables
+    # thinking (budget=0) by default to prevent surprise spend.  Set
+    # FAST_MODEL_THINKING_BUDGET: -1 in settings.yaml to re-enable dynamic thinking.
+    # DEEP_MODEL keeps dynamic thinking (-1) for complex multi-step reasoning.
+    _thinking_budget = (
+        int(getattr(settings.models, "DEEP_MODEL_THINKING_BUDGET", -1))
+        if model == settings.models.DEEP_MODEL
+        else int(getattr(settings.models, "FAST_MODEL_THINKING_BUDGET", 0))
+    )
+    _gen_config = genai_types.GenerateContentConfig(
+        thinking_config=genai_types.ThinkingConfig(thinking_budget=_thinking_budget)
+    )
+
     try:
         if image_bytes is not None:
             # Detect format from magic bytes (imghdr is deprecated in 3.11+)
@@ -459,17 +474,40 @@ def _call_model_gemini(
                 genai_types.Part.from_bytes(data=image_bytes, mime_type=detected_mime),
                 genai_types.Part.from_text(text=full_prompt),
             ]
-            response = client.models.generate_content(model=model, contents=contents)
+            response = client.models.generate_content(
+                model=model, contents=contents, config=_gen_config
+            )
         else:
-            response = client.models.generate_content(model=model, contents=full_prompt)
+            response = client.models.generate_content(
+                model=model, contents=full_prompt, config=_gen_config
+            )
     except gapi_exc.ResourceExhausted as exc:
-        cb_failure(_CB_AGENT, _cb_model_key, failure_threshold=1, cooldown_seconds=3600)
-        logger.warning(
-            "Gemini quota exhausted (429) for model '%s'. Circuit open for 1 h. "
-            "No further calls to this model until cooldown expires. Error: %s",
-            model,
-            exc,
-        )
+        # Distinguish monthly spending cap (won't clear without manual action at
+        # https://ai.studio/spend) from a per-minute/per-day rate limit.
+        # Monthly cap: reset and re-trip the circuit with a 48 h cooldown so the
+        # same container doesn't retry.  The Pub/Sub handler also returns 204
+        # (ack) to prevent infinite re-delivery across container instances.
+        from tools.circuit_breaker import reset as cb_reset
+
+        _exc_str = str(exc).lower()
+        _is_monthly_cap = "spending cap" in _exc_str or "monthly" in _exc_str
+        if _is_monthly_cap:
+            cb_reset(_CB_AGENT, _cb_model_key)
+            cb_failure(_CB_AGENT, _cb_model_key, failure_threshold=1, cooldown_seconds=48 * 3600)
+            logger.error(
+                "Gemini MONTHLY SPENDING CAP exceeded for model '%s'. Circuit open for 48 h. "
+                "Go to https://ai.studio/spend to raise or remove the cap. Error: %s",
+                model,
+                exc,
+            )
+        else:
+            cb_failure(_CB_AGENT, _cb_model_key, failure_threshold=1, cooldown_seconds=3600)
+            logger.warning(
+                "Gemini quota exhausted (429) for model '%s'. Circuit open for 1 h. "
+                "No further calls to this model until cooldown expires. Error: %s",
+                model,
+                exc,
+            )
         raise
     except gapi_exc.InvalidArgument as exc:
         cb_failure(_CB_AGENT, _cb_apikey_key, failure_threshold=1, cooldown_seconds=86400)
@@ -488,18 +526,28 @@ def _call_model_gemini(
     usage = getattr(response, "usage_metadata", None)
     input_tokens = int(getattr(usage, "prompt_token_count", 0) or 0)
     output_tokens = int(getattr(usage, "candidates_token_count", 0) or 0)
-    tokens_used = int(getattr(usage, "total_token_count", 0) or 0) or (input_tokens + output_tokens)
+    thinking_tokens = int(getattr(usage, "thoughts_token_count", 0) or 0)
+    tokens_used = int(getattr(usage, "total_token_count", 0) or 0) or (
+        input_tokens + output_tokens + thinking_tokens
+    )
 
-    # Compute estimated cost from token counts using configured per-model pricing.
-    # On AI Studio free tier actual spend is $0, but this tracks equivalent cost
-    # for capacity planning and the Grafana cost panels.
+    # Compute cost from token counts.  Thinking tokens are billed separately at
+    # THINKING_PRICE_PER_M ($3.50/1M for Flash — ≈6× the $0.60/1M text output rate).
+    # Omitting them caused severe cost under-reporting when thinking was enabled by
+    # default on Gemini 2.5 Flash, burning through the monthly spending cap.
     if model == settings.models.DEEP_MODEL:
         input_price = settings.models.DEEP_MODEL_INPUT_PRICE_PER_M
         output_price = settings.models.DEEP_MODEL_OUTPUT_PRICE_PER_M
+        thinking_price = float(getattr(settings.models, "DEEP_MODEL_THINKING_PRICE_PER_M", 3.50))
     else:
         input_price = settings.models.FAST_MODEL_INPUT_PRICE_PER_M
         output_price = settings.models.FAST_MODEL_OUTPUT_PRICE_PER_M
-    cost_usd = (input_tokens * input_price + output_tokens * output_price) / 1_000_000
+        thinking_price = float(getattr(settings.models, "FAST_MODEL_THINKING_PRICE_PER_M", 3.50))
+    cost_usd = (
+        input_tokens * input_price
+        + output_tokens * output_price
+        + thinking_tokens * thinking_price
+    ) / 1_000_000
 
     parsed: dict = {}
     if parse_json and text:

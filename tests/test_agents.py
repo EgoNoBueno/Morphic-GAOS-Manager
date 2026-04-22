@@ -739,14 +739,19 @@ class TestGeminiAIStudio:
         cb_reset("agents", "gemini-api-key")
 
     def _make_mock_response(
-        self, text: str = "ok", input_tokens: int = 100, output_tokens: int = 50
+        self,
+        text: str = "ok",
+        input_tokens: int = 100,
+        output_tokens: int = 50,
+        thinking_tokens: int = 0,
     ):
         mock_resp = MagicMock()
         mock_resp.text = text
         mock_resp.usage_metadata = MagicMock()
         mock_resp.usage_metadata.prompt_token_count = input_tokens
         mock_resp.usage_metadata.candidates_token_count = output_tokens
-        mock_resp.usage_metadata.total_token_count = input_tokens + output_tokens
+        mock_resp.usage_metadata.thoughts_token_count = thinking_tokens
+        mock_resp.usage_metadata.total_token_count = input_tokens + output_tokens + thinking_tokens
         return mock_resp
 
     def test_client_initialised_with_api_key_only(self):
@@ -785,15 +790,77 @@ class TestGeminiAIStudio:
         with patch("google.genai.Client") as mock_client_cls:
             mock_client = MagicMock()
             mock_client.models.generate_content.return_value = self._make_mock_response(
-                input_tokens=1000, output_tokens=500
+                input_tokens=1000, output_tokens=500, thinking_tokens=0
             )
             mock_client_cls.return_value = mock_client
             with patch("tools.secrets.get_secret", return_value="test-api-key"):
                 result = _call_model("prompt", model="gemini-2.5-flash")
 
-        # 1000 * $0.15/M input + 500 * $0.60/M output = $0.00015 + $0.0003 = $0.00045
+        # 1000 * $0.15/M input + 500 * $0.60/M output + 0 thinking = $0.00045
         assert result.cost_usd == pytest.approx(0.00045, rel=1e-3)
         assert result.cost_usd > 0.0
+
+    def test_thinking_tokens_included_in_cost(self):
+        """Thinking tokens must be counted in cost_usd at FAST_MODEL_THINKING_PRICE_PER_M."""
+        from agents import _call_model
+
+        with patch("google.genai.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.models.generate_content.return_value = self._make_mock_response(
+                input_tokens=1000, output_tokens=500, thinking_tokens=200
+            )
+            mock_client_cls.return_value = mock_client
+            with patch("tools.secrets.get_secret", return_value="test-api-key"):
+                result = _call_model("prompt", model="gemini-2.5-flash")
+
+        # 1000*$0.15/M + 500*$0.60/M + 200*$3.50/M = $0.00015 + $0.0003 + $0.0007 = $0.00115
+        expected = (1000 * 0.15 + 500 * 0.60 + 200 * 3.50) / 1_000_000
+        assert result.cost_usd == pytest.approx(expected, rel=1e-3)
+        assert result.tokens_used == 1700  # 1000 + 500 + 200
+
+    def test_fast_model_thinking_disabled_by_default(self):
+        """FAST_MODEL calls must pass GenerateContentConfig with thinking_budget=0."""
+        from agents import _call_model
+
+        with patch("google.genai.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.models.generate_content.return_value = self._make_mock_response()
+            mock_client_cls.return_value = mock_client
+            with patch("tools.secrets.get_secret", return_value="test-api-key"):
+                _call_model("prompt", model="gemini-2.5-flash")
+
+        call_kwargs = mock_client.models.generate_content.call_args[1]
+        config = call_kwargs.get("config")
+        assert config is not None, "GenerateContentConfig must be passed to generate_content"
+        assert config.thinking_config.thinking_budget == 0, (
+            "FAST_MODEL thinking_budget must be 0 (disabled) by default"
+        )
+
+    def test_monthly_spending_cap_logs_error_not_warning(self):
+        """Monthly spending cap 429 must be logged as ERROR (not WARNING)."""
+        from google.api_core.exceptions import ResourceExhausted
+
+        from agents import _call_model
+
+        cap_exc = ResourceExhausted(
+            "Your project has exceeded its monthly spending cap. "
+            "Please go to AI Studio at https://ai.studio/spend to manage your project spend cap."
+        )
+        with patch("google.genai.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.models.generate_content.side_effect = cap_exc
+            mock_client_cls.return_value = mock_client
+            with patch("tools.secrets.get_secret", return_value="test-api-key"):
+                with patch("agents.logger") as mock_logger:
+                    with pytest.raises(ResourceExhausted):
+                        _call_model("prompt", model="gemini-2.5-flash")
+
+        mock_logger.error.assert_called_once()
+        error_msg = mock_logger.error.call_args[0][0]
+        assert "MONTHLY SPENDING CAP" in error_msg or "spending cap" in error_msg.lower()
+        # Must NOT log a warning for this error
+        for call in mock_logger.warning.call_args_list:
+            assert "quota" not in (call[0][0] if call[0] else "").lower()
 
     def test_tokens_used_is_tracked(self):
         """tokens_used must reflect total_token_count from usage_metadata."""
