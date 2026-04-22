@@ -908,6 +908,7 @@ def knowledge_review(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
     prompt = _build_knowledge_review_prompt(candidate, duplicates)
     resp = _call_model(prompt, model=_model_for_node("knowledge_review"), parse_json=True)
     state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+    state["tokens_used"] = state.get("tokens_used", 0) + resp.tokens_used
 
     confidence = resp.data.get("confidence", 0.0)
     is_dup = resp.data.get("is_duplicate", True)
@@ -1180,6 +1181,7 @@ def conflict_resolve(state: NexusPrimeWorkingMemory) -> NexusPrimeWorkingMemory:
         prompt = _build_conflict_prompt(conflict)
         resp = _call_model(prompt, model=_model_for_node("conflict_resolve"), parse_json=True)
         state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+        state["tokens_used"] = state.get("tokens_used", 0) + resp.tokens_used
 
         broadcast = A2AMessage(
             source_agent="nexus-prime",

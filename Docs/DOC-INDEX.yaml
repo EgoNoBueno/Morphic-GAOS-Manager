@@ -181,11 +181,14 @@ documents:
   GAOS-Security-Policy.md:
     purpose: >
       Security policy — code safety gates, import allowlist, HMAC verification,
-      JWT auth, secret handling, and SHA-256 pinning for approval proposals.
+      JWT auth, secret handling, SHA-256 pinning, loop prevention (Rule 26),
+      watermark advancement (Rule 29), and fail-closed guard requirements.
     code_paths:
       - agents/__init__.py
+      - agents/nexus_prime/orchestrator.py
       - tools/secrets.py
       - tools/google_chat.py
+      - tools/gmail.py
     triggers:
       - agents/__init__.py import allowlist modified
       - validate_code_safety() pattern list changed
@@ -193,6 +196,10 @@ documents:
       - Auth, HMAC, or JWT logic changed
       - SHA-256 pinning logic changed
       - New OWASP-relevant finding discovered
+      - Loop prevention gates changed (Rule 26.1 identity exclusion, 26.2 per-task cap, 26.3 flood guard)
+      - Watermark/cursor advancement logic changed (Rule 29 — gmail_last_history_id or any offset pointer)
+      - Idempotency guard exception handling changed (fail-open vs fail-closed)
+      - Outbound flood or email cap settings changed
 
   GAOS-Skill-Compliance-Spec.md:
     purpose: >

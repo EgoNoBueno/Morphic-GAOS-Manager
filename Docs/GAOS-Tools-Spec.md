@@ -12,12 +12,14 @@
 
 | Principle | Rule |
 |-----------|------|
-| **`project_id` mandatory** | Every function that touches a Google service takes `project_id` as a required parameter. No function reads from a global or ambient project context. |
+| **`project_id` mandatory** | Every function that touches a Google service takes `project_id` as a required parameter. No function reads from a global or ambient project context (Rule 2). |
 | **Raise, don't swallow** | Tools raise typed exceptions on failure. They do not catch and silently return `None`. The caller decides how to handle errors. |
+| **Fail Closed** | Guards (idempotency, watermark, allowlist) must fail **closed** on dependency exceptions. If an idempotency check fails due to a 429, the action must NOT proceed. |
 | **No shared mutable state** | Tools are stateless pure functions. No module-level caches, no singletons, no thread-local state. |
 | **Batch by default** | Sheet and Memory Bank tools provide batch variants. Single-row calls are convenience wrappers over the batch path. |
-| **Retry on transient errors** | Rate limit (`429`) and server errors (`5xx`) are retried with exponential backoff up to 3 attempts before raising. All other errors raise immediately. |
+| **Retry Budget** | Rate limit (`429`) and server errors (`5xx`) are retried with exponential backoff up to 3 attempts (Rule 25.1). All other errors raise immediately. |
 | **No model calls** | Tools do not call any LLM. They are I/O wrappers only. Any intelligence is applied by the agent before or after the tool call. |
+| **Doc-Reality Sync** | This document is the canonical reference. Per Rule 13/24, any tool change must be reflected here immediately. If the fix is non-obvious, explain it in plain language (Rule 28). |
 
 ---
 
@@ -837,10 +839,19 @@ When `web_access=True` and the model is an `ollama/` alias, `_call_model` prepen
 @dataclass
 class ModelResponse:
     text: str           # raw response text
-    cost_usd: float     # computed from token counts × pricing config for Gemini models; 0.0 for Ollama (local, no billing). Pricing keys live in settings.yaml under models.FAST_MODEL_INPUT_PRICE_PER_M etc. (see GAOS-Manager-Spec.md §9.4)
+    cost_usd: float     # computed from token counts × pricing config for Gemini models; 0.0 for Ollama.
+                        # Includes thinking token cost — thinking tokens are priced at a separate per-M
+                        # rate (see settings.yaml FAST_MODEL_THINKING_PRICE_PER_M / DEEP_MODEL_THINKING_PRICE_PER_M)
+                        # and folded into cost_usd before return. (see AI-Autocoding-Rules.md §25.2)
     tokens_used: int    # total tokens from usage_metadata (0 for Ollama); tracked for usage monitoring
     data: dict          # parsed JSON if parse_json=True, else {}
 ```
+
+> **Note — `thinking_tokens`:** The raw thinking token count is computed inside `_call_model()` and priced into `cost_usd` before the `ModelResponse` is returned. It is **not** exposed as a separate field on `ModelResponse`. Accumulating `cost_usd` and `tokens_used` per Rule 25.2 is sufficient — no separate `thinking_tokens` accumulation is needed.
+
+> **Model selection — thinking vs. standard inference:** Use `settings.models.DEEP_MODEL` (`gemini-2.5-pro`, `DEEP_MODEL_THINKING_BUDGET: -1`) when you need chain-of-thought reasoning or multi-step planning. Use `settings.models.FAST_MODEL` (`gemini-2.5-flash`, `DEEP_MODEL_THINKING_BUDGET: 0`) for standard low-cost inference where thinking is not required. Thinking is **disabled by default on `FAST_MODEL`** to prevent surprise spend; set `FAST_MODEL_THINKING_BUDGET: -1` in `settings.yaml` to re-enable it for specific research workloads.
+
+> ⚠️ **Warning — Cost Accumulation (Rule 25.2):** Every orchestrator must accumulate `cost_usd` and `tokens_used` from `ModelResponse` into the task state **immediately** after the call returns. This ensures the Budget Guard can terminate runaway tasks. In LangGraph nodes that run in parallel, perform this accumulation in the fan-in node (`record`) to avoid race conditions or double-counting during state merges.
 
 ### `validate_code_safety()`
 
@@ -1217,6 +1228,8 @@ def web_search(query: str, max_results: int = 5) -> str:
 | Never call `httpx` or any Google SDK directly from an agent | Use the tool layer and `_call_model()` — direct SDK calls bypass scoping, error handling, and fallback logic. |
 | Wrap Sheets/BQ writes with `cb_check` / `cb_success` / `cb_failure` | At minimum, protect `append_row("Agent_Approvals")` and `insert_row("aos_logs.*")` calls — these are the highest-blast-radius failure points. |
 | Never call `cb_failure` inside a `CircuitOpenError` handler | The call was never attempted; recording a failure only delays HALF_OPEN recovery. |
+| Use PowerShell-native commands for ad-hoc tool tests | No `grep`, `tail`, or `cat`. Use `Select-String`, `Select-Object -Last N`, and `Get-Content` (Rule 22). |
+| Automate recurring tool setups with scripts | Never instruct the user to "manually update the sheet" if a script can do it (Rule 23). |
 | `save_checkpoint` is best-effort on writes — never block on it | The BQ write inside `save_checkpoint` is swallowed (logged as WARNING). However, validation and serialization failures still raise — call it **outside** the circuit-breaker try block so a bad state dict does not trigger `cb_failure` on a write that succeeded. |
 
 ---
@@ -1599,6 +1612,8 @@ from tools.circuit_breaker import (
 | `HALF_OPEN` | Cooldown period elapsed after OPEN | One probe call allowed; failure → back to OPEN, success → CLOSED |
 
 Default threshold: **3 failures**. Default cooldown: **300 seconds**. Both are configurable per call-site.
+
+> ⚠️ **Warning — Required for External Tools (Rule 25.3):** Every tool that calls an external dependency (GCP services, third-party APIs, LLMs) **must** integrate `circuit_breaker`. This prevents the system from triggering rate limits or cascading failures when a dependency is down.
 
 ### Public API
 
@@ -2019,7 +2034,8 @@ def fetch_new_messages(
           ``message_id_header``.
         - ``new_history_id`` is the latest ``historyId`` from the API response.
         - ``skipped_ids`` is a list of Gmail message IDs that were permanently
-          unavailable (404 after 3 retries) and silently skipped.
+          unavailable (404 after 3 retries) and silently skipped. Watermarks
+          must **always** advance past these IDs to prevent replay loops (Rule 29).
 
     Raises:
         GmailAuthError:         Credential fetch failed.
@@ -2116,6 +2132,11 @@ def setup_watch(project_id: str, topic_name: str, label_id: str) -> tuple[str, s
     mandatory. Call at deploy time and renew via Cloud Scheduler
     (POST /gmail-renew-watch, every 23 hours).
 
+    > ⚠️ **Warning — Push Verification Gate (Rule 27):** Before enabling or renewing
+    the watch, verify the Cloud Run endpoint returns HTTP 200. If the service
+    URL has changed, you must update the Pub/Sub Push Subscription before
+    messages can flow.
+
     .. note::
        The ``label_id`` parameter is accepted for API compatibility but is
        currently unused — the implementation always watches ``INBOX``.
@@ -2169,6 +2190,8 @@ gmail:
   label_id: 'Label_6'
   pubsub_topic: 'projects/morphic-gaos-prod/topics/gmail-notifications'
   max_results: 50
+
+> ⚠️ **Warning — Outbound Loop Prevention (Rule 26.1):** The `monitored_address` and `sender_address` must **never** be added to the `GMAIL_AUTHORIZED_SENDERS` secret. This creates an inbound trigger for our own outbound emails, leading to infinite replay storms. Nexus-Prime must drop any message from these addresses at the code layer before reaching the allowlist check.
 ```
 
 ### Usage Rule

@@ -125,9 +125,15 @@ The following tools return potentially injected content. They MUST include a pro
 
 > **Current status:** Provenance markers are a known open hardening item. Phases 1–5 are complete but this has not yet been implemented. Track as post-Phase 5 hardening debt — required before any public multi-tenant deployment.
 
-### 2.3 Monitoring for Injection Signals
+### 2.3 Outbound Loop and Flood Prevention (Rule 26)
 
-Nexus-Prime MUST log a `PROMPT_INJECTION_SUSPECTED` event (severity: HIGH) when any tool response contains patterns consistent with attempted injection:
+**Policy:** The system MUST NOT respond to its own outputs or enter cascading agent-to-agent loops.
+
+1. **Identity Exclusion (Rule 26.1):** ALL inbound handlers (Gmail, Pub/Sub, webhooks) must maintain an `_own_identities` set containing the system's own outbound addresses (monitored inbox, service accounts, sender aliases). Any message from a sender in this set MUST be dropped immediately and logged as a loop-prevention skip. This check MUST be hardcoded in the handler and cannot be bypassed by an allowlist configuration.
+2. **Hop Count Limit (Rule 25.4):** Every cross-agent message (`A2AMessage`) MUST carry a `hop_count`. Any agent receiving a message with `hop_count >= 5` MUST log a warning and drop the message.
+3. **Flood Guard (Rule 26.3):** Before sending an outbound email, the agent MUST query BigQuery to ensure the number of emails sent within the last window (default 60 minutes) has not exceeded the `flood_threshold` (default 10). If exceeded, the email is blocked and a Priority-5 alert is fired.
+
+### 2.4 Monitoring for Injection Signals
 
 - Strings containing `SYSTEM:`, `IGNORE PREVIOUS`, `NEW INSTRUCTION:`, `[INST]`
 - Embedded role-switching tokens characteristic of instruction injection
@@ -205,6 +211,16 @@ A `hard_stop_triggered = True` state causes the agent to:
 4. **Not** retry, not attempt a workaround, not silently continue
 
 Hard stops are not catchable errors — they are permanent halts on the triggering task. The task state is set to `failed` and the owner is notified.
+
+### 4.4 Defensive Stability and Fail-Closed Policy
+
+**Policy:** All guardrails (idempotency checks, watermarks, circuit breakers, flood guards) MUST fail **closed** on dependency failure.
+
+- If an idempotency check (`find_row`) fails due to a Sheets 429 error, the agent MUST abort the action. It MUST NOT assume the action is safe to proceed.
+- If the `_check_email_flood` BigQuery query fails, the outbound email MUST be blocked.
+- If `circuit_breaker.check()` cannot determine the state of a resource, it MUST raise `CircuitOpenError` (defaulting to safe).
+
+**Rule 29 (Watermark Policy):** Pointers (Gmail `historyId`, Pub/Sub cursors) MUST advance past any message that fails permanently (e.g. 404 after max retries). A stalled pointer creates a silent, high-load replay loop that can overwhelm upstream quotas and break downstream idempotency guards.
 
 ---
 
@@ -324,15 +340,18 @@ The following conditions MUST trigger an alert:
 | `CODE_HASH_MISMATCH` | Any single event | Priority 5 (Critical) |
 | `PROMPT_INJECTION_SUSPECTED` | Any single event | Priority 4 (High) |
 | Monthly GCP spend | >$5.00 | Priority 4 (High) |
+| Task cost limit | >$0.50 (Rule 25.2) | Priority 5 (Hard Stop) |
 | Agent heartbeat absent | >15 minutes | Priority 3 (Standard) |
 
-### 8.2 Configuration Drift Detection
+### 8.2 Spend and Resource Tracking (Rule 25)
 
-Agents that perform operations on infrastructure (BigQuery schema updates, Vertex AI corpus operations) MUST log the before-state and after-state of any structural change. Configuration drift is defined as any structural change not initiated by a human-approved Pub/Sub message or Approval Gate decision.
+**Policy:** Every task execution MUST accumulate its own cost and resource usage to enable per-task budget enforcement.
 
-Model aliases (`settings.models.*`) MUST NOT be changed without a Priority-2 Approval Gate proposal. The nightly observability loop compares deployed model aliases against the last approved baseline and publishes a drift alert if they differ.
+1. **Cost Accumulation (Rule 25.2):** orchestrators MUST aggregate `cost_usd` and `tokens_used` from every `ModelResponse` into the task state immediately. Thinking token costs are priced and folded into `cost_usd` by `_call_model()` before return — `thinking_tokens` is not a field on `ModelResponse` and requires no separate accumulation.
+2. **Outbound Caps (Rule 26.2 — cross-ref):** No single task may send more than `max_emails_per_task` (default 3) or publish more than `max_publishes_per_task` (default 10) messages. *(This cap is defined in Rule 26.2 of the Autocoding Rules and is surfaced here because it is enforced via per-task state alongside the cost counters. Full loop-prevention policy is in §2.3.)*
+3. **Budget Compliance:** If a task's accumulated `cost_usd` exceeds the per-task limit defined in `settings.yaml`, the agent MUST trigger a Priority-5 Hard Stop and terminate immediately.
 
-### 8.3 Access Pattern Anomalies
+### 8.3 Configuration Drift Detection
 
 The nightly observability loop SHOULD compute per-agent baseline metrics:
 
@@ -379,6 +398,8 @@ Security is integrated at every phase of the agent development lifecycle:
 | Data encryption at rest | GCP default (AES-256) for Sheets, BigQuery, Secret Manager, Drive | `GAOS-Privacy-Spec.md §2.1` |
 | Data encryption in transit | TLS 1.2+ enforced by Cloud Run; HTTPS only | GCP default |
 | Secret management | Secret Manager only; no plaintext in code or config | `.github/copilot-instructions.md §3` |
+| Loop prevention | Triple-layer: identity check, hop limit, BQ flood guard | §2.3 above |
+| Fail-Closed safety | Defensive guards fail closed on dependency failures | §4.4 above |
 | Code integrity | SHA-256 pinning at proposal submission; verified at deploy | `.github/copilot-instructions.md §5` |
 | Least privilege | IAM bindings scoped to minimum required permissions per agent | `infra/main.tf` |
 | Incident response | Priority-5 hard stop → owner alert → SA revocation path | §8.4 above |

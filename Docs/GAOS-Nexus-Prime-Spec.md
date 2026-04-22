@@ -55,8 +55,9 @@ class NexusPrimeWorkingMemory(AgentWorkingMemory, total=False):
     #   project_id: str
     #   task_id: str
     #   step_count: int
-    #   tokens_used: int
-    #   cost_usd: float
+    #   tokens_used: int       # Rule 25.2: Accumulate immediately after _call_model()
+    #   cost_usd: float        # Rule 25.2: Accumulate inc. thinking token costs (thinking cost is
+    #                          #            folded into cost_usd by _call_model(); no separate field)
     #   incoming_message: Optional[A2AMessage]
     #   messages: list
     #   hard_stop_triggered: bool
@@ -1352,7 +1353,21 @@ def _model_for_node(node_name: str) -> str:
 7. Run `pytest --tb=short` — confirm 600/600 pass.
 8. Commit: `fix: restore chat_respond to FAST_MODEL — Ollama tunnel stable`.
 
-### 4.3 Hard Stop Behavior
+### 4.3 Cost Tracking and Telemetry (Rule 25.2)
+
+Every node that calls `_call_model()` must accumulate cost and token usage into the state **immediately** after the call returns.
+
+```python
+resp = _call_model(prompt, model=_model_for_node("think"), parse_json=True)
+state["cost_usd"] = state.get("cost_usd", 0.0) + resp.cost_usd
+state["tokens_used"] = state.get("tokens_used", 0) + resp.tokens_used
+```
+
+> **Note — `thinking_tokens`:** Thinking token costs are priced and folded into `resp.cost_usd` inside `_call_model()` (see `agents/__init__.py`). `ModelResponse` does not currently expose a `thinking_tokens` field — the raw count is consumed internally during cost calculation. If per-node thinking token telemetry is needed in the future, add a `thinking_tokens: int` field to `ModelResponse` and surface it here.
+
+Failure to aggregate in every node makes the per-task budget blind to actual spend. For nodes that run in parallel, perform the final mutation in the fan-in node (`record`) to avoid race conditions.
+
+### 4.4 Hard Stop Behavior
 
 When `hard_stop_triggered` is set to `True` in any node:
 1. The current node completes its current step only (no further LLM calls)
@@ -1606,8 +1621,10 @@ Phase 4 is complete when every item below is checked (from `GAOS-Manager-Spec.md
 - [x] **Email pipeline E2E verified (2026-04-16):** inbound email → `process_gmail` → `EMAIL_RECEIVED` publish → `compose_reply` → exactly 1 reply sent, no duplicates. Deployed revision: `nexus-prime-00099-lpx`. Three-bug chain (stale watermark + Sheets 429 storm + fail-open guards) fixed and confirmed resolved.
 - [ ] Self-evolution loop completes at least once successfully
 - [x] All hard stops verified by unit tests
+- [x] **GAOS-Doctor (2026-04-20):** 42/42 health checks passing including BQ connectivity, Sheets quota, and Secret Manager access.
 - [ ] Ollama fallback verified: LOCAL_MODEL timeout → FAST_MODEL
 - [x] HMAC verification tests all passing
+- [x] **Gemini 2.0 Pricing (2026-04-22):** Pricing updated to $0.15/M (Input), $0.60/M (Output), and $3.50/M (Thinking) in `config/settings.yaml`.
 - [ ] Monthly cost projection under $5.00 based on measured test run costs
 
 ---

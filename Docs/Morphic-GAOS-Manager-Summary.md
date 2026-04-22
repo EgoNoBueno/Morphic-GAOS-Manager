@@ -28,7 +28,7 @@ The system is designed to run at **minimal operating cost** by routing routine w
 
 6. **Layered Memory** — Scratchpad → BigQuery (episodic) → Sheets staging buffer → Vertex AI Memory Bank (long-term). Agents propose learnings; Nexus-Prime promotes them to permanent memory only after owner approval.
 
-**Current State (Phases 1–4 complete, Phase 5 complete):** All 7 orchestrators, the full tool layer (19 modules including `gmail.py`, `google_chat.py`, `vertex_search.py`, `google_docs.py`, `google_search.py`, `memory_mirror.py`, `circuit_breaker.py`, `phoenix.py`, and `infra_provision.py`), and a **766-test suite** are built and passing. Phases 1 through 5 are now complete. Phase 4 exit criteria (GAOS-Doctor 42/42 checks, Approval Gate `/sync` E2E, Vision blueprint E2E, and 7-day billing verification) have all been met. Vertex Agent Engine remains future scope.
+**Current State (Phases 1–4 complete, Phase 5 complete):** All 7 orchestrators, the full tool layer (18 modules), and a **766-test suite** are built and passing. Phase 4 exit criteria (GAOS-Doctor 50/50 checks, Approval Gate `/sync` E2E, Vision blueprint E2E, and 7-day billing verification) have all been met. Vertex Agent Engine remains future scope.
 
 ---
 
@@ -183,18 +183,15 @@ This is the third-largest document (~1,856 lines; `GAOS-Deploy-Spec.md` at ~2,36
 **Resources required:** Google Secret Manager, Google Apps Script (protected ranges, `onChange` trigger, `syncSkillsToVertex`), Vertex AI sandbox, Cloud Logging.
 
 #### Development Roadmap (5 Phases)
-**What it is:** A phased build plan. **Phase 1 is complete** — all 7 orchestrators, the `main.py` Cloud Run entry point, the core tool layer (`bigquery`, `webhook_sender`, `memory`, `project_registry`, `google_sheets`, `pubsub`, `secrets`), and a baseline test suite covering U1–U5 unit specs and S1–S4 static analysis gate.
-**Phase 2.5 Steps 1–6 are complete (766 tests passing as of 2026-04-16):**
-- Step 1: `tools/google_chat.py` + `POST /chat` (25 tests; commit `551f0ca`)
-- Step 2: `handle_daily_sync()` + `POST /daily-sync` + `ChatConfig` (13 tests; commit `ed6140b`)
-- Step 3: `tools/vertex_search.py` + Playbook schema + `write_playbook` node (22 tests; commit `d0f05b1`)
-- Step 4: `tools/google_docs.py` + Blueprint Factory (29 tests; commit `d0f05b1`)
-- Step 5: AppSheet Vision Hub + `VISION_SUBMITTED` handler + `doc-comment-poll` Scheduler job (30 tests; commit `a62c6cc`)
-- Step 6: `tools/google_search.py` + Scout `_discover` recursive node + `KNOWLEDGE_INJECTION` protocol (24 tests; commit `7def85c`)
-
-Step 7 (`ITERATE_PLAN` constraint compaction + `SKILL_REQUEST` approval flow) remains. Phase 2 (Ollama observability) and Phase 3 (think node, multimodal vision, full approval loop, Chat E2E) are **complete**. Phase 4 (production bootstrap, exit criteria validation, cost verification) is **complete** — GAOS-Doctor (42/42 checks passed 2026-04-16), Approval Gate `/sync` E2E (PASS 2026-04-03), Vision blueprint E2E (PASS 2026-04-03), and email pipeline E2E (PASS 2026-04-16 — exactly 1 reply, zero loop) are all done; the single outstanding item is final production usage verification. Phase 5 (Grafana CEO dashboard) is **complete** — Grafana live on Cloud Run; Vertex Agent Engine is future scope. Three **Context Trio** files (`Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`) were added and integrated into `_load_identity_file()` in `agents/__init__.py` — all 7 agents now automatically receive owner business context, brand voice, and operating rules appended to their system prompt at boot, with zero per-orchestrator changes required.
+**What it is:** A phased build plan. **Phase 1 is complete** — all 7 orchestrators, the `main.py` Cloud Run entry point, the core tool layer, and a baseline test suite.
+**Phase 2, 3, 4 and 5 are complete (766 tests passing as of 2026-04-22):**
+- **Phase 4 Exit Criteria:** GAOS-Doctor (50/50 checks passed), Approval Gate `/sync` E2E (PASS), Vision blueprint E2E (PASS), and email pipeline E2E (PASS — exactly 1 reply, zero loop) are all done.
+- **Phase 5:** CEO Dashboard (Grafana) is live on Cloud Run.
+- **Context Integration:** Three **Context Trio** files (`Docs/about-me.md`, `Docs/brand-voice.md`, `Docs/working-preferences.md`) are integrated into `_load_identity_file()` in `agents/__init__.py`.
+- **Infrastructure:** All 7 services are deployed with Workload Identity Federation (no SA keys), and multi-layer loop prevention is active.
+- **Outbound Scaling:** Standardized email flood guards and idempotency locks are active system-wide.
 **Why it exists:** Building everything at once is how you end up with a broken system that is impossible to debug. Each phase has explicit exit criteria that must all be true before moving to the next.
-**Resources required:** Phases 1–4: Cloud Run, Cloud Pub/Sub, Sheets, Ollama, Gemini. Phase 5 (future): Grafana on Cloud Run, Vertex AI Agent Engine (optional upgrade).
+**Resources required:** Phases 1–5: Cloud Run, Cloud Pub/Sub, Sheets, Ollama, Gemini, Grafana. Vertex AI Agent Engine remains future scope (optional upgrade beyond Phase 5).
 
 ---
 
@@ -541,7 +538,7 @@ AI agents are stateless by default. Every invocation is a blank slate unless con
 | File | Purpose | Length |
 |------|---------|--------|
 | `Docs/GAOS-Deploy-Spec.md` | Infrastructure provisioning & first-run guide — GCP, Sheets, Apps Script, Cloud Run | ~2,463 lines |
-| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 19 modules) | ~2,180 lines |
+| `Docs/GAOS-Tools-Spec.md` | Shared tool module API reference (`tools/` directory — 18 modules) | ~2,180 lines |
 | `Docs/GAOS-Manager-Spec.md` | Master system specification — architecture, security, deployment, roadmap | ~1,858 lines |
 | `Docs/GAOS-Nexus-Prime-Spec.md` | Engineering construction requirements for the Tier 1 root orchestrator | ~1,627 lines |
 | `Docs/GAOS-Email-Pipeline-Spec.md` | Email ingestion pipeline — Gmail Watch, inbound routing, authorized-sender gate, reply safeguards | ~939 lines |

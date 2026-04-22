@@ -1584,7 +1584,7 @@ class TestNexusPrimeRecord:
             patch("tools.bigquery.insert_row"),
             patch("tools.pubsub.publish"),
             patch("agents.nexus_prime.orchestrator._write_heartbeat"),
-            patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value="idle"),
+            patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value=("idle", 0.0)),
             patch("agents.nexus_prime.orchestrator.save_checkpoint"),
             patch("tools.google_sheets.update_row") as mock_update,
         ):
@@ -1610,7 +1610,7 @@ class TestNexusPrimeRecord:
             patch("tools.bigquery.insert_row"),
             patch("tools.pubsub.publish"),
             patch("agents.nexus_prime.orchestrator._write_heartbeat"),
-            patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value="idle"),
+            patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value=("idle", 0.0)),
             patch("agents.nexus_prime.orchestrator.save_checkpoint"),
             patch("tools.google_sheets.update_row") as mock_update,
         ):
@@ -1631,7 +1631,7 @@ class TestNexusPrimeRecord:
             patch("tools.bigquery.insert_row"),
             patch("tools.pubsub.publish"),
             patch("agents.nexus_prime.orchestrator._write_heartbeat"),
-            patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value="idle"),
+            patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value=("idle", 0.0)),
             patch("agents.nexus_prime.orchestrator.save_checkpoint"),
             patch("tools.google_sheets.update_row") as mock_update,
         ):
@@ -1652,7 +1652,7 @@ class TestNexusPrimeRecord:
             patch("tools.bigquery.insert_row"),
             patch("tools.pubsub.publish"),
             patch("agents.nexus_prime.orchestrator._write_heartbeat"),
-            patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value="idle"),
+            patch("agents.nexus_prime.orchestrator._format_heartbeat", return_value=("idle", 0.0)),
             patch("agents.nexus_prime.orchestrator.save_checkpoint"),
             patch("tools.google_sheets.update_row", side_effect=RuntimeError("Sheets 503")),
             patch("agents.nexus_prime.orchestrator._log_cloud") as mock_log,
