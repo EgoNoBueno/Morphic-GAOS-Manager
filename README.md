@@ -405,8 +405,8 @@ At the start of every work session, agents read all three files as standing orde
 | **Phase 2** | Ollama observability loop, Knowledge Atlas (Memory Mirror) | **Complete** |
 | **Phase 2.5** | Google Chat integration, Vertex AI Search, Google Custom Search, Cloud Scheduler daily-kickoff and poll-comments jobs, Apps Script webhook + approval gate, skill-request flow | **Complete** |
 | **Phase 3** | `think` node (Strategic Architect), multimodal vision, `iterate_plan`, memory mirror, Chat Interactive Hub (JWT + approval cards + CARD_CLICKED routing), OpenTofu IaC + WIF CI/CD | **Complete** |
-| **Phase 4** | Production bootstrap (OpenTofu deploy), Approval Gate Chat-path E2E live validation, Gmail integration, exit criteria, cost verification | **In progress** — Chat E2E validated; Gmail pipeline wired and verified end-to-end (exactly 1 reply, no duplicates — 2026-04-16, revision `nexus-prime-00099-lpx`); cost/security verification and GAOS-Doctor checklist remaining |
-| **Phase 4 / Ch. 8** | Infrastructure resilience: circuit breaker, Phoenix recovery, `AgentState` FSM, output coherence check — wired into Nexus-Prime | **Complete** — 727 tests green |
+| **Phase 4** | Production bootstrap (OpenTofu deploy), Approval Gate Chat-path E2E live validation, Gmail integration, exit criteria, cost verification | **Complete** — Chat E2E validated; Gmail pipeline wired and verified end-to-end (exactly 1 reply, no duplicates); cost/security verification and GAOS-Doctor checklist (42/42) passed |
+| **Phase 4 / Ch. 8** | Infrastructure resilience: circuit breaker, Phoenix recovery, `AgentState` FSM, output coherence check — wired into Nexus-Prime | **Complete** — 766 tests green |
 | **Phase 5** | CEO dashboard (Grafana + Cloud Run) | **Complete** — Grafana dashboard live on Cloud Run. Vertex Agent Engine remains future scope. |
 
 <div align="center">
@@ -463,6 +463,6 @@ Infrastructure as Code powered by [OpenTofu](https://opentofu.org) — an open-s
 <div align="center">
 
 *Built entirely on Google's cloud ecosystem.*
-*Phases 1–3 complete. Phase 4 in progress — 727 tests green. Gmail pipeline E2E verified. Cost/security verification and GAOS-Doctor checklist remaining.*
+*Phases 1–5 complete. 766 tests green. Gmail pipeline E2E verified. GAOS-Doctor 42/42 checks passed.*
 
 </div>
