@@ -77,6 +77,8 @@ except (SecretNotFoundError, SecretAccessDenied) as e:
     sys.exit(1)
 ```
 
+> ⚠️ **Warning — Windows CRLF in stored secrets:** `get_secret()` strips leading/trailing whitespace (including `\r\n`) from the decoded payload. This was added 2026-04-22 after discovering that secrets stored from Windows PowerShell included a trailing `\r\n`, causing `%0D%0A` to be injected into HTTP requests using those values. If you stored a secret before this fix was deployed and searches/API calls are returning HTTP 400, re-store the secret using: `$value | gcloud secrets versions add <NAME> --data-file=-` (PowerShell pipes strip newlines). The `.strip()` call means any existing polluted secrets are fixed automatically at runtime.
+
 ---
 
 ## 3. `tools/google_sheets.py`

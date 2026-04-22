@@ -3,6 +3,30 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-04-22T11:30-07:00 — Google Search HTTP 400 Root Cause: CRLF in Secrets
+
+### What was done
+- **Diagnosed HTTP 400 on all Google Custom Search API queries** — After deploying the scout fixes, ran MC1. Scout processed the mandate but all 5 search queries returned HTTP 400. The URL in logs showed `key=AIzaSy...lecAk%0D%0A` — `%0D%0A` is CRLF encoded. The API key had a trailing `\r\n`.
+- **Confirmed secret bytes are clean in Secret Manager** — `gcloud secrets versions access ... | Format-Hex` showed no trailing bytes. The contamination came from PowerShell adding `\r\n` when the secret was originally stored (Windows newline injection in the piped data).
+- **Fixed `get_secret()` in `tools/secrets.py`** — Added `.strip()` after `.decode("UTF-8")`. This fixes all secrets system-wide, not just search keys. Any secret stored from Windows with trailing whitespace is now automatically cleaned at runtime.
+- **Added warning callout to `Docs/GAOS-Tools-Spec.md §2`** at the `get_secret()` usage pattern location.
+- **Updated repo gotchas.md** with the CRLF pattern.
+- **Deployed** — pushed `07d5a35`, CI run `24795596802` triggered.
+
+### Files changed
+- `tools/secrets.py` — `.strip()` after decode
+- `Docs/GAOS-Tools-Spec.md` — Added CRLF warning callout in §2
+- `WORKLOG.md` — This entry
+
+### Key findings / lessons
+- The `Format-Hex` output in PowerShell silently strips trailing whitespace from string representation, making the CRLF invisible until you look at the raw HTTP request URL. The actual contamination was in the stored secret payload.
+- `get_secret()` returning the raw decoded bytes without stripping is a correctness issue for any secret stored from any OS that appends newlines. `.strip()` is always the right behavior for string secrets.
+
+### What's next
+1. After deploy completes and approval granted, re-run MC1 to confirm search results come back
+2. Watch for `corr_prompt size=` in scout logs (confirms prompt guard + LLM call reaches Gemini)
+3. Start n8n pilot (BI5)
+
 ## 2026-04-22T11:17-07:00 — query_episodic Schema Fix + Clean Boot Confirmed
 
 ### What was done
