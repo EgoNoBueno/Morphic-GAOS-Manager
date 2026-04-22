@@ -81,7 +81,7 @@
           "dataset": "aos_logs",
           "project": "morphic-gaos-prod",
           "rawQuery": true,
-          "rawSql": "SELECT agent_id, status, current_objective, open_proposals, last_error, timestamp,\n  TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), timestamp, MINUTE) AS mins_since_heartbeat\nFROM (\n  SELECT *,\n    ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY timestamp DESC) AS rn\n  FROM `morphic-gaos-prod.aos_logs.status_snapshots`\n)\nWHERE rn = 1\nORDER BY agent_id",
+          "rawSql": "SELECT agent_id, status, current_objective, open_proposals, last_error, timestamp,\n  TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), CAST(timestamp AS TIMESTAMP), MINUTE) AS mins_since_heartbeat\nFROM (\n  SELECT *,\n    ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY timestamp DESC) AS rn\n  FROM `morphic-gaos-prod.aos_logs.status_snapshots`\n)\nWHERE rn = 1\nORDER BY agent_id",
           "refId": "A",
           "location": "US"
         }
