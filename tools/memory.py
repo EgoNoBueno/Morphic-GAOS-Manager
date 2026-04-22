@@ -64,8 +64,8 @@ def query_episodic(
     gcp_project = settings.GCP_PROJECT_ID
     client = bigquery.Client(project=gcp_project)
     sql = """
-        SELECT task_id, status, result_summary, error_fingerprint,
-               total_cost_usd, timestamp
+        SELECT task_id, status, error_fingerprint,
+               cost_usd, timestamp
         FROM `{gcp_project}.aos_logs.task_outcomes`
         WHERE agent_id = @agent_id
           AND task_type = @task_type

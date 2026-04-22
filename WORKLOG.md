@@ -3,7 +3,33 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
-## 2026-04-22T01:15-07:00 — Finalized Phase 4 Compliance Docs
+## 2026-04-22T10:13-07:00 — Spike Investigation + Scout IAM Fix
+
+### What was done
+- **Investigated 53,428-token anomaly at 10:30:56 UTC** — ruled out nexus-prime (only heartbeat traffic), confirmed scout via `textPayload=~"Token runaway"` log query. Call duration: 218s, start time ~10:27:18 UTC (immediately after scout boot). Source: `_discover` node processing a RESEARCH_MANDATE, most likely the corroboration prompt (`corr_prompt`).
+- **Confirmed cost_usd=0 is expected** — all nexus-prime traffic is STATUS_UPDATE, COMMENT_RECEIVED (no compaction trigger), TTL_SWEEP. No LLM-producing paths have fired yet. Not a bug.
+- **Fixed Scout IAM permissions** — Scout SA (`scout-sa@morphic-gaos-prod.iam.gserviceaccount.com`) was missing `roles/pubsub.admin` and `roles/bigquery.jobUser`. Boot failures on `ensure_topic_exists` (403) and `query_episodic` (403) were happening on every boot. Granted both roles.
+- **Fixed token warning visibility** — `TOKEN_WARNING_THRESHOLD` check in `_call_model()` used `logger.warning()` (goes to `textPayload`, not queryable as structured log). Added a supplementary `_log_cloud()` call so the warning is visible in `jsonPayload.message` and in Cloud Logging structured queries.
+- **Added title truncation in `_discover` corr_prompt** — `title` field was uncapped while `snippet` was capped to 150 chars. Fixed: titles now capped at 80 chars. Added `_log_cloud` call logging `corr_prompt` char count before the LLM call for future debugging.
+- **Added `latency_ms` column to `_check_task_costs.py`** — now shows call duration alongside token count.
+- **Tests**: 766/766 passing.
+
+### Files changed
+- `agents/__init__.py` — Added `_log_cloud()` call in token warning block
+- `agents/scout/orchestrator.py` — Title truncation (`[:80]`) in corr_prompt; added corr_prompt size log
+- `scripts/_check_task_costs.py` — Added `latency_ms` to top-token query
+
+### Key findings / lessons
+- `TOKEN_WARNING_THRESHOLD` warnings go to `textPayload` via `logger.warning()` — query with `textPayload=~"Token runaway"`, NOT `jsonPayload.message`. Now fixed to also emit structured log.
+- Scout was completely blind on every boot (IAM errors): `pubsub.topics.get` and `bigquery.jobs.create` both denied. Root cause unknown (possibly SA permissions were not included in original infra provisioning). Both granted now.
+- The 53k token spike cost ~$0.01-0.03 — not alarming, but would repeat on every RESEARCH_MANDATE until the title truncation fix ships.
+
+### What's next
+1. Deploy the `agents/__init__.py` and `agents/scout/orchestrator.py` changes to Cloud Run
+2. Run `send_scout_mandates.py --mandate MC1` and watch scout's Cloud Logs for `corr_prompt size=` to confirm the guard is working and scout can now process mandates successfully (boot errors cleared)
+3. Start n8n pilot (BI5) — create free n8n Cloud account, build GA4 → KPI Sheet → daily digest email
+
+
 
 ### What was done
 - **Updated [Docs/GAOS-Security-Policy.md](Docs/GAOS-Security-Policy.md):** Formalized Rule 26 (Flood Guards/Identity Exclusion), Rule 29 (Watermark Advancement), and the new "Fail-Closed" safety policy for idempotency checks.

@@ -759,7 +759,7 @@ def _discover(state: AgentWorkingMemory) -> AgentWorkingMemory:
     corroborated: list[dict[str, Any]] = []
     if len(all_results) >= 5:
         snippet_lines = "\n".join(
-            f"{i + 1}. [{r.get('title', '')}] {r.get('snippet', '')[:150]}"
+            f"{i + 1}. [{r.get('title', '')[:80]}] {r.get('snippet', '')[:150]}"
             for i, r in enumerate(all_results[:30])
         )
         corr_prompt = (
@@ -769,6 +769,14 @@ def _discover(state: AgentWorkingMemory) -> AgentWorkingMemory:
             f"source domains. For each corroborated finding write a clear declarative "
             f"statement. Count source_count conservatively — only count distinct domains.\n"
             f'Return JSON: [{{"finding": str, "source_count": int, "sources": [str, ...]}}]'
+        )
+        _log_cloud(
+            _AGENT_ID,
+            pid,
+            "task",
+            mandate_id,
+            f"_discover: corr_prompt size={len(corr_prompt)} chars, results={len(all_results)}",
+            "INFO",
         )
         corr_resp = _call_model(corr_prompt, model=_fast(), parse_json=True)
         state["cost_usd"] = state.get("cost_usd", 0.0) + corr_resp.cost_usd

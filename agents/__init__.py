@@ -229,6 +229,17 @@ def _call_model(
             resp.tokens_used,
             warn_threshold,
         )
+        # Also emit a structured Cloud Logging entry so the warning is queryable
+        # via jsonPayload.message (the logger.warning above goes to textPayload only).
+        _log_cloud(
+            get_caller(),
+            settings.GCP_PROJECT_ID,
+            "task",
+            "",
+            f"TOKEN_WARNING: model={model} tokens={resp.tokens_used} "
+            f"threshold={warn_threshold} cost_usd={resp.cost_usd:.6f}",
+            "WARNING",
+        )
 
     return resp
 
