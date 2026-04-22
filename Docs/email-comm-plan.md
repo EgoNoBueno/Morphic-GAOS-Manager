@@ -1,4 +1,6 @@
-# Gmail Integration — Implementation Plan v4
+# Gmail Integration — Implementation Archive v4
+
+_Historical record of the phase-by-phase implementation. For the current canonical runtime specification, see [Docs/GAOS-Email-Pipeline-Spec.md](Docs/GAOS-Email-Pipeline-Spec.md)._
 
 _Last updated: 2026-04-16 — all phases complete and hardened per Rule 29_
 

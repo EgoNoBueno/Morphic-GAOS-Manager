@@ -1,8 +1,8 @@
 # GAOS Email Pipeline — Reverse-Engineered Specification
 
-> **Status:** Reverse-engineered from source on 2026-04-02. Updated 2026-04-16 to reflect duplicate-reply hardening (idempotency guard, pre-send status lock, fail-closed exception handling, watermark always-advance). Covers the complete lifecycle from Gmail push notification to terminal LangGraph state, with every function, variable, gate, and side effect documented from live code.
+> **Status:** Canonical runtime specification. For historical implementation phases, unit test matrices, and one-time environment setup (OAuth/IAM), see [Docs/email-comm-plan.md](Docs/email-comm-plan.md).
 >
-> **Purpose:** Canonical reference for the email processing pipeline. Use this document to compare against existing specs (`GAOS-Nexus-Prime-Spec.md`, `GAOS-Tools-Spec.md`, `GAOS-Manager-Spec.md`) and identify discrepancies.
+> **Last updated:** 2026-04-16 to reflect duplicate-reply hardening (idempotency guard, pre-send status lock, fail-closed exception handling, watermark always-advance). Covers the complete lifecycle from Gmail push notification to terminal LangGraph state, with every function, variable, gate, and side effect documented from live code.
 
 ---
 
