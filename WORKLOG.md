@@ -3,6 +3,90 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-04-22T00:00-07:00 — Completed: Fix Gemini thinking cost, monthly cap retry storm
+
+### What was done
+**Root cause investigation:** Gemini monthly spending cap exceeded on 2026-04-22 at 05:12Z.
+BQ api_call_log showed 590 LLM calls on 2026-04-17 (vs 1-3 calls on normal days) — the April 17
+email reply cascade (Rule 26 incident) at $3.50/1M thinking tokens vs the $0.60/1M tracked.
+
+**Three bugs found and fixed:**
+
+**Bug 1 — Thinking not disabled for FAST_MODEL (root cause of cap burn):**
+Gemini 2.5 Flash enables dynamic thinking by default. Thinking tokens are billed at $3.50/1M —
+≈6× the $0.60/1M non-thinking output rate. The code never passed `ThinkingConfig`, so thinking
+was silently active on every FAST_MODEL call. Fix: added `GenerateContentConfig(thinking_config=
+ThinkingConfig(thinking_budget=0))` for all FAST_MODEL calls. Controlled via new
+`FAST_MODEL_THINKING_BUDGET: 0` setting (DEEP_MODEL keeps dynamic thinking, `DEEP_MODEL_THINKING_BUDGET: -1`).
+
+**Bug 2 — Thinking tokens missing from cost calculation:**
+`usage_metadata.candidates_token_count` is text output only. `thoughts_token_count` is a
+separate field that was completely ignored. Cost was under-reported by ~6× whenever thinking
+fired. Fix: extract `thinking_tokens = getattr(usage, "thoughts_token_count", 0)`, added
+`FAST_MODEL_THINKING_PRICE_PER_M: 3.50` and `DEEP_MODEL_THINKING_PRICE_PER_M: 3.50` to settings,
+included in cost formula.
+
+**Bug 3 — Monthly cap 429 causes infinite Pub/Sub retry storm:**
+When `ResourceExhausted("monthly spending cap")` propagates to `main.py`, returning HTTP 500
+causes Pub/Sub to redeliver every ~5 min indefinitely. Each delivery spins a new Cloud Run
+container with a fresh in-memory circuit breaker — completely bypassing the 1h cooldown. Logs
+showed ~35+ retries since 05:12Z. Fix: detect `"spending cap"` in the exception string and
+return HTTP 204 (ack) in the pubsub handler. In-process circuit also reset and re-tripped with
+48h cooldown for same-container prevention.
+
+### Files changed
+- `agents/__init__.py` — ThinkingConfig, `thoughts_token_count` cost, 48h circuit + monthly cap ERROR log
+- `config/__init__.py` — 4 new ModelAliases fields (THINKING_PRICE_PER_M x2, THINKING_BUDGET x2)
+- `config/settings.yaml` — same 4 new settings fields
+- `config/settings.yaml.template` — same 4 new settings fields
+- `main.py` — monthly cap 429 → return 204 (ack) instead of 500 (nack/retry)
+- `tests/test_agents.py` — 3 new tests: thinking disabled, thinking cost, monthly cap ERROR log
+- `scripts/_check_gemini_spend.py` — diagnostic script (not committed, temp use only)
+
+### Tests
+766 passed (3 new), 0 failures.
+
+### Commit
+`041b2e7` — "fix: disable Gemini thinking, fix cost tracking, ack monthly cap 429"
+
+### What's next
+1. **HUMAN ACTION REQUIRED:** Go to https://ai.studio/spend and raise or remove the monthly
+   spending cap for project `morphic-gaos-prod`. This unblocks all LLM calls.
+2. Once cap cleared: approve CI run for `041b2e7` at GitHub Actions (or `gcloud run deploy` directly).
+   The MemorySaver routing fix (a3ee4d7) is also in the same pending CI queue — both go out together.
+3. Re-fire MC1 with fresh task_id: `python scripts/send_scout_mandates.py --mandate MC1`
+4. Monitor Scout logs for `_discover:` output (not `_plan:`).
+
+---
+
+## 2026-04-21T21:29-07:00 — Completed: MC1 unblocked — init_sheets_client boot fix across all 6 agents
+
+### What was done
+- Continued from prior session: Scout had a new Pub/Sub subscription (`scout.sub.nexus-prime`) but was STARTUP_FAILING on every MC1 delivery.
+- Root cause: `load_project_registry(pid)` calls `get_all_records()` internally. All 6 non-nexus-prime agents called `load_project_registry` in `_boot()` without first calling `init_sheets_client(pid)`. Every Pub/Sub-triggered invocation hit `init_sheets_client() must be called before any Sheet operation`.
+- Nexus-prime was the correct reference implementation (already had `init_sheets_client(pid)` in boot).
+- Applied the same Step 2.5 pattern to all 6 agents: scout, beacon, foreman, ledger, pursuit, steward. Each change: added `from tools.google_sheets import init_sheets_client` to the local `_boot()` imports, added `init_sheets_client(pid)` call with non-fatal error handling before Step 3.
+- 763/763 tests green after the fix.
+- Committed as d11a58d, pushed to origin/master → CI/CD redeploy triggered for all 6 agents.
+
+### Files changed
+- `agents/scout/orchestrator.py` — Step 2.5 init_sheets_client added
+- `agents/beacon/orchestrator.py` — Step 2.5 init_sheets_client added
+- `agents/foreman/orchestrator.py` — Step 2.5 init_sheets_client added
+- `agents/ledger/orchestrator.py` — Step 2.5 init_sheets_client added
+- `agents/pursuit/orchestrator.py` — Step 2.5 init_sheets_client added
+- `agents/steward/orchestrator.py` — Step 2.5 init_sheets_client added
+
+### Tests added
+None — existing suite covers boot path; 763/763 green.
+
+### What's next
+1. Wait for CI/CD to redeploy all 6 agents (~2–5 min per service).
+2. Verify Scout picks up the MC1 RESEARCH_MANDATE from Pub/Sub retry buffer — watch Scout Cloud Run logs for `_discover:` output or `_boot: active projects` confirming registry read succeeded.
+3. If MC1 didn't retry within 5 min: re-fire with `python scripts/send_scout_mandates.py --mandate MC1`.
+4. After MC1 completes: check `Research Products` sheet tab for `ranked_platforms` output.
+5. Send MC2 + MC3 mandates (competitor audit, platform API inventory).
+
 ## 2026-04-21T15:46-07:00 — Completed: Test + script cleanup pass (verify-and-fix series)
 
 ### What was done
