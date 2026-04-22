@@ -337,11 +337,11 @@ This document defines the public interface for eighteen tool modules. The design
 **Resources required:** Google Docs API, Google Drive API, service account with Docs + Drive scope.
 
 #### `tools/google_search.py`
-**What it does:** Calls the Google Custom Search JSON API v1. Exposes `search()` (single query) and `research_topic()` (multi-query with URL deduplication). Called exclusively from Scout's `_discover` node.
+**What it does:** Executes Google Search queries via Serper.dev. Exposes `search()` (single query) and `research_topic()` (multi-query with URL deduplication). Called exclusively from Scout's `_discover` node.
 **Why it exists:** Enables Scout's recursive deep-research loop (`RESEARCH_MANDATE` → `_discover` → `KNOWLEDGE_INJECTION`) for gathering market intelligence with corroborated sourcing.
-**Added:** Phase 2.5 Step 6.
-**Key constraint:** Free tier is 100 queries/day; `max_queries_per_mandate` (default 15) caps each mandate at 15% of the daily quota.
-**Resources required:** Google Custom Search API, `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_CX` in Secret Manager.
+**Added:** Phase 2.5 Step 6. Switched from Google Custom Search JSON API to Serper.dev (2026-04-22) after persistent project-level 403 on `morphic-gaos-prod` could not be resolved.
+**Key constraint:** Free tier is 2,500 queries/month; `max_queries_per_mandate` (default 15) caps each mandate at a tiny fraction of the monthly quota.
+**Resources required:** Serper.dev account, `SERPER_API_KEY` in Secret Manager.
 
 #### `tools/memory_mirror.py`
 **What it does:** Bidirectional sync between the Vertex AI Memory Bank and the Knowledge Atlas Google Doc. `sync_to_atlas()` reads all active Memory Bank entries for an agent, formats them as structured Markdown, and appends (or overwrites) the relevant section in the Atlas Doc so the human owner has a single readable document of everything agents know.

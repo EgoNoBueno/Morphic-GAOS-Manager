@@ -15,7 +15,6 @@ from tools.google_search import (
 
 _PROJECT = "test-project"
 _API_KEY = "test-api-key-abc"
-_CX = "test-cx-001"
 
 
 # ── Secret fixture ────────────────────────────────────────────────────────────
@@ -23,12 +22,8 @@ _CX = "test-cx-001"
 
 @pytest.fixture(autouse=True)
 def mock_secrets():
-    """Provide fake API key and CX via Secret Manager for all tests."""
-
-    def _get(name, *_):
-        return _API_KEY if "API_KEY" in name else _CX
-
-    with patch("tools.secrets.get_secret", side_effect=_get):
+    """Provide fake Serper API key via Secret Manager for all tests."""
+    with patch("tools.secrets.get_secret", return_value=_API_KEY):
         yield
 
 
@@ -38,12 +33,12 @@ def mock_secrets():
 def _ok_resp(items: list) -> MagicMock:
     resp = MagicMock(spec=httpx.Response)
     resp.raise_for_status.return_value = None
-    resp.json.return_value = {"items": items}
+    resp.json.return_value = {"organic": items}
     return resp
 
 
-def _item(title: str = "T", url: str = "https://x.com", snippet: str = "") -> dict:
-    return {"title": title, "link": url, "snippet": snippet, "pagemap": {}}
+def _item(title: str = "T", url: str = "https://x.com", snippet: str = "", date: str = "") -> dict:
+    return {"title": title, "link": url, "snippet": snippet, "date": date}
 
 
 def _http_status_error(status: int) -> httpx.HTTPStatusError:
@@ -57,7 +52,7 @@ def _http_status_error(status: int) -> httpx.HTTPStatusError:
 
 class TestSearch:
     def test_returns_result_list(self):
-        with patch("tools.google_search.httpx.get", return_value=_ok_resp([_item()])):
+        with patch("tools.google_search.httpx.post", return_value=_ok_resp([_item()])):
             results = search("test query", _PROJECT)
 
         assert len(results) == 1
@@ -65,33 +60,30 @@ class TestSearch:
         assert results[0]["title"] == "T"
 
     def test_snippet_and_date_present_in_result(self):
-        item = {
-            "title": "Article",
-            "link": "https://example.com",
-            "snippet": "Some snippet",
-            "pagemap": {"metatags": [{"article:published_time": "2026-01-01"}]},
-        }
-        with patch("tools.google_search.httpx.get", return_value=_ok_resp([item])):
+        item = _item(
+            title="Article", url="https://example.com", snippet="Some snippet", date="2026-01-01"
+        )
+        with patch("tools.google_search.httpx.post", return_value=_ok_resp([item])):
             results = search("query", _PROJECT)
 
         assert results[0]["snippet"] == "Some snippet"
         assert results[0]["date"] == "2026-01-01"
 
-    def test_no_items_key_returns_empty_list(self):
+    def test_no_organic_key_returns_empty_list(self):
         resp = MagicMock(spec=httpx.Response)
         resp.raise_for_status.return_value = None
         resp.json.return_value = {}
-        with patch("tools.google_search.httpx.get", return_value=resp):
+        with patch("tools.google_search.httpx.post", return_value=resp):
             assert search("query", _PROJECT) == []
 
     def test_num_capped_at_10(self):
         captured: dict = {}
 
-        def _fake_get(url, *, params, timeout):
-            captured["num"] = params["num"]
+        def _fake_post(url, *, headers, json, timeout):
+            captured["num"] = json["num"]
             return _ok_resp([])
 
-        with patch("tools.google_search.httpx.get", side_effect=_fake_get):
+        with patch("tools.google_search.httpx.post", side_effect=_fake_post):
             search("query", _PROJECT, num=99)
 
         assert captured["num"] == 10
@@ -99,11 +91,11 @@ class TestSearch:
     def test_num_minimum_is_1(self):
         captured: dict = {}
 
-        def _fake_get(url, *, params, timeout):
-            captured["num"] = params["num"]
+        def _fake_post(url, *, headers, json, timeout):
+            captured["num"] = json["num"]
             return _ok_resp([])
 
-        with patch("tools.google_search.httpx.get", side_effect=_fake_get):
+        with patch("tools.google_search.httpx.post", side_effect=_fake_post):
             search("query", _PROJECT, num=0)
 
         assert captured["num"] == 1
@@ -141,23 +133,23 @@ class TestSearch:
     # ── Network / API failure ─────────────────────────────────────────────────
 
     def test_http_429_raises_quota_exceeded(self):
-        with patch("tools.google_search.httpx.get", side_effect=_http_status_error(429)):
+        with patch("tools.google_search.httpx.post", side_effect=_http_status_error(429)):
             with pytest.raises(GoogleSearchError, match="quota exceeded"):
                 search("query", _PROJECT)
 
     def test_http_403_raises_api_key_error(self):
-        with patch("tools.google_search.httpx.get", side_effect=_http_status_error(403)):
+        with patch("tools.google_search.httpx.post", side_effect=_http_status_error(403)):
             with pytest.raises(GoogleSearchError, match="403"):
                 search("query", _PROJECT)
 
     def test_http_500_raises_google_search_error(self):
-        with patch("tools.google_search.httpx.get", side_effect=_http_status_error(500)):
+        with patch("tools.google_search.httpx.post", side_effect=_http_status_error(500)):
             with pytest.raises(GoogleSearchError, match="500"):
                 search("query", _PROJECT)
 
     def test_timeout_raises_google_search_error(self):
         with patch(
-            "tools.google_search.httpx.get",
+            "tools.google_search.httpx.post",
             side_effect=httpx.TimeoutException("timeout"),
         ):
             with pytest.raises(GoogleSearchError, match="timed out"):
@@ -165,7 +157,7 @@ class TestSearch:
 
     def test_connect_error_raises_google_search_error(self):
         with patch(
-            "tools.google_search.httpx.get",
+            "tools.google_search.httpx.post",
             side_effect=httpx.ConnectError("no route"),
         ):
             with pytest.raises(GoogleSearchError, match="network error"):
@@ -175,7 +167,7 @@ class TestSearch:
         resp = MagicMock(spec=httpx.Response)
         resp.raise_for_status.return_value = None
         resp.json.side_effect = ValueError("bad json")
-        with patch("tools.google_search.httpx.get", return_value=resp):
+        with patch("tools.google_search.httpx.post", return_value=resp):
             with pytest.raises(GoogleSearchError, match="JSON decode"):
                 search("query", _PROJECT)
 
@@ -192,13 +184,13 @@ class TestResearchTopic:
         item_b = _item("B", "https://example.com/b")
         call_count = 0
 
-        def _fake_get(url, *, params, timeout):
+        def _fake_post(url, *, headers, json, timeout):
             nonlocal call_count
             items = [item_a] if call_count == 0 else [item_b]
             call_count += 1
             return _ok_resp(items)
 
-        with patch("tools.google_search.httpx.get", side_effect=_fake_get):
+        with patch("tools.google_search.httpx.post", side_effect=_fake_post):
             results = research_topic(["q1", "q2"], _PROJECT)
 
         urls = [r["url"] for r in results]
@@ -208,7 +200,7 @@ class TestResearchTopic:
     def test_deduplicates_by_url(self):
         item_a = _item("A", "https://example.com/a")
         # Both queries return the same URL
-        with patch("tools.google_search.httpx.get", return_value=_ok_resp([item_a])):
+        with patch("tools.google_search.httpx.post", return_value=_ok_resp([item_a])):
             results = research_topic(["q1", "q2"], _PROJECT)
 
         urls = [r["url"] for r in results]
@@ -218,14 +210,14 @@ class TestResearchTopic:
         item = _item("OK", "https://ok.com/result")
         call_count = 0
 
-        def _fake_get(url, *, params, timeout):
+        def _fake_post(url, *, headers, json, timeout):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
                 raise httpx.ConnectError("simulated failure")
             return _ok_resp([item])
 
-        with patch("tools.google_search.httpx.get", side_effect=_fake_get):
+        with patch("tools.google_search.httpx.post", side_effect=_fake_post):
             results = research_topic(["bad", "good"], _PROJECT)
 
         assert any(r["url"] == "https://ok.com/result" for r in results)
@@ -233,12 +225,12 @@ class TestResearchTopic:
     def test_max_queries_caps_execution(self):
         call_count = 0
 
-        def _fake_get(url, *, params, timeout):
+        def _fake_post(url, *, headers, json, timeout):
             nonlocal call_count
             call_count += 1
             return _ok_resp([])
 
-        with patch("tools.google_search.httpx.get", side_effect=_fake_get):
+        with patch("tools.google_search.httpx.post", side_effect=_fake_post):
             research_topic(["q1", "q2", "q3", "q4"], _PROJECT, max_queries=2)
 
         assert call_count == 2
@@ -246,19 +238,19 @@ class TestResearchTopic:
     def test_blank_query_strings_are_skipped(self):
         call_count = 0
 
-        def _fake_get(url, *, params, timeout):
+        def _fake_post(url, *, headers, json, timeout):
             nonlocal call_count
             call_count += 1
             return _ok_resp([])
 
-        with patch("tools.google_search.httpx.get", side_effect=_fake_get):
+        with patch("tools.google_search.httpx.post", side_effect=_fake_post):
             research_topic(["", "   ", "real query"], _PROJECT)
 
         assert call_count == 1
 
     def test_all_queries_fail_returns_empty_list(self):
         with patch(
-            "tools.google_search.httpx.get",
+            "tools.google_search.httpx.post",
             side_effect=httpx.ConnectError("all down"),
         ):
             assert research_topic(["q1", "q2"], _PROJECT) == []

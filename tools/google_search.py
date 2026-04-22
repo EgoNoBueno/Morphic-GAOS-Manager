@@ -1,10 +1,10 @@
 """
-tools/google_search.py — Google Custom Search API wrapper for Scout's deep research.
+tools/google_search.py — Serper.dev Google Search wrapper for Scout's deep research.
 
-Wraps the Google Custom Search JSON API v1. API key and Custom Search Engine ID (CX)
-are read from GCP Secret Manager at call time — never stored in settings.yaml.
+Wraps the Serper.dev API (https://serper.dev) which proxies real Google Search results.
+API key is read from GCP Secret Manager at call time — never stored in settings.yaml.
 
-Rate limit: 100 queries/day on the free tier.
+Free tier: 2,500 queries/month. Paid tiers from $50/mo for 50k queries.
 
 Usage:
     from tools.google_search import search, research_topic
@@ -25,11 +25,9 @@ from tools import tracked
 
 logger = logging.getLogger(__name__)
 
-_SEARCH_URL = "https://www.googleapis.com/customsearch/v1"
+_SEARCH_URL = "https://google.serper.dev/search"
 _TIMEOUT_S = 10.0
-_API_KEY_SECRET = "GOOGLE_SEARCH_API_KEY"
-_CX_SECRET = "GOOGLE_SEARCH_CX"
-
+_API_KEY_SECRET = "SERPER_API_KEY"  # pragma: allowlist secret
 
 # ── Error types ──────────────────────────────────────────────────────────────
 
@@ -70,21 +68,18 @@ def search(
 
     try:
         api_key = get_secret(_API_KEY_SECRET, project_id)
-        cx = get_secret(_CX_SECRET, project_id)
     except (SecretNotFoundError, SecretAccessDenied) as exc:
         raise GoogleSearchError(f"search: credentials not available: {exc}") from exc
 
-    num = max(1, min(num, 10))  # Google API hard cap
-
-    params: dict[str, Any] = {
-        "key": api_key,
-        "cx": cx,
-        "q": query.strip(),
-        "num": num,
-    }
+    num = max(1, min(num, 10))
 
     try:
-        resp = httpx.get(_SEARCH_URL, params=params, timeout=_TIMEOUT_S)
+        resp = httpx.post(
+            _SEARCH_URL,
+            headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+            json={"q": query.strip(), "num": num},
+            timeout=_TIMEOUT_S,
+        )
         resp.raise_for_status()
         data = resp.json()
     except httpx.HTTPStatusError as exc:
@@ -101,24 +96,14 @@ def search(
     except ValueError as exc:
         raise GoogleSearchError(f"search: JSON decode failed: {exc}") from exc
 
-    items = data.get("items", [])
     results: list[dict[str, Any]] = []
-    for item in items:
-        # Extract publication date from structured data if available
-        metatags = item.get("pagemap", {}).get("metatags", [{}])
-        date = ""
-        if metatags:
-            date = (
-                metatags[0].get("article:published_time", "")
-                or metatags[0].get("og:updated_time", "")
-                or metatags[0].get("date", "")
-            )
+    for item in data.get("organic", []):
         results.append(
             {
                 "title": item.get("title", ""),
                 "url": item.get("link", ""),
                 "snippet": item.get("snippet", ""),
-                "date": date,
+                "date": item.get("date", ""),
             }
         )
 

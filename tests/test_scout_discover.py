@@ -156,7 +156,7 @@ class TestGoogleSearchTool:
     def _make_mock_response(self, items):
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = {"items": items}
+        mock_resp.json.return_value = {"organic": items}
         return mock_resp
 
     # GS1
@@ -167,11 +167,12 @@ class TestGoogleSearchTool:
                 "title": "Loyalty Trends 2026",
                 "link": "https://example.com",
                 "snippet": "Key trends...",
+                "date": "",
             },
         ]
         with (
             patch("tools.secrets.get_secret", return_value="fake-key"),
-            patch("httpx.get", return_value=self._make_mock_response(items)),
+            patch("tools.google_search.httpx.post", return_value=self._make_mock_response(items)),
         ):
             from tools.google_search import search
 
@@ -184,12 +185,12 @@ class TestGoogleSearchTool:
     # GS2
     def test_empty_query_returns_empty_without_api_call(self, tmp_path):
         _make_settings(tmp_path)
-        with patch("httpx.get") as mock_get:
+        with patch("tools.google_search.httpx.post") as mock_post:
             from tools.google_search import search
 
             result = search("", "test-project")
         assert result == []
-        mock_get.assert_not_called()
+        mock_post.assert_not_called()
 
     # GS3
     def test_http_429_raises_google_search_error(self, tmp_path):
@@ -199,11 +200,11 @@ class TestGoogleSearchTool:
         mock_resp = MagicMock()
         mock_resp.status_code = 429
         exc = httpx.HTTPStatusError("rate limit", request=MagicMock(), response=mock_resp)
-        mock_get = MagicMock()
-        mock_get.return_value.raise_for_status.side_effect = exc
+        mock_post = MagicMock()
+        mock_post.return_value.raise_for_status.side_effect = exc
         with (
             patch("tools.secrets.get_secret", return_value="k"),
-            patch("httpx.get", mock_get),
+            patch("tools.google_search.httpx.post", mock_post),
         ):
             from tools.google_search import GoogleSearchError, search
 
@@ -226,16 +227,16 @@ class TestGoogleSearchTool:
         _make_settings(tmp_path)
         captured = {}
 
-        def mock_get(url, params=None, timeout=None):
-            captured["num"] = (params or {}).get("num")
+        def mock_post(url, headers=None, json=None, timeout=None):
+            captured["num"] = (json or {}).get("num")
             mock_resp = MagicMock()
             mock_resp.raise_for_status = MagicMock()
-            mock_resp.json.return_value = {"items": []}
+            mock_resp.json.return_value = {"organic": []}
             return mock_resp
 
         with (
             patch("tools.secrets.get_secret", return_value="k"),
-            patch("httpx.get", mock_get),
+            patch("tools.google_search.httpx.post", mock_post),
         ):
             from tools.google_search import search
 

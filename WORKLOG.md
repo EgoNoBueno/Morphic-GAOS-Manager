@@ -3,6 +3,28 @@
 Active work session. Updated in real time — refresh or keep open in VS Code.
 **Most recent entries are at the top.**
 
+## 2026-04-22T14:45-07:00 — Switch Google Search backend to Serper.dev
+
+### What was done
+- **Abandoned Google Custom Search JSON API** — After CRLF fix deployed (scout-00037-64b), Google Custom Search still returned HTTP 403 `"This project does not have the access to Custom Search JSON API."` Exhausted all remediation paths: Console UI disable/re-enable, new API keys (restricted + unrestricted), gcloud disable/enable, org policy check (`constraints/iam.allowedPolicyMemberDomains` only — no service block). Root cause is an unresolvable project-level access state in the `sl10repairtechs.com` org for this specific legacy API.
+- **Switched `tools/google_search.py` to Serper.dev** — POST to `https://google.serper.dev/search` with `X-API-KEY` header. Public interface (`search()`, `research_topic()`, `GoogleSearchError`) unchanged. Secret name changed from `GOOGLE_SEARCH_API_KEY`+`GOOGLE_SEARCH_CX` to `SERPER_API_KEY`.
+- **Updated `tests/test_google_search.py`** — All 22 tests updated to mock `httpx.post` with Serper response shape (`organic` array vs `items`). 22/22 green.
+- **Docs updated** — `GAOS-Tools-Spec.md §17`, `Morphic-GAOS-Manager-Summary.md`, `.env.example` all reflect Serper.dev.
+
+### Files changed
+- `tools/google_search.py`
+- `tests/test_google_search.py`
+- `Docs/GAOS-Tools-Spec.md`
+- `Docs/Morphic-GAOS-Manager-Summary.md`
+- `.env.example`
+- `WORKLOG.md`
+
+### What's next
+1. Sign up at https://serper.dev → get API key → store as `SERPER_API_KEY` secret in `morphic-gaos-prod`
+2. Commit + push → approve CI → re-run MC1 to confirm search results appear in Scout logs
+
+---
+
 ## 2026-04-22T11:30-07:00 — Google Search HTTP 400 Root Cause: CRLF in Secrets
 
 ### What was done

@@ -1437,7 +1437,7 @@ to Nexus-Prime which applies Blueprint updates post-approval.
 
 ## 17. `tools/google_search.py`
 
-Google Custom Search JSON API v1 wrapper for Scout's deep research. Added in Phase 2.5 Step 6.
+Serper.dev Google Search wrapper for Scout's deep research. Added in Phase 2.5 Step 6. Switched from Google Custom Search JSON API to Serper.dev in Phase 2.5 (2026-04-22) after the GCP project was permanently blocked at the project-access level despite billing and API enablement.
 
 ```python
 def search(
@@ -1446,7 +1446,7 @@ def search(
     num: int = 10,
 ) -> list[dict[str, Any]]:
     """
-    Execute a single Google Custom Search query.
+    Execute a single Google Search query via Serper.dev.
 
     Returns:
         List of dicts: [{title, url, snippet, date}, ...]
@@ -1474,10 +1474,11 @@ def research_topic(
 
 ### Authentication
 
-Credentials are fetched from GCP Secret Manager at call time — never embedded in settings.yaml. The Secret Manager secret names are hardcoded module constants:
+Credentials are fetched from GCP Secret Manager at call time — never embedded in settings.yaml. The Secret Manager secret name is a hardcoded module constant:
 
-- `GOOGLE_SEARCH_API_KEY` — Custom Search JSON API key
-- `GOOGLE_SEARCH_CX` — Programmable Search Engine ID (CX)
+- `SERPER_API_KEY` — Serper.dev API key (register at https://serper.dev)
+
+The `GOOGLE_SEARCH_API_KEY` and `GOOGLE_SEARCH_CX` secrets are no longer used by this tool and may be deleted.
 
 ### Settings Required
 
@@ -1491,7 +1492,9 @@ google_search:
 
 `tools/google_search.py` is called exclusively from Scout's `_discover` node. No other orchestrator calls it directly. Nexus-Prime triggers Scout via a `RESEARCH_MANDATE` Pub/Sub message — it does not call the search tool itself.
 
-> ⚠️ **Rate limit:** Free tier is 100 queries/day. `max_queries_per_mandate` (default 15) ensures a single mandate never exceeds 15% of the daily quota. Monitor usage in GCP Console → APIs & Services → Google Custom Search API.
+> ⚠️ **Warning — Google Custom Search JSON API project-level 403:** The Google Custom Search JSON API can enter a broken state in org-managed GCP projects where `customsearch.googleapis.com` is ENABLED and billing is ACTIVE but every API key (restricted or unrestricted, created via CLI or Console) returns HTTP 403 `"This project does not have the access to Custom Search JSON API."` This state persisted through Console UI disable/re-enable cycles. Root cause is unresolved. Serper.dev is the production replacement — use it.
+
+> ⚠️ **Rate limit (Serper.dev):** Free tier is 2,500 queries/month. `max_queries_per_mandate` (default 15) ensures a single mandate never exceeds 0.6% of the monthly free quota.
 
 ---
 
